@@ -33,3 +33,6 @@ web/.vite/
 # Config (local overrides)
 fyom.local.yaml
 configs/fyom.local.yaml
+
+# Air / Taskfile
+tmp/

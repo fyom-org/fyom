@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/fyom/fyom/internal/handler"
 	"github.com/fyom/fyom/internal/middleware"
 	"github.com/fyom/fyom/internal/repository"
+	"github.com/fyom/fyom/web"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -48,13 +50,12 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	mediaHandler.SetAllowedRoots(allowedRoots)
 	authHandler := handler.NewAuthHandler(userRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
 
-	// Public routes
+	// ── API routes (highest priority) ──────────────────────────────────────
 	r.Get("/api/v1/health", healthHandler.Health)
 	r.Get("/api/v1/version", healthHandler.Version)
 	r.Post("/api/v1/auth/register", authHandler.Register)
 	r.Post("/api/v1/auth/login", authHandler.Login)
 
-	// Protected routes (require auth)
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.AuthMiddleware(cfg.Auth.JWTSecret))
 		r.Post("/api/v1/library/import", mediaHandler.Import)
@@ -67,13 +68,47 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 		r.Get("/api/v1/auth/me", authHandler.Me)
 	})
 
-	// Static files (embedded frontend in production)
-	r.Handle("/assets/*", http.StripPrefix("/assets", http.FileServer(http.Dir("./web/dist/assets"))))
-	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "./web/dist/index.html")
-	})
-	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "./web/dist/index.html")
+	// ── Static files (embedded frontend) ───────────────────────────────────
+	// Subscribe to the embedded FS, stripping the "dist" prefix so that
+	// assets/js/index-CbS__aBa.js is served at /assets/js/index-CbS__aBa.js.
+	staticFS, err := fs.Sub(web.Dist, "dist")
+	if err != nil {
+		// embed.FS.Sub only returns an error for invalid dir names;
+		// "dist" is a verified subdirectory of the embed, so this is
+		// effectively unreachable.  Log and fall back to a filesystem that
+		// will simply return 404 for every path, allowing the SPA fallback
+		// below to serve index.html — the app still boots, just without
+		// static assets.
+		logger.Error("failed to open embedded static FS", "error", err)
+		staticFS = os.DirFS("/dev/null") // empty fallback
+	}
+	fileServer := http.FileServer(http.FS(staticFS))
+
+	// Catch-all: serve static files, falling back to index.html for SPA routes.
+	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+
+		// Try to serve the requested file from the embedded FS.
+		// If it doesn't exist, fall through to index.html (SPA fallback).
+		f, err := staticFS.Open(strings.TrimPrefix(path, "/"))
+		if err != nil {
+			// File not found — serve index.html for client-side routing
+			serveIndexHTML(w, r, staticFS)
+			return
+		}
+		stat, err := f.Stat()
+		f.Close()
+		if err != nil {
+			serveIndexHTML(w, r, staticFS)
+			return
+		}
+		// If the path is a directory, also fall back to index.html
+		if stat.IsDir() {
+			serveIndexHTML(w, r, staticFS)
+			return
+		}
+		// File exists — serve it
+		fileServer.ServeHTTP(w, r)
 	})
 
 	httpServer := &http.Server{
@@ -90,6 +125,18 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 		logger:     logger,
 		cfg:        cfg,
 	}
+}
+
+// serveIndexHTML reads index.html from the embedded FS and writes it.
+func serveIndexHTML(w http.ResponseWriter, r *http.Request, staticFS fs.FS) {
+	data, err := fs.ReadFile(staticFS, "index.html")
+	if err != nil {
+		http.Error(w, "index.html not found", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write(data)
 }
 
 // Run starts the server and blocks until shutdown.

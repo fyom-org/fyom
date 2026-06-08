@@ -1,0 +1,62 @@
+version: '3'
+
+vars:
+  BINARY_NAME: fyom
+  BUILD_DIR: ./build
+  CMD_PATH: ./cmd/fyom
+
+tasks:
+  # ================================================
+  # Development (tmux two-pane workflow)
+  # ================================================
+
+  dev:
+    desc: "Run Go backend with Air hot-reload (backend pane)"
+    cmds:
+      - air -c .air.toml
+
+  dev:web:
+    desc: "Run Vite dev server (frontend pane)"
+    dir: web
+    cmds:
+      - npm run dev
+
+  # ================================================
+  # Build
+  # ================================================
+
+  build:web:
+    desc: "Build frontend for production"
+    dir: web
+    cmds:
+      - npm run build
+
+  build:
+    desc: "Build single binary (embedded frontend)"
+    deps: [build:web]
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - CGO_ENABLED=0 go build -ldflags "-s -w" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} {{.CMD_PATH}}
+
+  # ================================================
+  # Quality
+  # ================================================
+
+  test:
+    desc: "Run all Go tests"
+    cmds:
+      - go test -v -race ./...
+
+  lint:
+    desc: "Run golangci-lint"
+    cmds:
+      - golangci-lint run ./...
+
+  # ================================================
+  # Cleanup
+  # ================================================
+
+  clean:
+    desc: "Remove build artifacts and temp files"
+    cmds:
+      - rm -rf {{.BUILD_DIR}} web/dist tmp/ data/ coverage.out
