@@ -1,0 +1,50 @@
+run:
+  timeout: 5m
+  go: "1.26"
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - revive
+    - bodyclose
+    - sqlclosecheck
+    - errorlint
+    - nilerr
+    - prealloc
+    - unconvert
+    - unparam
+  disable:
+    - gocyclo
+    - funlen
+    - gocognit
+
+linters-settings:
+  goimports:
+    local-prefixes: github.com/fyom/fyom
+  revive:
+    rules:
+      - name: exported
+        arguments:
+          - "checkPrivateReceivers"
+          - "disableStutteringCheck"
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - bodyclose
+    - path: cmd/
+      linters:
+        - revive
