@@ -6,6 +6,11 @@ vars:
   CMD_PATH: ./cmd/fyom
 
 tasks:
+  default:
+    desc: "Start development server with Air (same as task dev)"
+    cmds:
+      - task: dev
+
   # ================================================
   # Development (tmux two-pane workflow)
   # ================================================
