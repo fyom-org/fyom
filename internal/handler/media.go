@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,23 +14,98 @@ import (
 	"github.com/fyom/fyom/internal/repository"
 	"github.com/fyom/fyom/internal/service"
 	"github.com/fyom/fyom/pkg/errors"
+	"github.com/fyom/fyom/pkg/presign"
 	"github.com/fyom/fyom/pkg/response"
 )
+
+// MediaItemResponse is the JSON DTO returned by library API endpoints.
+// Filesystem paths are never exposed; presigned URLs are generated dynamically.
+type MediaItemResponse struct {
+	ID             string   `json:"id"`
+	Type           string   `json:"type"`
+	Title          string   `json:"title"`
+	SortTitle      string   `json:"sort_title,omitempty"`
+	Year           *int     `json:"year,omitempty"`
+	Overview       string   `json:"overview,omitempty"`
+	Rating         *float64 `json:"rating,omitempty"`
+	Duration       *int     `json:"duration,omitempty"`
+	PosterURL      string   `json:"poster_url,omitempty"`
+	BackdropURL    string   `json:"backdrop_url,omitempty"`
+	StreamURL      string   `json:"stream_url,omitempty"`
+	Season         *int     `json:"season,omitempty"`
+	Episode        *int     `json:"episode,omitempty"`
+	ParentID       string   `json:"parent_id,omitempty"`
+	MetadataSource string   `json:"metadata_source,omitempty"`
+}
 
 // MediaHandler handles media-related HTTP endpoints.
 type MediaHandler struct {
 	repo     *repository.MediaRepository
 	jobRepo  *repository.ImportJobRepository
 	importer *service.Importer
+	signer   *presign.Signer
 }
 
 // NewMediaHandler creates a new MediaHandler.
-func NewMediaHandler(db *repository.DB, mediaRepo *repository.MediaRepository, jobRepo *repository.ImportJobRepository) *MediaHandler {
+func NewMediaHandler(db *repository.DB, mediaRepo *repository.MediaRepository, jobRepo *repository.ImportJobRepository, signer *presign.Signer) *MediaHandler {
 	return &MediaHandler{
 		repo:     mediaRepo,
 		jobRepo:  jobRepo,
 		importer: service.NewImporter(db, mediaRepo, jobRepo),
+		signer:   signer,
 	}
+}
+
+// attachPresignedURLs converts a model.MediaItem to a MediaItemResponse
+// with presigned URLs for poster, backdrop, and stream resources.
+func (h *MediaHandler) attachPresignedURLs(item *model.MediaItem) MediaItemResponse {
+	resp := MediaItemResponse{
+		ID:             item.ID,
+		Type:           item.Type,
+		Title:          item.Title,
+		SortTitle:      item.SortTitle,
+		Overview:       item.Overview,
+		MetadataSource: item.MetadataSource,
+		ParentID:       item.ParentID,
+	}
+
+	if item.Year != 0 {
+		resp.Year = &item.Year
+	}
+	if item.Rating != 0 {
+		resp.Rating = &item.Rating
+	}
+	if item.Duration != 0 {
+		resp.Duration = &item.Duration
+	}
+	if item.Season != 0 {
+		resp.Season = &item.Season
+	}
+	if item.Episode != 0 {
+		resp.Episode = &item.Episode
+	}
+
+	// Generate presigned URLs (dynamic, never stored in DB).
+	if item.PosterPath != "" {
+		resp.PosterURL = h.signer.Generate(fmt.Sprintf("/api/v1/media/%s/poster", item.ID))
+	}
+	if item.BackdropPath != "" {
+		resp.BackdropURL = h.signer.Generate(fmt.Sprintf("/api/v1/media/%s/backdrop", item.ID))
+	}
+	if item.FilePath != "" {
+		resp.StreamURL = h.signer.Generate(fmt.Sprintf("/api/v1/media/%s/stream", item.ID))
+	}
+
+	return resp
+}
+
+// attachPresignedURLsList maps a slice of MediaItem through attachPresignedURLs.
+func (h *MediaHandler) attachPresignedURLsList(items []model.MediaItem) []MediaItemResponse {
+	result := make([]MediaItemResponse, len(items))
+	for i := range items {
+		result[i] = h.attachPresignedURLs(&items[i])
+	}
+	return result
 }
 
 // TODO: re-add path restriction when multi-user mode is implemented
@@ -60,8 +136,10 @@ func (h *MediaHandler) List(w http.ResponseWriter, r *http.Request) {
 		items = []model.MediaItem{}
 	}
 
+	result := h.attachPresignedURLsList(items)
+
 	response.Success(w, map[string]interface{}{
-		"items":       items,
+		"items":       result,
 		"total":       total,
 		"page":        page,
 		"page_size":   pageSize,
@@ -87,7 +165,24 @@ func (h *MediaHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.Success(w, item)
+	result := h.attachPresignedURLs(item)
+	response.Success(w, result)
+}
+
+// ListEpisodes returns all episodes for a given show.
+func (h *MediaHandler) ListEpisodes(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	items, err := h.repo.GetEpisodesByShowID(r.Context(), id)
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	if items == nil {
+		items = []model.MediaItem{}
+	}
+
+	result := h.attachPresignedURLsList(items)
+	response.Success(w, result)
 }
 
 // Delete removes a media item from the catalog.
@@ -150,20 +245,6 @@ func (h *MediaHandler) GetJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.Success(w, job)
-}
-
-// ListEpisodes returns all episodes for a given show.
-func (h *MediaHandler) ListEpisodes(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	items, err := h.repo.GetEpisodesByShowID(r.Context(), id)
-	if err != nil {
-		response.Error(w, 500, "internal server error")
-		return
-	}
-	if items == nil {
-		items = []model.MediaItem{}
-	}
-	response.Success(w, items)
 }
 
 // ServeBackdrop serves a backdrop image.

@@ -17,6 +17,7 @@ import (
 	"github.com/fyom/fyom/internal/handler"
 	"github.com/fyom/fyom/internal/middleware"
 	"github.com/fyom/fyom/internal/repository"
+	"github.com/fyom/fyom/pkg/presign"
 	"github.com/fyom/fyom/web"
 	"github.com/go-chi/chi/v5"
 )
@@ -43,9 +44,13 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	jobRepo := repository.NewImportJobRepository(db)
 	settingRepo := repository.NewSystemSettingRepository(db)
 
+	// Presigned URL signer — used by handlers to generate URLs and by
+	// middleware to validate them on media-serving endpoints.
+	signer := presign.NewSigner(cfg.Auth.JWTSecret, 3600)
+
 	// Handlers
 	healthHandler := handler.NewHealthHandler(version, gitCommit, buildTime, goVer)
-	mediaHandler := handler.NewMediaHandler(db, mediaRepo, jobRepo)
+	mediaHandler := handler.NewMediaHandler(db, mediaRepo, jobRepo, signer)
 	// TODO: re-add path restriction when multi-user mode is implemented
 	authHandler := handler.NewAuthHandler(userRepo, settingRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
 	systemHandler := handler.NewSystemHandler(settingRepo, authHandler.GetAuthService())
@@ -65,14 +70,20 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 		r.Get("/api/v1/library", mediaHandler.List)
 		r.Get("/api/v1/library/{id}", mediaHandler.Get)
 		r.Delete("/api/v1/library/{id}", mediaHandler.Delete)
-		r.Get("/api/v1/media/{id}/stream", mediaHandler.Stream)
-		r.Get("/api/v1/media/{id}/poster", mediaHandler.Poster)
-		r.Get("/api/v1/media/{id}/backdrop", mediaHandler.ServeBackdrop)
 		r.Get("/api/v1/auth/me", authHandler.Me)
 		r.Put("/api/v1/auth/me/password", authHandler.ChangePassword)
 
 		// Admin-only routes
 		r.With(middleware.RequireAdmin).Post("/api/v1/library/import", mediaHandler.Import)
+	})
+
+	// ── Presigned media endpoints (no JWT, sig-based auth) ─────────────────
+	// <img> and <video> tags hit these directly via presigned URLs.
+	r.Route("/api/v1/media", func(r chi.Router) {
+		r.Use(middleware.RequireValidPresign(signer))
+		r.Get("/{id}/poster", mediaHandler.Poster)
+		r.Get("/{id}/backdrop", mediaHandler.ServeBackdrop)
+		r.Get("/{id}/stream", mediaHandler.Stream)
 	})
 
 	// ── Static files (embedded frontend) ───────────────────────────────────
