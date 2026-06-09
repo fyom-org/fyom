@@ -180,14 +180,14 @@ func TestIntegration_NFOImportFlow(t *testing.T) {
 	}
 	assert.Equal(t, "done", jobStatus, "import job should complete")
 
-	// Step 6: Query library
+	// Step 6: Query library — should return movie + show only (episodes excluded from grid)
 	w = apiCall(t, router, "GET", "/api/v1/library?page_size=100", token, nil)
 	assert.Equal(t, 200, w.Code)
 	var listResp map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &listResp))
 	listData := listResp["data"].(map[string]interface{})
 	items := listData["items"].([]interface{})
-	assert.Equal(t, 3, len(items), "expect 1 movie + 1 show + 1 episode")
+	assert.Equal(t, 2, len(items), "expect 1 movie + 1 show; episodes excluded from library grid")
 
 	// Step 7: Stream request with Range header
 	var movieID string
