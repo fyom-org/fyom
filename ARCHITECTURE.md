@@ -18,15 +18,15 @@
 | Layer          | Choice                    | Rationale                                      |
 |----------------|---------------------------|------------------------------------------------|
 | Language       | Go 1.26+                  | Single binary, fast, great stdlib              |
-| HTTP Framework | Gin                       | Mature, fast, middleware ecosystem             |
+| HTTP Framework | Chi                       | Lightweight, stdlib-compatible, composable     |
 | Frontend       | Vue 3 + Vite              | Lightweight, great DX, easy to embed           |
-| Desktop Shell  | Tauri 2                   | Rust-based, tiny bundle, native feel           |
+| Desktop Shell  | Tauri 2 (planned)         | Rust-based, tiny bundle, native feel           |
 | Database       | SQLite (via modernc.org)  | Zero-config, file-based, no CGO dependency     |
-| Migrations     | golang-migrate            | Industry standard, supports embedded FS        |
+| Migrations     | Internal embedded SQL runner | Simple, no external tooling required        |
 | Config         | Koanf (YAML/ENV/flags)    | Multi-source, struct-mapped                    |
 | Logging        | slog (stdlib)             | Structured, performant, Go 1.21+ native        |
 | Linting        | golangci-lint             | Comprehensive, configurable                    |
-| Build          | Makefile                  | Simple, universal                              |
+| Build          | Taskfile                  | YAML-based, cross-platform task runner         |
 
 ## 4. Project Boundaries
 
@@ -138,8 +138,8 @@ fyom/
 │       └── main.go
 ├── internal/
 │   ├── config/         # Configuration loading (koanf)
-│   ├── handler/        # HTTP handlers (Gin)
-│   ├── middleware/     # Gin middleware (auth, logging, recovery)
+│   ├── handler/        # HTTP handlers (Chi)
+│   ├── middleware/     # Chi middleware (auth, logging, recovery)
 │   ├── model/          # Data models
 │   ├── repository/     # Database access layer
 │   ├── service/        # Business logic
@@ -148,22 +148,24 @@ fyom/
 │   ├── logger/         # Structured logger setup
 │   ├── errors/         # Unified error types
 │   └── response/       # Standard API response helpers
-├── web/                # Vue 3 frontend
+├── web/                 # Vue 3 frontend
 │   ├── src/
+│   ├── embed.go         # Embeds compiled dist/ via //go:embed
 │   ├── package.json
 │   └── vite.config.ts
-├── migrations/         # SQL migration files
-├── configs/            # Default config files
-├── scripts/            # Build/dev scripts
-├── Makefile
+├── migrations/          # SQL migration files (embedded)
+├── configs/             # Default config files
+├── Taskfile.yml         # Build/dev tasks
+├── .air.toml            # Air hot-reload config
 ├── go.mod / go.sum
 ├── .golangci.yml
 └── README.md
 ```
 
-## 8. Deployment Modes
+## 8. Deployment
 
-### Mode A: Server + Web UI (C/S)
+### Single Binary (default)
+
 ```
 ./fyom serve --config fyom.yaml
   -> Starts HTTP server on :8080
@@ -172,17 +174,12 @@ fyom/
   -> Browser accesses http://server:8080
 ```
 
-### Mode B: Tauri Desktop Client (Local Only)
-```
-./fyom desktop
-  -> Opens Tauri window
-  -> Connects to local fyom server (or remote)
-  -> Same API, native feel
-```
+The Go binary embeds the built Vue frontend via `//go:embed`. One binary, one SQLite file — no separate frontend deployment needed.
 
-### Mode C: Headless Server + External Client
+### Headless (API only)
+
 ```
 ./fyom serve --no-ui
-  -> API only, no embedded frontend
+  -> API only, no embedded frontend served
   -> Tauri client or any HTTP client connects
 ```
