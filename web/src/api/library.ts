@@ -24,8 +24,22 @@ export function getJobStatus(jobId: string) {
   return request.get<JobStatus>(`/library/jobs/${jobId}`)
 }
 
-export async function getMediaList(page: number, limit: number) {
-  const res = await request.get('/library', { params: { page, limit } })
+export interface LibraryParams {
+  type?: string
+  q?: string
+  sort?: string
+}
+
+export async function getMediaList(
+  page: number,
+  limit: number,
+  params: LibraryParams = {}
+) {
+  // Strip undefined values so they don't appear as "?q=undefined" in the URL
+  const query = Object.fromEntries(
+    Object.entries({ page, limit, ...params }).filter(([, v]) => v !== undefined)
+  )
+  const res = await request.get('/library', { params: query as Record<string, string | number> })
   return res.data
 }
 
