@@ -3,18 +3,30 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/fyom/fyom/internal/model"
 )
 
 // ListPaged returns a paginated list of media items and the total count.
 func (r *MediaRepository) ListPaged(ctx context.Context, mediaType string, page, pageSize int) ([]model.MediaItem, int, error) {
-	where := ""
+	var where string
 	args := []interface{}{}
 
 	if mediaType != "" {
-		where = " WHERE type = ?"
-		args = append(args, mediaType)
+		// Support comma-separated list of types: "movie,show" -> IN ('movie','show')
+		if strings.Contains(mediaType, ",") {
+			types := strings.Split(mediaType, ",")
+			placeholders := make([]string, len(types))
+			for i, t := range types {
+				placeholders[i] = "?"
+				args = append(args, strings.TrimSpace(t))
+			}
+			where = fmt.Sprintf(" WHERE type IN (%s)", strings.Join(placeholders, ","))
+		} else {
+			where = " WHERE type = ?"
+			args = append(args, mediaType)
+		}
 	}
 
 	// Get total count

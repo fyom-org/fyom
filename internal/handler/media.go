@@ -45,6 +45,10 @@ func (h *MediaHandler) List(w http.ResponseWriter, r *http.Request) {
 		pageSize = 20
 	}
 	mediaType := r.URL.Query().Get("type")
+	// Default to movies and shows only — episodes are fetched via /library/:id/episodes.
+	if mediaType == "" {
+		mediaType = "movie,show"
+	}
 
 	items, total, err := h.repo.ListPaged(r.Context(), mediaType, page, pageSize)
 	if err != nil {
