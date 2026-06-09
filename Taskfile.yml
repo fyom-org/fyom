@@ -7,12 +7,12 @@ vars:
 
 tasks:
   default:
-    desc: "Start development server with Air (same as task dev)"
+    desc: "List all task commands"
     cmds:
-      - task: dev
+      - task -a
 
   # ================================================
-  # Development (tmux two-pane workflow)
+  # Development
   # ================================================
 
   dev:
@@ -24,7 +24,22 @@ tasks:
     desc: "Run Vite dev server (frontend pane)"
     dir: web
     cmds:
-      - npm run dev
+      - npm run dev -- --host
+
+  # ================================================
+  # Preview Developmet (Allow any host)
+  # ================================================
+
+  preview:
+    desc: "Run Go backend with Air hot-reload (backend pane)"
+    cmds:
+      - CGO_ENABLED=0 FYOM_SERVER_HOST=127.0.0.1 go run cmd/fyom/main.go -c
+
+  preview:web:
+    desc: "Run Vite dev server (frontend pane)"
+    dir: web
+    cmds:
+      - npm run preview
 
   # ================================================
   # Build
