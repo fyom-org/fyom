@@ -1,13 +1,22 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import path from 'node:path'
 
 export default defineConfig({
   plugins: [vue()],
 
-  // Development server (used for active development with HMR)
+  // Resolve path aliases (fix "@/..." imports)
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, 'src'),
+    },
+  },
+
+  // Development server (HMR + debugging)
   server: {
-    host: true, // Allow access via LAN / custom domains (e.g. fyom.example.com)
+    host: true, // Allow LAN / custom domains (e.g. fyom.example.com)
     port: 5173,
+    allowedHosts: true, // Allow custom domain access
 
     proxy: {
       '/api': {
@@ -15,7 +24,7 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
 
-        // Debug API proxy traffic (useful for backend integration)
+        // Debug API proxy traffic
         configure: (proxy) => {
           proxy.on('proxyReq', (_, req) => {
             console.log('➡️ [API]', req.method, req.url)
@@ -30,17 +39,16 @@ export default defineConfig({
 
   // Preview server (serves built assets, no HMR)
   preview: {
-    host: true,         // Allow external access during preview
+    host: true,
     port: 4173,
-    allowedHosts: true, // Allow custom domain (e.g. fyom.example.com)
+    allowedHosts: true,
   },
 
-  // General logging level for dev server
-  // Options: 'info' | 'warn' | 'error' | 'debug'
+  // Logging level
   logLevel: 'info',
 
-  // Build configuration (used for production build / preview)
+  // Build config (debuggable preview)
   build: {
-    sourcemap: true, // Enable source maps for debugging in preview mode
+    sourcemap: true,
   },
 })
