@@ -5,20 +5,32 @@
     <input v-model="password" type="password" placeholder="password" autocomplete="current-password" />
     <button @click="handleLogin" :disabled="loading">Login</button>
     <p v-if="error" class="error">{{ error }}</p>
-    <p class="info">Default: admin / admin123</p>
+    <p class="info"><router-link to="/register">Create an account</router-link></p>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import request from '@/api/request'
 
+const router = useRouter()
 const store = useUserStore()
 
 const username = ref('')
 const password = ref('')
 const loading = ref(false)
 const error = ref('')
+
+onMounted(async () => {
+  try {
+    const res = await request.get('/system/status')
+    if (!res.data.initialized) {
+      router.push('/setup')
+    }
+  } catch {}
+})
 
 async function handleLogin() {
   error.value = ''
@@ -94,5 +106,10 @@ button:disabled {
   color: #a1a1aa;
   font-size: 0.9rem;
   margin-top: 16px;
+}
+
+.info a {
+  color: #6c63ff;
+  text-decoration: none;
 }
 </style>

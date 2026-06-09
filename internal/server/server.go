@@ -41,6 +41,7 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	mediaRepo := repository.NewMediaRepository(db)
 	userRepo := repository.NewUserRepository(db)
 	jobRepo := repository.NewImportJobRepository(db)
+	settingRepo := repository.NewSystemSettingRepository(db)
 
 	// Allowed roots for file access (path traversal protection)
 	allowedRoots := strings.Split(os.Getenv("FYOM_MEDIA_ROOTS"), ":")
@@ -49,11 +50,14 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	healthHandler := handler.NewHealthHandler(version, gitCommit, buildTime, goVer)
 	mediaHandler := handler.NewMediaHandler(db, mediaRepo, jobRepo)
 	mediaHandler.SetAllowedRoots(allowedRoots)
-	authHandler := handler.NewAuthHandler(userRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
+	authHandler := handler.NewAuthHandler(userRepo, settingRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
+	systemHandler := handler.NewSystemHandler(settingRepo, authHandler.GetAuthService())
 
-	// ── API routes (highest priority) ──────────────────────────────────────
+	// ── Public API routes (no auth) ───────────────────────────────────────
 	r.Get("/api/v1/health", healthHandler.Health)
 	r.Get("/api/v1/version", healthHandler.Version)
+	r.Get("/api/v1/system/status", systemHandler.Status)
+	r.Post("/api/v1/system/initialize", systemHandler.Initialize)
 	r.Post("/api/v1/auth/register", authHandler.Register)
 	r.Post("/api/v1/auth/login", authHandler.Login)
 
@@ -68,6 +72,7 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 		r.Get("/api/v1/media/{id}/poster", mediaHandler.Poster)
 		r.Get("/api/v1/media/{id}/backdrop", mediaHandler.ServeBackdrop)
 		r.Get("/api/v1/auth/me", authHandler.Me)
+		r.Put("/api/v1/auth/me/password", authHandler.ChangePassword)
 
 		// Admin-only routes
 		r.With(middleware.RequireAdmin).Post("/api/v1/library/import", mediaHandler.Import)

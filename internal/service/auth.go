@@ -112,3 +112,13 @@ func (s *AuthService) Login(ctx context.Context, username, password string) (str
 	user.Password = ""
 	return tokenString, user, nil
 }
+
+// GetUserByID returns a user by ID (includes password hash for internal use).
+func (s *AuthService) GetUserByID(ctx context.Context, id string) (*model.User, error) {
+	return s.userRepo.GetByID(ctx, id)
+}
+
+// UpdatePassword updates a user's password hash.
+func (s *AuthService) UpdatePassword(ctx context.Context, id, hashedPassword string) error {
+	return s.userRepo.UpdatePassword(ctx, id, hashedPassword)
+}

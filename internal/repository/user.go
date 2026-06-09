@@ -57,3 +57,25 @@ func (r *UserRepository) Count(ctx context.Context) (int, error) {
 	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM users").Scan(&count)
 	return count, err
 }
+
+// GetByID finds a user by ID.
+func (r *UserRepository) GetByID(ctx context.Context, id string) (*model.User, error) {
+	var u model.User
+	err := r.db.QueryRowContext(ctx,
+		"SELECT id, username, password, role, created_at, updated_at FROM users WHERE id = ?",
+		id,
+	).Scan(&u.ID, &u.Username, &u.Password, &u.Role, &u.CreatedAt, &u.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// UpdatePassword updates a user's password hash.
+func (r *UserRepository) UpdatePassword(ctx context.Context, id, hashedPassword string) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE users SET password = ? WHERE id = ?", hashedPassword, id)
+	return err
+}

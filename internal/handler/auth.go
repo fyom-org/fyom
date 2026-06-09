@@ -10,18 +10,26 @@ import (
 	fyommiddleware "github.com/fyom/fyom/internal/middleware"
 	"github.com/fyom/fyom/pkg/errors"
 	"github.com/fyom/fyom/pkg/response"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // AuthHandler handles authentication endpoints.
 type AuthHandler struct {
-	authService *service.AuthService
+	authService  *service.AuthService
+	settingRepo  *repository.SystemSettingRepository
 }
 
 // NewAuthHandler creates a new AuthHandler.
-func NewAuthHandler(userRepo *repository.UserRepository, jwtSecret string, tokenTTLHours int) *AuthHandler {
+func NewAuthHandler(userRepo *repository.UserRepository, settingRepo *repository.SystemSettingRepository, jwtSecret string, tokenTTLHours int) *AuthHandler {
 	return &AuthHandler{
 		authService: service.NewAuthService(userRepo, jwtSecret, tokenTTLHours),
+		settingRepo: settingRepo,
 	}
+}
+
+// GetAuthService returns the internal auth service for use by other handlers.
+func (h *AuthHandler) GetAuthService() *service.AuthService {
+	return h.authService
 }
 
 // RegisterRequest represents a registration request body.
@@ -52,6 +60,13 @@ type LoginResponse struct {
 
 // Register creates a new user account.
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
+	// Check if public registration is allowed
+	allowReg, err := h.settingRepo.GetSetting(r.Context(), "allow_registration")
+	if err != nil || allowReg != "true" {
+		response.Error(w, 403, "registration is disabled")
+		return
+	}
+
 	var req RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" || req.Password == "" {
 		response.Error(w, 400, "validation error")
@@ -112,4 +127,50 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		"username": username,
 		"role":     role,
 	})
+}
+
+// ChangePasswordRequest holds the password change form data.
+type ChangePasswordRequest struct {
+	OldPassword string `json:"old_password"`
+	NewPassword string `json:"new_password"`
+}
+
+// ChangePassword allows the authenticated user to change their password.
+func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	userID, _ := fyommiddleware.GetUserID(r).(string)
+	if userID == "" {
+		response.Error(w, 401, "unauthorized")
+		return
+	}
+
+	var req ChangePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.OldPassword == "" || req.NewPassword == "" {
+		response.Error(w, 400, "validation error")
+		return
+	}
+
+	// Fetch user to verify old password
+	user, err := h.authService.GetUserByID(r.Context(), userID)
+	if err != nil || user == nil {
+		response.Error(w, 401, "unauthorized")
+		return
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.OldPassword)); err != nil {
+		response.Error(w, 401, "invalid credentials")
+		return
+	}
+
+	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+
+	if err := h.authService.UpdatePassword(r.Context(), userID, string(hashedBytes)); err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+
+	response.Success(w, map[string]string{"message": "ok"})
 }

@@ -16,10 +16,13 @@ const router = createRouter({
         { path: 'import', name: 'import', component: ImportView },
         { path: 'library', name: 'Library', component: () => import('@/views/LibraryView.vue') },
         { path: 'library/:id', name: 'MediaDetail', component: () => import('@/views/MediaDetailView.vue') },
+        { path: 'profile', name: 'Profile', component: () => import('@/views/ProfileView.vue') },
         { path: 'home', redirect: '/import' },
         { path: '', redirect: '/import' },
       ],
     },
+    { path: '/setup', name: 'Setup', component: () => import('@/views/SetupView.vue') },
+    { path: '/register', name: 'Register', component: () => import('@/views/RegisterView.vue') },
   ],
 })
 

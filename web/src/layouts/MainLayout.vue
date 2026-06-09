@@ -11,6 +11,8 @@
       <aside class="sidebar">
         <router-link to="/import">Import</router-link>
         <router-link to="/library">Library</router-link>
+        <div class="sidebar-spacer"></div>
+        <router-link to="/profile">Profile</router-link>
       </aside>
       <main class="content">
         <router-view />
@@ -96,6 +98,8 @@ function handleLogout() {
   border-right: 1px solid #3f3f46;
   flex-shrink: 0;
   padding-top: 24px;
+  display: flex;
+  flex-direction: column;
 }
 
 .sidebar a {
@@ -114,6 +118,10 @@ function handleLogout() {
   color: #fff;
   border-left: 3px solid #6c63ff;
   padding-left: 17px;
+}
+
+.sidebar-spacer {
+  flex: 1;
 }
 
 .content {
