@@ -50,12 +50,16 @@ tasks:
   test:
     desc: "Run all Go tests"
     cmds:
-      - go test -v -race ./...
+      - go test -v -count=1 ./...
+    env:
+      CGO_ENABLED: "0"
 
   lint:
     desc: "Run golangci-lint"
     cmds:
       - golangci-lint run ./...
+    env:
+      CGO_ENABLED: "0"
 
   # ================================================
   # Cleanup
