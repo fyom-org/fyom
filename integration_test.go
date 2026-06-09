@@ -14,6 +14,7 @@ import (
 	"github.com/fyom/fyom/internal/handler"
 	"github.com/fyom/fyom/internal/middleware"
 	"github.com/fyom/fyom/internal/repository"
+	"github.com/fyom/fyom/pkg/presign"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,7 +42,8 @@ func setupIntegrationRouter(t *testing.T) (http.Handler, func()) {
 	jobRepo := repository.NewImportJobRepository(db)
 
 	healthHandler := handler.NewHealthHandler("test", "abc", "now", "go1.26")
-	mediaHandler := handler.NewMediaHandler(db, mediaRepo, jobRepo)
+	signer := presign.NewSigner(cfg.Auth.JWTSecret, 3600)
+	mediaHandler := handler.NewMediaHandler(db, mediaRepo, jobRepo, signer)
 	authHandler := handler.NewAuthHandler(userRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
 
 	// Public routes (no auth)
@@ -57,7 +59,12 @@ func setupIntegrationRouter(t *testing.T) (http.Handler, func()) {
 		r.Get("/api/v1/library/jobs/{id}", mediaHandler.GetJob)
 		r.Get("/api/v1/library", mediaHandler.List)
 		r.Get("/api/v1/library/{id}", mediaHandler.Get)
-		r.Get("/api/v1/media/{id}/stream", mediaHandler.Stream)
+	})
+
+	// Presigned media endpoints (no JWT, sig-based auth)
+	r.Route("/api/v1/media", func(r chi.Router) {
+		r.Use(middleware.RequireValidPresign(signer))
+		r.Get("/{id}/stream", mediaHandler.Stream)
 	})
 
 	return r, func() { _ = db.Close() }
@@ -189,20 +196,19 @@ func TestIntegration_NFOImportFlow(t *testing.T) {
 	items := listData["items"].([]interface{})
 	assert.Equal(t, 2, len(items), "expect 1 movie + 1 show; episodes excluded from library grid")
 
-	// Step 7: Stream request with Range header
-	var movieID string
+	// Step 7: Stream request with Range header via presigned URL
+	var streamURL string
 	for _, raw := range items {
 		item := raw.(map[string]interface{})
 		if item["type"] == "movie" && item["title"] == "Inception" {
-			movieID = item["id"].(string)
+			streamURL = item["stream_url"].(string)
 			break
 		}
 	}
-	assert.NotEmpty(t, movieID)
+	assert.NotEmpty(t, streamURL)
 
 	w = httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/v1/media/"+movieID+"/stream", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
+	req, _ := http.NewRequest("GET", streamURL, nil)
 	req.Header.Set("Range", "bytes=0-1023")
 	router.ServeHTTP(w, req)
 	assert.True(t, w.Code == 206 || w.Code == 200,
