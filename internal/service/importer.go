@@ -16,11 +16,9 @@ import (
 
 // Importer handles asynchronous NFO-based media library imports.
 type Importer struct {
-	mediaRepo  *repository.MediaRepository
-	jobRepo    *repository.ImportJobRepository
-	db         *repository.DB
-	// allowedRoots restricts which directories can be imported from
-	allowedRoots []string
+	mediaRepo *repository.MediaRepository
+	jobRepo   *repository.ImportJobRepository
+	db        *repository.DB
 }
 
 // NewImporter creates a new Importer.
@@ -32,19 +30,11 @@ func NewImporter(db *repository.DB, mediaRepo *repository.MediaRepository, jobRe
 	}
 }
 
-// SetAllowedRoots configures the allowed root directories.
-func (imp *Importer) SetAllowedRoots(roots []string) {
-	imp.allowedRoots = roots
-}
-
 // ImportRequest triggers an asynchronous import.
 // It creates a pending job record and returns the job ID immediately.
 // The actual import runs in a goroutine.
 func (imp *Importer) ImportRequest(ctx context.Context, sourcePath string) (*model.ImportJob, error) {
-	// Validate path
-	if !imp.isPathAllowed(sourcePath) {
-		return nil, &errors.AppError{Code: 403, Message: "directory not in allowed import roots"}
-	}
+	// Validate path exists and is a directory
 	info, err := os.Stat(sourcePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -386,23 +376,4 @@ func (imp *Importer) parseYear(dateStr string) int {
 	return 0
 }
 
-// isPathAllowed checks if the given path is within allowed root directories.
-func (imp *Importer) isPathAllowed(path string) bool {
-	if len(imp.allowedRoots) == 0 {
-		return true
-	}
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return false
-	}
-	for _, root := range imp.allowedRoots {
-		absRoot, err := filepath.Abs(root)
-		if err != nil {
-			continue
-		}
-		if absPath == absRoot || strings.HasPrefix(absPath, absRoot+string(filepath.Separator)) {
-			return true
-		}
-	}
-	return false
-}
+// TODO: re-add path restriction when multi-user mode is implemented

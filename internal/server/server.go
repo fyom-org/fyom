@@ -43,13 +43,10 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	jobRepo := repository.NewImportJobRepository(db)
 	settingRepo := repository.NewSystemSettingRepository(db)
 
-	// Allowed roots for file access (path traversal protection)
-	allowedRoots := strings.Split(os.Getenv("FYOM_MEDIA_ROOTS"), ":")
-
 	// Handlers
 	healthHandler := handler.NewHealthHandler(version, gitCommit, buildTime, goVer)
 	mediaHandler := handler.NewMediaHandler(db, mediaRepo, jobRepo)
-	mediaHandler.SetAllowedRoots(allowedRoots)
+	// TODO: re-add path restriction when multi-user mode is implemented
 	authHandler := handler.NewAuthHandler(userRepo, settingRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
 	systemHandler := handler.NewSystemHandler(settingRepo, authHandler.GetAuthService())
 

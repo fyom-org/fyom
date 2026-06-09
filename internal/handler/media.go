@@ -18,10 +18,9 @@ import (
 
 // MediaHandler handles media-related HTTP endpoints.
 type MediaHandler struct {
-	repo        *repository.MediaRepository
-	jobRepo     *repository.ImportJobRepository
-	importer    *service.Importer
-	allowedRoots []string
+	repo     *repository.MediaRepository
+	jobRepo  *repository.ImportJobRepository
+	importer *service.Importer
 }
 
 // NewMediaHandler creates a new MediaHandler.
@@ -33,11 +32,7 @@ func NewMediaHandler(db *repository.DB, mediaRepo *repository.MediaRepository, j
 	}
 }
 
-// SetAllowedRoots configures allowed root directories for file serving.
-func (h *MediaHandler) SetAllowedRoots(roots []string) {
-	h.allowedRoots = roots
-	h.importer.SetAllowedRoots(roots)
-}
+// TODO: re-add path restriction when multi-user mode is implemented
 
 // List returns a paginated list of media items.
 func (h *MediaHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -203,10 +198,7 @@ func (h *MediaHandler) ServeBackdrop(w http.ResponseWriter, r *http.Request) {
 
 // ServeContent streams a media file with full HTTP Range Request support.
 func (h *MediaHandler) ServeContent(w http.ResponseWriter, r *http.Request, item *model.MediaItem) {
-	if !h.isPathAllowed(item.FilePath) {
-		jsonError(w, 403, "access denied")
-		return
-	}
+	// TODO: re-add path restriction when multi-user mode is implemented
 
 	info, err := os.Stat(item.FilePath)
 	if err != nil {
@@ -270,26 +262,6 @@ func (h *MediaHandler) Poster(w http.ResponseWriter, r *http.Request) {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-func (h *MediaHandler) isPathAllowed(path string) bool {
-	if len(h.allowedRoots) == 0 {
-		return true
-	}
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return false
-	}
-	for _, root := range h.allowedRoots {
-		absRoot, err := filepath.Abs(root)
-		if err != nil {
-			continue
-		}
-		if absPath == absRoot || strings.HasPrefix(absPath, absRoot+string(filepath.Separator)) {
-			return true
-		}
-	}
-	return false
-}
 
 // jsonError writes a JSON error response directly to http.ResponseWriter.
 func jsonError(w http.ResponseWriter, code int, message string) {

@@ -55,12 +55,9 @@ func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
 
 			claims, err := parseAndValidateToken(parts[1], jwtSecret)
 			if err != nil {
-				slog.Warn("auth_fail", "error", err.Error())
 				response.Error(w, 401, err.Error())
 				return
 			}
-
-			slog.Debug("auth_claims", "sub", claims["sub"], "role", claims["role"])
 
 			ctx := context.WithValue(r.Context(), keyUserID, claims["sub"])
 			ctx = context.WithValue(ctx, keyUsername, claims["username"])
@@ -75,14 +72,12 @@ func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
 func RequireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rawRole := GetRole(r)
-		role, ok := rawRole.(string)
+		roleStr, ok := rawRole.(string)
 		if !ok {
-			if rawRole != nil {
-				role = fmt.Sprintf("%v", rawRole)
-			}
+			roleStr = fmt.Sprintf("%v", rawRole)
 		}
-		slog.Warn("rbac_check", "role", role, "path", r.URL.Path)
-		if role != "admin" {
+		if roleStr != "admin" {
+			slog.Warn("rbac_rejected", "role", roleStr, "path", r.URL.Path)
 			response.Error(w, 403, "admin role required")
 			return
 		}
