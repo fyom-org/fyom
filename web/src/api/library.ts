@@ -23,3 +23,8 @@ export function triggerImport(dirPath: string) {
 export function getJobStatus(jobId: string) {
   return request.get<JobStatus>(`/library/jobs/${jobId}`)
 }
+
+export async function getMediaList(page: number, limit: number) {
+  const res = await request.get('/library', { params: { page, limit } })
+  return res.data.data
+}

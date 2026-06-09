@@ -14,6 +14,7 @@ const router = createRouter({
       meta: { requiresAuth: true },
       children: [
         { path: 'import', name: 'import', component: ImportView },
+        { path: 'library', name: 'Library', component: () => import('@/views/LibraryView.vue') },
         { path: 'home', redirect: '/import' },
         { path: '', redirect: '/import' },
       ],

@@ -9,7 +9,8 @@
     </header>
     <div class="body">
       <aside class="sidebar">
-        <!-- Future navigation -->
+        <router-link to="/import">Import</router-link>
+        <router-link to="/library">Library</router-link>
       </aside>
       <main class="content">
         <router-view />
@@ -90,9 +91,29 @@ function handleLogout() {
 
 .sidebar {
   width: 200px;
-  background: #1f1f23;
+  min-width: 180px;
+  background: #1a1a2e;
   border-right: 1px solid #3f3f46;
   flex-shrink: 0;
+  padding-top: 24px;
+}
+
+.sidebar a {
+  display: block;
+  padding: 12px 20px;
+  color: #8888aa;
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.sidebar a:hover {
+  color: #e0e0e0;
+}
+
+.sidebar a.router-link-active {
+  color: #fff;
+  border-left: 3px solid #6c63ff;
+  padding-left: 17px;
 }
 
 .content {
