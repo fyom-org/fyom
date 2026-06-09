@@ -28,3 +28,13 @@ export async function getMediaList(page: number, limit: number) {
   const res = await request.get('/library', { params: { page, limit } })
   return res.data.data
 }
+
+export async function getMediaDetail(id: string) {
+  const res = await request.get(`/library/${id}`)
+  return res.data
+}
+
+export async function getEpisodes(showId: string) {
+  const res = await request.get(`/library/${showId}/episodes`)
+  return res.data
+}

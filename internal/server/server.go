@@ -61,11 +61,13 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 		r.Use(middleware.AuthMiddleware(cfg.Auth.JWTSecret))
 		r.Post("/api/v1/library/import", mediaHandler.Import)
 		r.Get("/api/v1/library/jobs/{id}", mediaHandler.GetJob)
+		r.Get("/api/v1/library/{id}/episodes", mediaHandler.ListEpisodes)
 		r.Get("/api/v1/library", mediaHandler.List)
 		r.Get("/api/v1/library/{id}", mediaHandler.Get)
 		r.Delete("/api/v1/library/{id}", mediaHandler.Delete)
 		r.Get("/api/v1/media/{id}/stream", mediaHandler.Stream)
 		r.Get("/api/v1/media/{id}/poster", mediaHandler.Poster)
+		r.Get("/api/v1/media/{id}/backdrop", mediaHandler.ServeBackdrop)
 		r.Get("/api/v1/auth/me", authHandler.Me)
 	})
 

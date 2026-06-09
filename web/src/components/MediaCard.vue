@@ -1,14 +1,16 @@
 <template>
-  <div class="media-card">
-    <div class="poster-wrap">
-      <img :src="posterSrc" :alt="item.title" @error="onPosterError" />
-      <div class="poster-fallback">{{ item.title?.[0] ?? '?' }}</div>
+  <router-link :to="`/library/${item.id}`" custom v-slot="{ navigate }">
+    <div class="media-card" @click="navigate" role="link" tabindex="0">
+      <div class="poster-wrap">
+        <img :src="posterSrc" :alt="item.title" @error="onPosterError" />
+        <div class="poster-fallback">{{ item.title?.[0] ?? '?' }}</div>
+      </div>
+      <div class="info">
+        <span class="title">{{ item.title }}</span>
+        <span class="year" v-if="item.year">{{ item.year }}</span>
+      </div>
     </div>
-    <div class="info">
-      <span class="title">{{ item.title }}</span>
-      <span class="year" v-if="item.year">{{ item.year }}</span>
-    </div>
-  </div>
+  </router-link>
 </template>
 
 <script setup lang="ts">

@@ -153,6 +153,54 @@ func (h *MediaHandler) GetJob(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, job)
 }
 
+// ListEpisodes returns all episodes for a given show.
+func (h *MediaHandler) ListEpisodes(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	items, err := h.repo.GetEpisodesByShowID(r.Context(), id)
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	if items == nil {
+		items = []model.MediaItem{}
+	}
+	response.Success(w, items)
+}
+
+// ServeBackdrop serves a backdrop image.
+func (h *MediaHandler) ServeBackdrop(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	item, err := h.repo.Get(r.Context(), id)
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	if item == nil || item.BackdropPath == "" {
+		response.Error(w, 404, "resource not found")
+		return
+	}
+	info, err := os.Stat(item.BackdropPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			jsonError(w, 404, "backdrop file not found on disk")
+			return
+		}
+		jsonError(w, 500, "internal server error")
+		return
+	}
+
+	f, err := os.Open(item.BackdropPath)
+	if err != nil {
+		jsonError(w, 500, "cannot open backdrop file")
+		return
+	}
+	defer func() { _ = f.Close() }()
+
+	name := strings.TrimSuffix(filepath.Base(item.BackdropPath), filepath.Ext(item.BackdropPath))
+	modTime := info.ModTime()
+	http.ServeContent(w, r, name, modTime, f)
+}
+
 // ServeContent streams a media file with full HTTP Range Request support.
 func (h *MediaHandler) ServeContent(w http.ResponseWriter, r *http.Request, item *model.MediaItem) {
 	if !h.isPathAllowed(item.FilePath) {

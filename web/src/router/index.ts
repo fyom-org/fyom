@@ -15,6 +15,7 @@ const router = createRouter({
       children: [
         { path: 'import', name: 'import', component: ImportView },
         { path: 'library', name: 'Library', component: () => import('@/views/LibraryView.vue') },
+        { path: 'library/:id', name: 'MediaDetail', component: () => import('@/views/MediaDetailView.vue') },
         { path: 'home', redirect: '/import' },
         { path: '', redirect: '/import' },
       ],

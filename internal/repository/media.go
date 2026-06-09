@@ -103,3 +103,24 @@ func (r *MediaRepository) Count(ctx context.Context) (int, error) {
 	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM media_items").Scan(&count)
 	return count, err
 }
+
+// GetEpisodesByShowID returns all episodes for a given show, sorted by season and episode.
+func (r *MediaRepository) GetEpisodesByShowID(ctx context.Context, showID string) ([]model.MediaItem, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, type, title, season, episode, duration, overview, poster_path
+		FROM media_items WHERE parent_id = ? AND type = 'episode'
+		ORDER BY season ASC, episode ASC`, showID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var items []model.MediaItem
+	for rows.Next() {
+		var m model.MediaItem
+		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.Season, &m.Episode, &m.Duration, &m.Overview, &m.PosterPath); err != nil {
+			return nil, err
+		}
+		items = append(items, m)
+	}
+	return items, rows.Err()
+}
