@@ -77,15 +77,21 @@ func (imp *Importer) runImport(jobID, sourcePath string) {
 
 	// Collect all .nfo files recursively
 	var nfoFiles []string
-	filepath.Walk(sourcePath, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	if err := filepath.Walk(sourcePath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
 			return nil
 		}
 		if strings.ToLower(filepath.Ext(path)) == ".nfo" {
 			nfoFiles = append(nfoFiles, path)
 		}
 		return nil
-	})
+	}); err != nil {
+		_ = imp.jobRepo.UpdateError(ctx, jobID, err.Error())
+		return
+	}
 
 	total := len(nfoFiles)
 	if total == 0 {
@@ -179,7 +185,7 @@ func (imp *Importer) parseNFOFile(nfoPath string, existingPaths map[string]bool,
 }
 
 // buildMovieItems creates MediaItem(s) from a parsed NFOMovie.
-func (imp *Importer) buildMovieItems(nfoPath, dir, baseName string, movie model.NFOMovie, existingPaths map[string]bool) []*model.MediaItem {
+func (imp *Importer) buildMovieItems(_ string, dir, baseName string, movie model.NFOMovie, existingPaths map[string]bool) []*model.MediaItem {
 	// Find the actual video file next to the NFO
 	videoPath := imp.findVideoFile(dir, baseName)
 	if videoPath == "" {
@@ -220,7 +226,7 @@ func (imp *Importer) buildMovieItems(nfoPath, dir, baseName string, movie model.
 }
 
 // buildEpisodeItems creates a MediaItem from a parsed NFOEpisode.
-func (imp *Importer) buildEpisodeItems(nfoPath, dir, baseName string, ep model.NFOEpisode, existingPaths map[string]bool, showTitleToID map[string]string) []*model.MediaItem {
+func (imp *Importer) buildEpisodeItems(_ string, dir, baseName string, ep model.NFOEpisode, existingPaths map[string]bool, showTitleToID map[string]string) []*model.MediaItem {
 	videoPath := imp.findVideoFile(dir, baseName)
 	if videoPath == "" {
 		return nil
@@ -269,7 +275,7 @@ func (imp *Importer) buildEpisodeItems(nfoPath, dir, baseName string, ep model.N
 }
 
 // buildTVShowItems creates a MediaItem from a parsed NFOTVShow.
-func (imp *Importer) buildTVShowItems(nfoPath, dir, baseName string, show model.NFOTVShow, existingPaths map[string]bool) []*model.MediaItem {
+func (imp *Importer) buildTVShowItems(_ string, dir, baseName string, show model.NFOTVShow, existingPaths map[string]bool) []*model.MediaItem {
 	// TV show NFOs don't have a video file — they're metadata-only
 	// We create a placeholder item with the directory as the "file_path"
 	showPath := filepath.Join(dir, "tvshow.nfo")
@@ -351,7 +357,7 @@ func (imp *Importer) findPoster(dir, baseName string) string {
 }
 
 // guessShowTitle attempts to determine the show title for an episode NFO.
-func (imp *Importer) guessShowTitle(nfoPath, episodeTitle string) string {
+func (imp *Importer) guessShowTitle(nfoPath, _ string) string {
 	// The parent directory name is often the show title
 	dir := filepath.Base(filepath.Dir(nfoPath))
 	// Clean it up

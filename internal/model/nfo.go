@@ -2,7 +2,7 @@ package model
 
 import "encoding/xml"
 
-// NFO Movie metadata — maps the most common tags found in tinyMediaManager / Kodi NFO files.
+// NFOMovie represents the movie metadata mapped from tinyMediaManager / Kodi NFO files.
 type NFOMovie struct {
 	XMLName   xml.Name `xml:"movie"`
 	Title     string   `xml:"title"`
@@ -17,7 +17,7 @@ type NFOMovie struct {
 	Set       string   `xml:"set,omitempty"`
 }
 
-// NFO TVShow metadata — parent record for a series.
+// NFOTVShow represents the parent metadata record for a TV series.
 type NFOTVShow struct {
 	XMLName  xml.Name `xml:"tvshow"`
 	Title    string   `xml:"title"`
@@ -27,7 +27,7 @@ type NFOTVShow struct {
 	Studio   string   `xml:"studio,omitempty"`
 }
 
-// NFO Episode metadata — child record that links to a TVShow via ShowTitle.
+// NFOEpisode represents the episode metadata record, linked to an NFOTVShow via ShowTitle.
 type NFOEpisode struct {
 	XMLName    xml.Name `xml:"episodedetails"`
 	Title      string   `xml:"title"`

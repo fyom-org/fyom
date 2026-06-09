@@ -1,3 +1,4 @@
+// Package service implements the business logic layer for fyom.
 package service
 
 import (

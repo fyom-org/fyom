@@ -1,3 +1,4 @@
+// Package response provides helpers for writing JSON HTTP responses.
 package response
 
 import (
@@ -17,7 +18,7 @@ func JSON(w http.ResponseWriter, code int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	if data != nil {
-		json.NewEncoder(w).Encode(data)
+		_ = json.NewEncoder(w).Encode(data)
 	}
 }
 

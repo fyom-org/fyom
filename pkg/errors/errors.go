@@ -1,3 +1,4 @@
+// Package errors defines fyom-specific error types and helpers.
 package errors
 
 import (

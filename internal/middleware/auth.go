@@ -1,3 +1,4 @@
+// Package middleware provides HTTP middleware for the fyom server.
 package middleware
 
 import (

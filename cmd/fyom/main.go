@@ -1,3 +1,4 @@
+// Package main is the entry point for the fyom server.
 package main
 
 import (
@@ -46,7 +47,7 @@ func main() {
 		log.Error("failed to open database", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	log.Info("database connected", "data_dir", cfg.Database.DataDir)
 

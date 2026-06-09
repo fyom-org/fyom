@@ -36,7 +36,7 @@ func (r *MediaRepository) List(ctx context.Context, mediaType string) ([]model.M
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var items []model.MediaItem
 	for rows.Next() {

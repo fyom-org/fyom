@@ -20,7 +20,7 @@ func setupAuthTest(t *testing.T) (*AuthService, func()) {
 	userRepo := repository.NewUserRepository(db)
 	svc := NewAuthService(userRepo, "test-secret-key", 24)
 
-	cleanup := func() { db.Close() }
+	cleanup := func() { _ = db.Close() }
 	return svc, cleanup
 }
 

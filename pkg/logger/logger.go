@@ -1,3 +1,4 @@
+// Package logger configures structured logging for fyom.
 package logger
 
 import (

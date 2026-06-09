@@ -1,3 +1,4 @@
+// Package server wires up the HTTP server and static file serving.
 package server
 
 import (
@@ -97,7 +98,7 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 			return
 		}
 		stat, err := f.Stat()
-		f.Close()
+		_ = f.Close()
 		if err != nil {
 			serveIndexHTML(w, r, staticFS)
 			return
@@ -128,7 +129,7 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 }
 
 // serveIndexHTML reads index.html from the embedded FS and writes it.
-func serveIndexHTML(w http.ResponseWriter, r *http.Request, staticFS fs.FS) {
+func serveIndexHTML(w http.ResponseWriter, _ *http.Request, staticFS fs.FS) {
 	data, err := fs.ReadFile(staticFS, "index.html")
 	if err != nil {
 		http.Error(w, "index.html not found", http.StatusInternalServerError)
@@ -136,7 +137,7 @@ func serveIndexHTML(w http.ResponseWriter, r *http.Request, staticFS fs.FS) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 // Run starts the server and blocks until shutdown.

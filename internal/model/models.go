@@ -1,3 +1,4 @@
+// Package model defines the core domain types used across fyom.
 package model
 
 // User represents a fyom user.

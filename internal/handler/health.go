@@ -26,12 +26,12 @@ func NewHealthHandler(version, gitCommit, buildTime, goVersion string) *HealthHa
 }
 
 // Health returns service health status.
-func (h *HealthHandler) Health(w http.ResponseWriter, r *http.Request) {
+func (h *HealthHandler) Health(w http.ResponseWriter, _ *http.Request) {
 	response.Success(w, map[string]string{"status": "healthy"})
 }
 
 // Version returns build version info.
-func (h *HealthHandler) Version(w http.ResponseWriter, r *http.Request) {
+func (h *HealthHandler) Version(w http.ResponseWriter, _ *http.Request) {
 	response.Success(w, model.VersionInfo{
 		Version:   h.version,
 		GitCommit: h.gitCommit,

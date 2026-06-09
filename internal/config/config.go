@@ -1,6 +1,8 @@
+// Package config loads and validates fyom application configuration.
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -80,7 +82,8 @@ func Load(cfgPath string) (*Config, error) {
 	if cfgPath != "" {
 		f := file.Provider(cfgPath)
 		if err := k.Load(f, yaml.Parser()); err != nil {
-			if _, ok := err.(*os.PathError); !ok {
+			var pathErr *os.PathError
+	if !errors.As(err, &pathErr) {
 				return nil, fmt.Errorf("read config file: %w", err)
 			}
 			// Config file not found is OK — use defaults + env
@@ -94,7 +97,7 @@ func Load(cfgPath string) (*Config, error) {
 	}
 
 	// Environment variables with FYOM_ prefix
-	k.Load(env.Provider("FYOM_", ".", func(s string) string {
+	_ = k.Load(env.Provider("FYOM_", ".", func(s string) string {
 		s = strings.TrimPrefix(s, "FYOM_")
 		return strings.ReplaceAll(strings.ToLower(s), "_", ".")
 	}), nil)

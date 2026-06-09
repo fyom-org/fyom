@@ -4,13 +4,15 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoad_Defaults(t *testing.T) {
 	tmpDir := t.TempDir()
 	origDir, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(origDir)
+	require.NoError(t, os.Chdir(tmpDir))
+	defer func() { require.NoError(t, os.Chdir(origDir)) }()
 
 	cfg, err := Load("")
 	if err != nil {
@@ -40,8 +42,8 @@ func TestLoad_Defaults(t *testing.T) {
 func TestLoad_FromFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	origDir, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(origDir)
+	require.NoError(t, os.Chdir(tmpDir))
+	defer func() { require.NoError(t, os.Chdir(origDir)) }()
 
 	cfgContent := `
 server:
@@ -78,8 +80,8 @@ log:
 func TestLoad_EnvOverride(t *testing.T) {
 	tmpDir := t.TempDir()
 	origDir, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(origDir)
+	require.NoError(t, os.Chdir(tmpDir))
+	defer func() { require.NoError(t, os.Chdir(origDir)) }()
 
 	t.Setenv("FYOM_SERVER_PORT", "7777")
 	t.Setenv("FYOM_LOG_LEVEL", "warn")
@@ -107,8 +109,8 @@ func TestServer_Address(t *testing.T) {
 func TestLoad_ExplicitPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	origDir, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(origDir)
+	require.NoError(t, os.Chdir(tmpDir))
+	defer func() { require.NoError(t, os.Chdir(origDir)) }()
 
 	cfgPath := filepath.Join(tmpDir, "custom.yaml")
 	cfgContent := "server:\n  port: 3000\n"

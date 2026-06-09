@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/fyom/fyom/internal/model"
+	"github.com/stretchr/testify/require"
 )
 
 func setupTestDB(t *testing.T) *DB {
@@ -17,8 +18,8 @@ func setupTestDB(t *testing.T) *DB {
 		t.Fatalf("failed to open test db: %v", err)
 	}
 	t.Cleanup(func() {
-		db.Close()
-		os.RemoveAll(tmpDir)
+		_ = db.Close()
+		_ = os.RemoveAll(tmpDir)
 	})
 
 	return db
@@ -147,7 +148,7 @@ func TestMediaRepository_Count(t *testing.T) {
 		t.Errorf("expected 0 items, got %d", count)
 	}
 
-	repo.Create(ctx, &model.MediaItem{Type: "movie", Title: "T", FilePath: "/t.mkv"})
+	require.NoError(t, repo.Create(ctx, &model.MediaItem{Type: "movie", Title: "T", FilePath: "/t.mkv"}))
 
 	count, err = repo.Count(ctx)
 	if err != nil {

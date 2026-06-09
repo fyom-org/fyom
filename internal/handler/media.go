@@ -175,7 +175,7 @@ func (h *MediaHandler) ServeContent(w http.ResponseWriter, r *http.Request, item
 		jsonError(w, 500, "cannot open media file")
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	name := strings.TrimSuffix(filepath.Base(item.FilePath), filepath.Ext(item.FilePath))
 	modTime := info.ModTime()
@@ -254,5 +254,5 @@ func jsonError(w http.ResponseWriter, code int, message string) {
 		Code:    code,
 		Message: message,
 	}
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }

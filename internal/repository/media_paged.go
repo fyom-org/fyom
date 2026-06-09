@@ -36,7 +36,7 @@ func (r *MediaRepository) ListPaged(ctx context.Context, mediaType string, page,
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var items []model.MediaItem
 	for rows.Next() {

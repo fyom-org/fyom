@@ -1,3 +1,4 @@
+// Package handler implements the HTTP API endpoints for fyom.
 package handler
 
 import (

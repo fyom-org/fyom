@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func makeTestToken(secret string) string {
@@ -36,7 +37,7 @@ func setupTestRouter(t *testing.T) http.Handler {
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 
 	cfg := &config.Config{
 		Auth: config.Auth{
@@ -80,7 +81,7 @@ func TestHealthHandler_Health(t *testing.T) {
 	assert.Equal(t, 200, w.Code)
 
 	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, float64(0), resp["code"])
 	assert.Equal(t, "ok", resp["message"])
 }
@@ -95,7 +96,7 @@ func TestHealthHandler_Version(t *testing.T) {
 	assert.Equal(t, 200, w.Code)
 
 	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	data := resp["data"].(map[string]interface{})
 	assert.Equal(t, "test", data["version"])
 	assert.Equal(t, "abc123", data["git_commit"])
@@ -113,7 +114,7 @@ func TestMediaHandler_ListEmpty(t *testing.T) {
 	assert.Equal(t, 200, w.Code)
 
 	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	data := resp["data"].(map[string]interface{})
 	items := data["items"].([]interface{})
 	assert.Equal(t, 0, len(items))

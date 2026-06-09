@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func setupIntegrationRouter(t *testing.T) (http.Handler, *repository.DB, func()) {
+func setupIntegrationRouter(t *testing.T) (http.Handler, func()) {
 	t.Helper()
 
 	tmpDir := t.TempDir()
@@ -60,7 +60,7 @@ func setupIntegrationRouter(t *testing.T) (http.Handler, *repository.DB, func())
 		r.Get("/api/v1/media/{id}/stream", mediaHandler.Stream)
 	})
 
-	return r, db, func() { db.Close() }
+	return r, func() { _ = db.Close() }
 }
 
 func apiCall(t *testing.T, router http.Handler, method, path, token string, body []byte) *httptest.ResponseRecorder {
@@ -86,7 +86,7 @@ func writeFile(t *testing.T, path string, data []byte) {
 }
 
 func TestIntegration_NFOImportFlow(t *testing.T) {
-	router, _, cleanup := setupIntegrationRouter(t)
+	router, cleanup := setupIntegrationRouter(t)
 	defer cleanup()
 
 	// Step 1: Register + Login
@@ -99,7 +99,7 @@ func TestIntegration_NFOImportFlow(t *testing.T) {
 	assert.Equal(t, 200, w.Code)
 
 	var loginResp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &loginResp)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &loginResp))
 	loginData := loginResp["data"].(map[string]interface{})
 	token := loginData["access_token"].(string)
 	assert.NotEmpty(t, token)
@@ -108,7 +108,7 @@ func TestIntegration_NFOImportFlow(t *testing.T) {
 	w = apiCall(t, router, "GET", "/api/v1/auth/me", token, nil)
 	assert.Equal(t, 200, w.Code)
 	var meResp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &meResp)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &meResp))
 	meData := meResp["data"].(map[string]interface{})
 	assert.Equal(t, "testuser", meData["username"])
 	assert.Equal(t, "user", meData["role"])
@@ -156,7 +156,7 @@ func TestIntegration_NFOImportFlow(t *testing.T) {
 		[]byte(`{"source_path":"`+tmpMediaDir+`"}`))
 	assert.Equal(t, 200, w.Code)
 	var importResp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &importResp)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &importResp))
 	importData := importResp["data"].(map[string]interface{})
 	jobID := importData["job_id"].(string)
 	assert.NotEmpty(t, jobID)
@@ -167,7 +167,7 @@ func TestIntegration_NFOImportFlow(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		w = apiCall(t, router, "GET", "/api/v1/library/jobs/"+jobID, token, nil)
 		var jobResp map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &jobResp)
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &jobResp))
 		jobDataRaw := jobResp["data"]
 		if jobDataRaw == nil {
 			continue
@@ -184,7 +184,7 @@ func TestIntegration_NFOImportFlow(t *testing.T) {
 	w = apiCall(t, router, "GET", "/api/v1/library?page_size=100", token, nil)
 	assert.Equal(t, 200, w.Code)
 	var listResp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &listResp)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &listResp))
 	listData := listResp["data"].(map[string]interface{})
 	items := listData["items"].([]interface{})
 	assert.Equal(t, 3, len(items), "expect 1 movie + 1 show + 1 episode")
@@ -210,7 +210,7 @@ func TestIntegration_NFOImportFlow(t *testing.T) {
 }
 
 func TestIntegration_UnauthorizedAccess(t *testing.T) {
-	router, _, cleanup := setupIntegrationRouter(t)
+	router, cleanup := setupIntegrationRouter(t)
 	defer cleanup()
 
 	w := apiCall(t, router, "GET", "/api/v1/library", "", nil)
@@ -218,7 +218,7 @@ func TestIntegration_UnauthorizedAccess(t *testing.T) {
 }
 
 func TestIntegration_RegisterDuplicate(t *testing.T) {
-	router, _, cleanup := setupIntegrationRouter(t)
+	router, cleanup := setupIntegrationRouter(t)
 	defer cleanup()
 
 	body := []byte(`{"username":"dupuser","password":"pass123"}`)
