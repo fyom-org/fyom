@@ -31,7 +31,7 @@ request.interceptors.response.use(
       console.error('[API Error]', body.code, body.message)
       return Promise.reject(new Error(body.message))
     }
-    return response
+    return response.data as any
   },
   (error: unknown) => {
     return Promise.reject(error)

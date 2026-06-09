@@ -11,10 +11,8 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 
-const router = useRouter()
 const store = useUserStore()
 
 const username = ref('')
@@ -27,9 +25,9 @@ async function handleLogin() {
   loading.value = true
   try {
     await store.doLogin(username.value, password.value)
-    router.push({ name: 'home' })
-  } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : 'Login failed'
+  } catch (err) {
+    console.error('[fyom] login failed:', err)
+    error.value = err instanceof Error ? err.message : 'Login failed'
   } finally {
     loading.value = false
   }

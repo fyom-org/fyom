@@ -1,8 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { login, getMe, type MeData } from '@/api/auth'
 
 export const useUserStore = defineStore('user', () => {
+  const router = useRouter()
+
   const token = ref<string>(localStorage.getItem('token') ?? '')
   const user = ref<MeData | null>(null)
 
@@ -10,8 +13,11 @@ export const useUserStore = defineStore('user', () => {
 
   async function doLogin(username: string, password: string): Promise<void> {
     const res = await login({ username, password })
-    token.value = res.data.access_token
-    localStorage.setItem('token', token.value)
+    const accessToken = res.data.access_token
+    if (!accessToken) throw new Error('login response missing access_token')
+    token.value = accessToken
+    localStorage.setItem('token', accessToken)
+    await router.push('/home')
   }
 
   async function fetchMe(): Promise<void> {
