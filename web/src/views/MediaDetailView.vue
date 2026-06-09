@@ -1,8 +1,8 @@
 <template>
   <div class="detail-view" v-if="item">
     <div class="backdrop">
-      <img v-if="!backdropFailed"
-           :src="`/api/v1/media/${item.id}/backdrop`"
+      <img v-if="!backdropFailed && item.backdrop_url"
+           :src="item.backdrop_url"
            @error="backdropFailed = true" />
       <div class="backdrop-overlay"></div>
     </div>
@@ -11,7 +11,7 @@
       <router-link to="/library" class="back-link">← Back to Library</router-link>
 
       <div class="main-row">
-        <img class="poster" :src="`/api/v1/media/${item.id}/poster`" />
+        <img class="poster" v-if="item.poster_url" :src="item.poster_url" />
 
         <div class="meta">
           <h1 class="title">{{ item.title }}</h1>
@@ -23,8 +23,8 @@
           </div>
           <p class="overview" v-if="item.overview">{{ item.overview }}</p>
 
-          <a v-if="item.type !== 'show'"
-             :href="`/api/v1/media/${item.id}/stream`"
+          <a v-if="item.type !== 'show' && item.stream_url"
+             :href="item.stream_url"
              class="play-btn">▶ Play</a>
         </div>
       </div>

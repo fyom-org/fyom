@@ -2,16 +2,16 @@
   <div class="episode-list" v-if="seasons.length">
     <div v-for="s in seasons" :key="s.season" class="season-group">
       <h3 class="season-title">Season {{ s.season }}</h3>
-      <router-link
+      <div
         v-for="ep in s.episodes"
         :key="ep.id"
-        :to="`/library/${ep.id}`"
         class="episode-row"
       >
         <span class="ep-label">{{ epLabel(ep) }}</span>
         <span class="ep-title">{{ ep.title }}</span>
         <span class="ep-duration" v-if="ep.duration">{{ formatDuration(ep.duration) }}</span>
-      </router-link>
+        <router-link :to="`/play/${ep.id}`" class="ep-play" @click.stop>▶</router-link>
+      </div>
     </div>
   </div>
 </template>
@@ -28,6 +28,8 @@ interface Episode {
   season: number
   episode: number
   duration: number
+  poster_url?: string
+  stream_url?: string
 }
 
 const episodes = ref<Episode[]>([])
@@ -115,5 +117,17 @@ function formatDuration(sec: number) {
 .ep-duration {
   color: #666688;
   font-size: 13px;
+}
+
+.ep-play {
+  color: #6c63ff;
+  font-size: 16px;
+  text-decoration: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.ep-play:hover {
+  color: #8b83ff;
 }
 </style>

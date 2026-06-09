@@ -16,6 +16,7 @@ const router = createRouter({
         { path: 'import', name: 'import', component: ImportView },
         { path: 'library', name: 'Library', component: () => import('@/views/LibraryView.vue') },
         { path: 'library/:id', name: 'MediaDetail', component: () => import('@/views/MediaDetailView.vue') },
+        { path: 'play/:id', name: 'Player', component: () => import('@/views/PlayerView.vue') },
         { path: 'profile', name: 'Profile', component: () => import('@/views/ProfileView.vue') },
         { path: 'home', redirect: '/import' },
         { path: '', redirect: '/import' },

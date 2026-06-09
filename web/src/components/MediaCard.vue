@@ -2,7 +2,7 @@
   <router-link :to="`/library/${item.id}`" custom v-slot="{ navigate }">
     <div class="media-card" @click="navigate" role="link" tabindex="0">
       <div class="poster-wrap">
-        <img :src="posterSrc" :alt="item.title" @error="onPosterError" />
+        <img v-if="item.poster_url" :src="item.poster_url" :alt="item.title" />
         <div class="poster-fallback">{{ item.title?.[0] ?? '?' }}</div>
       </div>
       <div class="info">
@@ -14,15 +14,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-
-const props = defineProps<{ item: { id: string; title: string; year?: number } }>()
-
-const posterSrc = ref(`/api/v1/media/${props.item.id}/poster`)
-
-function onPosterError() {
-  posterSrc.value = ''
-}
+defineProps<{ item: { id: string; title: string; year?: number; poster_url?: string } }>()
 </script>
 
 <style scoped>
@@ -43,10 +35,6 @@ function onPosterError() {
   height: 100%;
   object-fit: cover;
   display: block;
-}
-
-.poster-wrap img[src=""] {
-  display: none;
 }
 
 .poster-fallback {
