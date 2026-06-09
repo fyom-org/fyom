@@ -66,6 +66,19 @@ func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
 	}
 }
 
+// RequireAdmin is a middleware that rejects requests from non-admin users.
+// Must be used after AuthMiddleware so that the role is already in the context.
+func RequireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		role, _ := GetRole(r).(string)
+		if role != "admin" {
+			response.Error(w, 403, "admin role required")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // parseAndValidateToken parses a JWT string and returns its claims.
 func parseAndValidateToken(tokenString string, secret string) (jwt.MapClaims, error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {

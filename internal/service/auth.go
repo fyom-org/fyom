@@ -33,6 +33,7 @@ func bytesToStr(b []byte) string {
 }
 
 // Register creates a new user with a bcrypt-hashed password.
+// The first user (count == 0) is automatically assigned the "admin" role.
 func (s *AuthService) Register(ctx context.Context, username, password string) (*model.User, error) {
 	if username == "" || password == "" {
 		return nil, errors.Wrap(nil, errors.ErrValidation)
@@ -47,18 +48,28 @@ func (s *AuthService) Register(ctx context.Context, username, password string) (
 		return nil, errors.Wrap(nil, errors.ErrConflict)
 	}
 
+	// Determine role: first user becomes admin
+	count, err := s.userRepo.Count(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.ErrInternal)
+	}
+	role := "user"
+	if count == 0 {
+		role = "admin"
+	}
+
 	// Hash password with bcrypt
 	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.ErrInternal)
 	}
 
-	return s.createUserWithHashedPassword(ctx, username, hashedBytes)
+	return s.createUserWithRole(ctx, username, hashedBytes, role)
 }
 
-// createUserWithHashedPassword stores a new user with a pre-hashed password.
-func (s *AuthService) createUserWithHashedPassword(ctx context.Context, username string, hashedBytes []byte) (*model.User, error) {
-	user := &model.User{Username: username, Role: "user"}
+// createUserWithRole stores a new user with a pre-hashed password and explicit role.
+func (s *AuthService) createUserWithRole(ctx context.Context, username string, hashedBytes []byte, role string) (*model.User, error) {
+	user := &model.User{Username: username, Role: role}
 	user.Password = bytesToStr(hashedBytes)
 
 	if err := s.userRepo.Create(ctx, user); err != nil {

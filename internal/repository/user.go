@@ -50,3 +50,10 @@ func (r *UserRepository) Create(ctx context.Context, u *model.User) error {
 		u.ID, u.Username, u.Password, u.Role, u.CreatedAt, u.UpdatedAt)
 	return err
 }
+
+// Count returns the total number of users.
+func (r *UserRepository) Count(ctx context.Context) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM users").Scan(&count)
+	return count, err
+}
