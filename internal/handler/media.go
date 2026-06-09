@@ -126,7 +126,21 @@ func (h *MediaHandler) List(w http.ResponseWriter, r *http.Request) {
 		mediaType = "movie,show"
 	}
 
-	items, total, err := h.repo.ListPaged(r.Context(), mediaType, page, pageSize)
+	// Search query.
+	q := r.URL.Query().Get("q")
+
+	// Sort — validate against allowed set, degrade silently.
+	sort := r.URL.Query().Get("sort")
+	allowedSorts := map[string]bool{
+		"title_asc": true, "title_desc": true,
+		"year_asc": true, "year_desc": true,
+		"rating_desc": true, "created_desc": true,
+	}
+	if !allowedSorts[sort] {
+		sort = "title_asc"
+	}
+
+	items, total, err := h.repo.ListPaged(r.Context(), page, pageSize, mediaType, q, sort)
 	if err != nil {
 		response.Error(w, 500, "internal server error")
 		return
