@@ -26,7 +26,7 @@ export function getJobStatus(jobId: string) {
 
 export async function getMediaList(page: number, limit: number) {
   const res = await request.get('/library', { params: { page, limit } })
-  return res.data.data
+  return res.data
 }
 
 export async function getMediaDetail(id: string) {
