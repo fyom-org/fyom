@@ -36,6 +36,16 @@ const router = createRouter({
           component: () => import('@/views/admin/ImportView.vue'),
         },
         {
+          path: 'libraries',
+          name: 'AdminLibraries',
+          component: () => import('@/views/admin/LibrariesView.vue'),
+        },
+        {
+          path: 'media',
+          name: 'AdminMedia',
+          component: () => import('@/views/admin/MediaView.vue'),
+        },
+        {
           path: 'providers',
           name: 'AdminProviders',
           component: () => import('@/views/admin/ProvidersView.vue'),
@@ -44,6 +54,11 @@ const router = createRouter({
           path: 'system',
           name: 'AdminSystem',
           component: () => import('@/views/admin/SystemView.vue'),
+        },
+        {
+          path: 'settings',
+          name: 'AdminSettings',
+          component: () => import('@/views/admin/SettingsView.vue'),
         },
       ],
     },

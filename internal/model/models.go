@@ -29,6 +29,7 @@ type MediaItem struct {
 	Episode        *int    `json:"episode,omitempty" db:"episode"`
 	MetadataSource string  `json:"metadata_source,omitempty" db:"metadata_source"`
 	ProviderID     string  `json:"provider_id" db:"provider_id"`
+	LibraryID      string  `json:"library_id" db:"library_id"`
 	CreatedAt      string  `json:"created_at" db:"created_at"`
 	UpdatedAt      string  `json:"updated_at" db:"updated_at"`
 }
@@ -40,6 +41,7 @@ type ImportJob struct {
 	Status     string `json:"status" db:"status"`
 	TotalItems int    `json:"total_items" db:"total_items"`
 	DoneItems  int    `json:"done_items" db:"done_items"`
+	LibraryID  string `json:"library_id" db:"library_id"`
 	ErrorMsg   string `json:"error_msg,omitempty" db:"error_msg"`
 	CreatedAt  string `json:"created_at" db:"created_at"`
 	UpdatedAt  string `json:"updated_at" db:"updated_at"`

@@ -161,7 +161,7 @@ func (r *AdminRepository) ListJobs(ctx context.Context, page, limit int) ([]mode
 	}
 
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, source_path, status, total_items, done_items, error_msg, created_at, updated_at FROM import_jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
+		"SELECT id, source_path, status, total_items, done_items, library_id, error_msg, created_at, updated_at FROM import_jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
 		limit, offset,
 	)
 	if err != nil {
@@ -173,7 +173,7 @@ func (r *AdminRepository) ListJobs(ctx context.Context, page, limit int) ([]mode
 	for rows.Next() {
 		var j model.ImportJob
 		var errorMsg sql.NullString
-		if err := rows.Scan(&j.ID, &j.SourcePath, &j.Status, &j.TotalItems, &j.DoneItems, &errorMsg, &j.CreatedAt, &j.UpdatedAt); err != nil {
+		if err := rows.Scan(&j.ID, &j.SourcePath, &j.Status, &j.TotalItems, &j.DoneItems, &j.LibraryID, &errorMsg, &j.CreatedAt, &j.UpdatedAt); err != nil {
 			return nil, 0, err
 		}
 		if errorMsg.Valid {

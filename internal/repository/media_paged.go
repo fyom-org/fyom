@@ -10,16 +10,6 @@ import (
 
 // ListPaged returns a paginated, filtered, and sorted list of media items
 // and the total count matching the filters.
-//
-// TODO(phase3): This query runs directly against the local SQLite repository.
-// When MediaProvider is introduced, search must become a Provider-level
-// concern so that RemoteFyomProvider can forward q/sort to the remote API.
-// Replace this with Provider.Search(ctx, SearchParams{}) at that point.
-//
-// TODO(fts5): LIKE '%q%' is a full-table scan and cannot use an index.
-// Migrate to SQLite FTS5 virtual table + triggers when library scale
-// requires it. Migration will need: CREATE VIRTUAL TABLE media_fts,
-// INSERT/UPDATE/DELETE triggers, and a db migration file.
 func (r *MediaRepository) ListPaged(ctx context.Context, page, limit int, mediaType string, query string, sort string) ([]model.MediaItem, int, error) {
 	var whereClauses []string
 	var whereArgs []interface{}
@@ -54,7 +44,6 @@ func (r *MediaRepository) ListPaged(ctx context.Context, page, limit int, mediaT
 	}
 
 	// ORDER BY — CASE WHEN pushes NULL/zero/empty to the bottom.
-	// sort_title may be empty or NULL; fall back to title inline.
 	orderBy := "CASE WHEN sort_title IS NULL OR sort_title = '' THEN title ELSE sort_title END ASC, title ASC"
 	switch sort {
 	case "title_desc":
@@ -80,7 +69,7 @@ func (r *MediaRepository) ListPaged(ctx context.Context, page, limit int, mediaT
 	offset := (page - 1) * limit
 	dataQuery := fmt.Sprintf(`SELECT id, type, title, sort_title, year, overview, rating, duration,
 		file_path, poster_path, backdrop_path, parent_id, season, episode,
-		metadata_source, provider_id, created_at, updated_at FROM media_items%s
+		metadata_source, provider_id, library_id, created_at, updated_at FROM media_items%s
 		ORDER BY %s LIMIT ? OFFSET ?`, where, orderBy)
 	dataArgs := append(whereArgs, limit, offset)
 
@@ -97,7 +86,7 @@ func (r *MediaRepository) ListPaged(ctx context.Context, page, limit int, mediaT
 		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year,
 			&m.Overview, &m.Rating, &m.Duration, &m.FilePath, &m.PosterPath,
 			&m.BackdropPath, &m.ParentID, &season, &episode,
-			&m.MetadataSource, &m.ProviderID, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, 0, err
 		}
 		m.Season = IntPtr(season)

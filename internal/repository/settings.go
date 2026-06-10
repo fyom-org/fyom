@@ -25,3 +25,31 @@ func (r *SystemSettingRepository) SetSetting(ctx context.Context, key, value str
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
 	return err
 }
+
+// List returns all system settings.
+func (r *SystemSettingRepository) List(ctx context.Context) ([]struct {
+	Key   string
+	Value string
+}, error) {
+	rows, err := r.db.QueryContext(ctx, "SELECT key, value FROM system_settings ORDER BY key ASC")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var results []struct {
+		Key   string
+		Value string
+	}
+	for rows.Next() {
+		var kv struct {
+			Key   string
+			Value string
+		}
+		if err := rows.Scan(&kv.Key, &kv.Value); err != nil {
+			return nil, err
+		}
+		results = append(results, kv)
+	}
+	return results, rows.Err()
+}

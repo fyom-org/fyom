@@ -20,17 +20,18 @@ func NewImportJobRepository(db *DB) *ImportJobRepository {
 }
 
 // Create inserts a new import job.
-func (r *ImportJobRepository) Create(ctx context.Context, sourcePath string) (*model.ImportJob, error) {
+func (r *ImportJobRepository) Create(ctx context.Context, sourcePath, libraryID string) (*model.ImportJob, error) {
 	job := &model.ImportJob{
 		ID:         uuid.New().String(),
 		SourcePath: sourcePath,
 		Status:     "pending",
+		LibraryID:  libraryID,
 		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
 		UpdatedAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 	_, err := r.db.ExecContext(ctx,
-		"INSERT INTO import_jobs (id, source_path, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-		job.ID, job.SourcePath, job.Status, job.CreatedAt, job.UpdatedAt)
+		"INSERT INTO import_jobs (id, source_path, status, library_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+		job.ID, job.SourcePath, job.Status, job.LibraryID, job.CreatedAt, job.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -42,8 +43,8 @@ func (r *ImportJobRepository) Get(ctx context.Context, id string) (*model.Import
 	var j model.ImportJob
 	var errorMsg sql.NullString
 	err := r.db.QueryRowContext(ctx,
-		"SELECT id, source_path, status, total_items, done_items, error_msg, created_at, updated_at FROM import_jobs WHERE id = ?", id,
-	).Scan(&j.ID, &j.SourcePath, &j.Status, &j.TotalItems, &j.DoneItems, &errorMsg, &j.CreatedAt, &j.UpdatedAt)
+		"SELECT id, source_path, status, total_items, done_items, library_id, error_msg, created_at, updated_at FROM import_jobs WHERE id = ?", id,
+	).Scan(&j.ID, &j.SourcePath, &j.Status, &j.TotalItems, &j.DoneItems, &j.LibraryID, &errorMsg, &j.CreatedAt, &j.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

@@ -34,6 +34,7 @@ var seasonDirPattern = regexp.MustCompile(`(?i)^season\s*\d+$`)
 type Importer struct {
 	fs         ImportFS
 	providerID string
+	libraryID  string
 	mediaRepo  *repository.MediaRepository
 	jobRepo    *repository.ImportJobRepository
 	db         *repository.DB
@@ -44,9 +45,17 @@ func NewImporter(fs ImportFS, providerID string, db *repository.DB, mediaRepo *r
 	return &Importer{
 		fs:         fs,
 		providerID: providerID,
+		libraryID:  "default",
 		mediaRepo:  mediaRepo,
 		jobRepo:    jobRepo,
 		db:         db,
+	}
+}
+
+// SetLibraryID sets the library ID for imported items.
+func (imp *Importer) SetLibraryID(id string) {
+	if id != "" {
+		imp.libraryID = id
 	}
 }
 
@@ -60,7 +69,7 @@ func (imp *Importer) ImportRequest(ctx context.Context, sourcePath string) (*mod
 	// Note: for local FS, ReadDir on a non-existent dir returns an error above.
 	// For S3, an empty prefix listing is valid (import the whole bucket).
 
-	job, err := imp.jobRepo.Create(ctx, sourcePath)
+	job, err := imp.jobRepo.Create(ctx, sourcePath, imp.libraryID)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.ErrInternal)
 	}
@@ -245,6 +254,7 @@ func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, exi
 		BackdropPath:   backdropPath,
 		MetadataSource: "nfo",
 		ProviderID:     imp.providerID,
+		LibraryID:      imp.libraryID,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
@@ -370,6 +380,7 @@ func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, show
 			Episode:        repository.IntPtr(episode),
 			MetadataSource: "nfo",
 			ProviderID:     imp.providerID,
+			LibraryID:      imp.libraryID,
 			CreatedAt:      now,
 			UpdatedAt:      now,
 		}
@@ -444,6 +455,7 @@ func (imp *Importer) processMovieDir(ctx context.Context, dirPath, nfoPath strin
 		BackdropPath:   backdropPath,
 		MetadataSource: "nfo",
 		ProviderID:     imp.providerID,
+		LibraryID:      imp.libraryID,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
@@ -506,6 +518,7 @@ func (imp *Importer) processDirAsMovie(ctx context.Context, dirPath string, exis
 		PosterPath:     posterPath,
 		MetadataSource: "filename",
 		ProviderID:     imp.providerID,
+		LibraryID:      imp.libraryID,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}

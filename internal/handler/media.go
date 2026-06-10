@@ -326,6 +326,7 @@ func (h *MediaHandler) Delete(w http.ResponseWriter, r *http.Request) {
 type ImportRequest struct {
 	SourcePath string `json:"source_path"`
 	ProviderID string `json:"provider_id"`
+	LibraryID  string `json:"library_id"`
 }
 
 // ImportResponse returns the created job ID.
@@ -344,6 +345,9 @@ func (h *MediaHandler) Import(w http.ResponseWriter, r *http.Request) {
 
 	if req.ProviderID == "" {
 		req.ProviderID = "local"
+	}
+	if req.LibraryID == "" {
+		req.LibraryID = "default"
 	}
 
 	var fs service.ImportFS
@@ -379,6 +383,7 @@ func (h *MediaHandler) Import(w http.ResponseWriter, r *http.Request) {
 
 	// Create a fresh importer per request — each import gets its own FS
 	imp := service.NewImporter(fs, providerID, h.db, h.repo, h.jobRepo)
+	imp.SetLibraryID(req.LibraryID)
 	job, err := imp.ImportRequest(r.Context(), req.SourcePath)
 	if err != nil {
 		if appErr, ok := errors.IsAppError(err); ok {
