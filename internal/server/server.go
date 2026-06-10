@@ -76,7 +76,7 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 
 	// Handlers
 	healthHandler := handler.NewHealthHandler(version, gitCommit, buildTime, goVer)
-	mediaHandler := handler.NewMediaHandler(reg, db, mediaRepo, jobRepo, logger)
+	mediaHandler := handler.NewMediaHandler(reg, db, mediaRepo, jobRepo, providerRepo, logger)
 	// TODO: re-add path restriction when multi-user mode is implemented
 	authHandler := handler.NewAuthHandler(userRepo, settingRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
 	systemHandler := handler.NewSystemHandler(settingRepo, authHandler.GetAuthService())

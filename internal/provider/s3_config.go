@@ -1,3 +1,8 @@
+// Package provider defines the MediaProvider interface and implementations
+// for different storage backends (local filesystem, S3-compatible, remote fyom).
+//
+// Config types and parsers are exported for use by the S3 importer,
+// which needs to create its own S3 client from the same config format.
 package provider
 
 import (
@@ -29,9 +34,9 @@ type S3Config struct {
 	CDNBaseURL string `json:"cdn_base_url"`
 }
 
-// parseS3Config deserializes and validates an S3Config from raw JSON.
+// ParseS3Config deserializes and validates an S3Config from raw JSON.
 // Returns an error if required fields are missing or the JSON is invalid.
-func parseS3Config(raw string) (S3Config, error) {
+func ParseS3Config(raw string) (S3Config, error) {
 	var cfg S3Config
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		return cfg, fmt.Errorf("invalid S3 config JSON: %w", err)

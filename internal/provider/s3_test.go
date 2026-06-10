@@ -89,7 +89,7 @@ func TestParseS3Config(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := parseS3Config(tt.raw)
+			cfg, err := ParseS3Config(tt.raw)
 			if tt.wantErr != "" {
 				if err == nil {
 					t.Fatalf("expected error containing %q, got nil", tt.wantErr)

@@ -42,21 +42,23 @@ type MediaItemResponse struct {
 
 // MediaHandler handles media-related HTTP endpoints.
 type MediaHandler struct {
-	registry *provider.Registry
-	repo     *repository.MediaRepository
-	jobRepo  *repository.ImportJobRepository
-	importer *service.Importer
-	logger   *slog.Logger
+	registry     *provider.Registry
+	repo         *repository.MediaRepository
+	jobRepo      *repository.ImportJobRepository
+	providerRepo *repository.ProviderRepository
+	db           *repository.DB
+	logger       *slog.Logger
 }
 
 // NewMediaHandler creates a new MediaHandler.
-func NewMediaHandler(registry *provider.Registry, db *repository.DB, mediaRepo *repository.MediaRepository, jobRepo *repository.ImportJobRepository, logger *slog.Logger) *MediaHandler {
+func NewMediaHandler(registry *provider.Registry, db *repository.DB, mediaRepo *repository.MediaRepository, jobRepo *repository.ImportJobRepository, providerRepo *repository.ProviderRepository, logger *slog.Logger) *MediaHandler {
 	return &MediaHandler{
-		registry: registry,
-		repo:     mediaRepo,
-		jobRepo:  jobRepo,
-		importer: service.NewImporter(db, mediaRepo, jobRepo),
-		logger:   logger,
+		registry:     registry,
+		repo:         mediaRepo,
+		jobRepo:      jobRepo,
+		providerRepo: providerRepo,
+		db:           db,
+		logger:       logger,
 	}
 }
 
@@ -234,6 +236,7 @@ func (h *MediaHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // ImportRequest triggers an async NFO-based import.
 type ImportRequest struct {
 	SourcePath string `json:"source_path"`
+	ProviderID string `json:"provider_id"`
 }
 
 // ImportResponse returns the created job ID.
@@ -250,7 +253,44 @@ func (h *MediaHandler) Import(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.importer.ImportRequest(r.Context(), req.SourcePath)
+	if req.ProviderID == "" {
+		req.ProviderID = "local"
+	}
+
+	var fs service.ImportFS
+	var providerID string
+
+	if req.ProviderID == "local" {
+		fs = service.NewLocalImportFS()
+		providerID = "local"
+	} else {
+		p, ok := h.registry.Get(req.ProviderID)
+		if !ok {
+			response.Error(w, 400, "provider not found: "+req.ProviderID)
+			return
+		}
+		if p.Type() != "s3" {
+			response.Error(w, 400, "import from provider type '"+p.Type()+"' is not supported yet")
+			return
+		}
+		// Get provider record from DB for S3 config
+		rec, err := h.providerRepo.GetByID(r.Context(), req.ProviderID)
+		if err != nil || rec == nil {
+			response.Error(w, 500, "failed to load provider config")
+			return
+		}
+		s3fs, err := service.NewS3ImportFS(r.Context(), rec, req.SourcePath)
+		if err != nil {
+			response.Error(w, 500, "failed to create S3 client: "+err.Error())
+			return
+		}
+		fs = s3fs
+		providerID = req.ProviderID
+	}
+
+	// Create a fresh importer per request — each import gets its own FS
+	imp := service.NewImporter(fs, providerID, h.db, h.repo, h.jobRepo)
+	job, err := imp.ImportRequest(r.Context(), req.SourcePath)
 	if err != nil {
 		if appErr, ok := errors.IsAppError(err); ok {
 			response.Error(w, appErr.Code, appErr.Message)

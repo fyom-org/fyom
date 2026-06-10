@@ -37,7 +37,7 @@ type S3Provider struct {
 // all required fields are present. Returns an error if config is invalid.
 // Does NOT make network calls — credentials are only verified at first use.
 func NewS3Provider(rec model.ProviderRecord) (*S3Provider, error) {
-	cfg, err := parseS3Config(rec.Config)
+	cfg, err := ParseS3Config(rec.Config)
 	if err != nil {
 		return nil, fmt.Errorf("S3Provider %q: %w", rec.ID, err)
 	}

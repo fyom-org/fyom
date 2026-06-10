@@ -3,8 +3,6 @@ package service
 import (
 	"context"
 	"encoding/xml"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -34,32 +32,33 @@ var seasonDirPattern = regexp.MustCompile(`(?i)^season\s*\d+$`)
 
 // Importer handles asynchronous NFO-based media library imports.
 type Importer struct {
-	mediaRepo *repository.MediaRepository
-	jobRepo   *repository.ImportJobRepository
-	db        *repository.DB
+	fs         ImportFS
+	providerID string
+	mediaRepo  *repository.MediaRepository
+	jobRepo    *repository.ImportJobRepository
+	db         *repository.DB
 }
 
 // NewImporter creates a new Importer.
-func NewImporter(db *repository.DB, mediaRepo *repository.MediaRepository, jobRepo *repository.ImportJobRepository) *Importer {
+func NewImporter(fs ImportFS, providerID string, db *repository.DB, mediaRepo *repository.MediaRepository, jobRepo *repository.ImportJobRepository) *Importer {
 	return &Importer{
-		mediaRepo: mediaRepo,
-		jobRepo:   jobRepo,
-		db:        db,
+		fs:         fs,
+		providerID: providerID,
+		mediaRepo:  mediaRepo,
+		jobRepo:    jobRepo,
+		db:         db,
 	}
 }
 
 // ImportRequest triggers an asynchronous import.
 func (imp *Importer) ImportRequest(ctx context.Context, sourcePath string) (*model.ImportJob, error) {
-	info, err := os.Stat(sourcePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, &errors.AppError{Code: 404, Message: "directory not found"}
-		}
-		return nil, errors.Wrap(err, errors.ErrInternal)
+	// For S3 imports, sourcePath is a prefix — it may not exist as a single
+	// object. Check if we can list any entries under the prefix instead.
+	if _, err := imp.fs.ReadDir(ctx, sourcePath); err != nil {
+		return nil, &errors.AppError{Code: 404, Message: "directory not found"}
 	}
-	if !info.IsDir() {
-		return nil, &errors.AppError{Code: 400, Message: "path is not a directory"}
-	}
+	// Note: for local FS, ReadDir on a non-existent dir returns an error above.
+	// For S3, an empty prefix listing is valid (import the whole bucket).
 
 	job, err := imp.jobRepo.Create(ctx, sourcePath)
 	if err != nil {
@@ -78,7 +77,7 @@ func (imp *Importer) runImport(jobID, sourcePath string) {
 	_ = imp.jobRepo.UpdateProgress(ctx, jobID, 0, 0, "running")
 
 	// Phase 1: Count total video files for progress tracking.
-	total := imp.countVideoFiles(sourcePath)
+	total := imp.countVideoFiles(ctx, sourcePath)
 	if total == 0 {
 		_ = imp.jobRepo.UpdateProgress(ctx, jobID, 0, 0, "done")
 		return
@@ -93,7 +92,7 @@ func (imp *Importer) runImport(jobID, sourcePath string) {
 	}
 
 	// Phase 3: Process each top-level subdirectory.
-	entries, err := os.ReadDir(sourcePath)
+	entries, err := imp.fs.ReadDir(ctx, sourcePath)
 	if err != nil {
 		_ = imp.jobRepo.UpdateError(ctx, jobID, err.Error())
 		return
@@ -103,14 +102,14 @@ func (imp *Importer) runImport(jobID, sourcePath string) {
 	var importErr error
 
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if !entry.IsDir {
 			continue
 		}
-		dirPath := filepath.Join(sourcePath, entry.Name())
+		dirPath := imp.fs.Join(sourcePath, entry.Name)
 
 		// Check for tvshow.nfo — this is a TV show directory.
-		tvshowNFOPath := filepath.Join(dirPath, "tvshow.nfo")
-		if fileExists(tvshowNFOPath) {
+		tvshowNFOPath := imp.fs.Join(dirPath, "tvshow.nfo")
+		if imp.fs.Exists(ctx, tvshowNFOPath) {
 			n, err := imp.processShowDir(ctx, dirPath, existingPaths)
 			if err != nil {
 				importErr = err
@@ -121,7 +120,7 @@ func (imp *Importer) runImport(jobID, sourcePath string) {
 		}
 
 		// Check for any .nfo with <movie> root — this is a movie directory.
-		movieNFO := imp.findMovieNFO(dirPath)
+		movieNFO := imp.findMovieNFO(ctx, dirPath)
 		if movieNFO != "" {
 			n, err := imp.processMovieDir(ctx, dirPath, movieNFO, existingPaths)
 			if err != nil {
@@ -149,26 +148,50 @@ func (imp *Importer) runImport(jobID, sourcePath string) {
 }
 
 // countVideoFiles counts all video files under sourcePath for progress tracking.
-func (imp *Importer) countVideoFiles(sourcePath string) int {
+func (imp *Importer) countVideoFiles(ctx context.Context, sourcePath string) int {
 	count := 0
-	_ = filepath.WalkDir(sourcePath, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
+	imp.walkDir(ctx, sourcePath, func(path string, entry DirEntry) {
+		if entry.IsDir {
+			return
 		}
-		if videoExtensions[strings.ToLower(filepath.Ext(path))] {
+		ext := strings.ToLower(imp.fs.Join(path)) // get ext via string manipulation
+		// We need the extension of the file name, not the joined path.
+		// Use a simple approach: get the last dot in the name.
+		name := entry.Name
+		if idx := strings.LastIndex(name, "."); idx >= 0 {
+			ext = strings.ToLower(name[idx:])
+		} else {
+			ext = ""
+		}
+		if videoExtensions[ext] {
 			count++
 		}
-		return nil
 	})
 	return count
+}
+
+// walkDir recursively walks the directory tree using imp.fs.ReadDir.
+// The callback receives the full path and the DirEntry.
+func (imp *Importer) walkDir(ctx context.Context, dir string, cb func(path string, entry DirEntry)) {
+	entries, err := imp.fs.ReadDir(ctx, dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		fullPath := imp.fs.Join(dir, entry.Name)
+		cb(fullPath, entry)
+		if entry.IsDir {
+			imp.walkDir(ctx, fullPath, cb)
+		}
+	}
 }
 
 // processShowDir handles a TV show directory containing tvshow.nfo.
 // Returns the number of items created.
 func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, existingPaths map[string]bool) (int, error) {
-	showNFOPath := filepath.Join(showDirPath, "tvshow.nfo")
+	showNFOPath := imp.fs.Join(showDirPath, "tvshow.nfo")
 
-	f, err := os.Open(showNFOPath)
+	f, err := imp.fs.Open(ctx, showNFOPath)
 	if err != nil {
 		return 0, err
 	}
@@ -181,7 +204,8 @@ func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, exi
 
 	title := showNFO.Title
 	if title == "" {
-		title = filepath.Base(showDirPath)
+		// Use the last path component as title.
+		title = baseName(showDirPath)
 	}
 
 	overview := showNFO.Overview
@@ -193,9 +217,17 @@ func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, exi
 	nfoPoster := extractNFOPosterThumb(showNFO.Thumbs)
 	nfoBackdrop := extractNFOFanartPath(showNFO.Fanart)
 
-	baseName := filepath.Base(showDirPath)
-	posterPath := FindPosterPath(showDirPath, baseName, nfoPoster)
-	backdropPath := FindBackdropPath(showDirPath, baseName, nfoBackdrop)
+	base := baseName(showDirPath)
+
+	var posterPath, backdropPath string
+	if _, ok := imp.fs.(*LocalImportFS); ok {
+		posterPath = FindPosterPath(showDirPath, base, nfoPoster)
+		backdropPath = FindBackdropPath(showDirPath, base, nfoBackdrop)
+	} else {
+		// For S3: use NFO thumb path directly (no disk-based file existence checks).
+		posterPath = nfoPoster
+		backdropPath = nfoBackdrop
+	}
 
 	// Create the show item.
 	showID := uuid.New().String()
@@ -212,7 +244,7 @@ func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, exi
 		PosterPath:     posterPath,
 		BackdropPath:   backdropPath,
 		MetadataSource: "nfo",
-		ProviderID:     "local", // TODO(phase4): S3Importer will set this to the configured S3 provider ID.
+		ProviderID:     imp.providerID,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
@@ -224,16 +256,16 @@ func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, exi
 	// Scan season subdirectories and the show dir itself for episode files.
 	created := 1 // the show itself
 
-	entries, err := os.ReadDir(showDirPath)
+	entries, err := imp.fs.ReadDir(ctx, showDirPath)
 	if err != nil {
 		return created, nil
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if !entry.IsDir {
 			continue
 		}
-		seasonDirPath := filepath.Join(showDirPath, entry.Name())
+		seasonDirPath := imp.fs.Join(showDirPath, entry.Name)
 
 		n, err := imp.processEpisodeFilesInDir(ctx, seasonDirPath, showID, existingPaths)
 		if err != nil {
@@ -247,7 +279,7 @@ func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, exi
 
 // processEpisodeFilesInDir scans a directory for video files and creates episode items.
 func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, showID string, existingPaths map[string]bool) (int, error) {
-	entries, err := os.ReadDir(dirPath)
+	entries, err := imp.fs.ReadDir(ctx, dirPath)
 	if err != nil {
 		return 0, nil
 	}
@@ -255,36 +287,40 @@ func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, show
 	// Collect video files.
 	var videoFiles []string
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir {
 			continue
 		}
-		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		name := entry.Name
+		var ext string
+		if idx := strings.LastIndex(name, "."); idx >= 0 {
+			ext = strings.ToLower(name[idx:])
+		}
 		if videoExtensions[ext] {
-			videoFiles = append(videoFiles, entry.Name())
+			videoFiles = append(videoFiles, entry.Name)
 		}
 	}
 
 	created := 0
 	for _, vf := range videoFiles {
-		videoPath := filepath.Join(dirPath, vf)
+		videoPath := imp.fs.Join(dirPath, vf)
 		if existingPaths[videoPath] {
 			continue
 		}
 
-		baseName := strings.TrimSuffix(vf, filepath.Ext(vf))
+		baseNameNoExt := trimExt(vf)
 
 		// Extract season/episode from filename.
 		season, episode := extractEpisodeInfo(vf)
 
 		// Look for matching episode NFO.
-		episodeNFOPath := filepath.Join(dirPath, baseName+".nfo")
+		episodeNFOPath := imp.fs.Join(dirPath, baseNameNoExt+".nfo")
 		var epTitle, epOverview string
 		var epRating float64
 		var epRuntime int
 		var nfoThumb string
 
-		if fileExists(episodeNFOPath) {
-			if nf, err := os.Open(episodeNFOPath); err == nil {
+		if imp.fs.Exists(ctx, episodeNFOPath) {
+			if nf, err := imp.fs.Open(ctx, episodeNFOPath); err == nil {
 				epNFO, err := ParseEpisodeNFO(nf)
 				nf.Close()
 				if err == nil {
@@ -308,11 +344,16 @@ func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, show
 		}
 
 		if epTitle == "" {
-			epTitle = baseName
+			epTitle = baseNameNoExt
 		}
 
 		// Find episode thumbnail.
-		thumbPath := FindEpisodeThumbnailPath(dirPath, baseName, nfoThumb)
+		var thumbPath string
+		if _, ok := imp.fs.(*LocalImportFS); ok {
+			thumbPath = FindEpisodeThumbnailPath(dirPath, baseNameNoExt, nfoThumb)
+		} else {
+			thumbPath = nfoThumb
+		}
 
 		now := time.Now().UTC().Format(time.RFC3339)
 		epItem := &model.MediaItem{
@@ -328,12 +369,12 @@ func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, show
 			Season:         season,
 			Episode:        episode,
 			MetadataSource: "nfo",
-			ProviderID:     "local", // TODO(phase4): S3Importer will set this to the configured S3 provider ID.
+			ProviderID:     imp.providerID,
 			CreatedAt:      now,
 			UpdatedAt:      now,
-			}
+		}
 
-			if err := imp.mediaRepo.Create(ctx, epItem); err != nil {
+		if err := imp.mediaRepo.Create(ctx, epItem); err != nil {
 			return created, err
 		}
 		created++
@@ -344,7 +385,7 @@ func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, show
 
 // processMovieDir handles a directory with a movie NFO file.
 func (imp *Importer) processMovieDir(ctx context.Context, dirPath, nfoPath string, existingPaths map[string]bool) (int, error) {
-	f, err := os.Open(nfoPath)
+	f, err := imp.fs.Open(ctx, nfoPath)
 	if err != nil {
 		return 0, err
 	}
@@ -357,7 +398,7 @@ func (imp *Importer) processMovieDir(ctx context.Context, dirPath, nfoPath strin
 
 	title := movieNFO.Title
 	if title == "" {
-		title = strings.TrimSuffix(filepath.Base(nfoPath), filepath.Ext(nfoPath))
+		title = trimExt(baseName(nfoPath))
 	}
 
 	overview := movieNFO.Overview
@@ -366,7 +407,7 @@ func (imp *Importer) processMovieDir(ctx context.Context, dirPath, nfoPath strin
 	}
 
 	// Find the video file.
-	videoPath := imp.findVideoFileInDir(dirPath, title)
+	videoPath := imp.findVideoFileInDir(ctx, dirPath, title)
 	if videoPath == "" {
 		return 0, nil
 	}
@@ -377,9 +418,16 @@ func (imp *Importer) processMovieDir(ctx context.Context, dirPath, nfoPath strin
 	// Poster and backdrop.
 	nfoPoster := extractNFOPosterThumb(movieNFO.Thumbs)
 	nfoBackdrop := extractNFOFanartPath(movieNFO.Fanart)
-	baseName := strings.TrimSuffix(filepath.Base(nfoPath), filepath.Ext(nfoPath))
-	posterPath := FindPosterPath(dirPath, baseName, nfoPoster)
-	backdropPath := FindBackdropPath(dirPath, baseName, nfoBackdrop)
+	base := trimExt(baseName(nfoPath))
+
+	var posterPath, backdropPath string
+	if _, ok := imp.fs.(*LocalImportFS); ok {
+		posterPath = FindPosterPath(dirPath, base, nfoPoster)
+		backdropPath = FindBackdropPath(dirPath, base, nfoBackdrop)
+	} else {
+		posterPath = nfoPoster
+		backdropPath = nfoBackdrop
+	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	movieItem := &model.MediaItem{
@@ -395,7 +443,7 @@ func (imp *Importer) processMovieDir(ctx context.Context, dirPath, nfoPath strin
 		PosterPath:     posterPath,
 		BackdropPath:   backdropPath,
 		MetadataSource: "nfo",
-		ProviderID:     "local", // TODO(phase4): S3Importer will set this to the configured S3 provider ID.
+		ProviderID:     imp.providerID,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
@@ -408,19 +456,23 @@ func (imp *Importer) processMovieDir(ctx context.Context, dirPath, nfoPath strin
 
 // processDirAsMovie handles a directory with video files but no NFO.
 func (imp *Importer) processDirAsMovie(ctx context.Context, dirPath string, existingPaths map[string]bool) (int, error) {
-	entries, err := os.ReadDir(dirPath)
+	entries, err := imp.fs.ReadDir(ctx, dirPath)
 	if err != nil {
 		return 0, nil
 	}
 
 	var videoFiles []string
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir {
 			continue
 		}
-		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		name := entry.Name
+		var ext string
+		if idx := strings.LastIndex(name, "."); idx >= 0 {
+			ext = strings.ToLower(name[idx:])
+		}
 		if videoExtensions[ext] {
-			videoFiles = append(videoFiles, entry.Name())
+			videoFiles = append(videoFiles, entry.Name)
 		}
 	}
 
@@ -429,18 +481,21 @@ func (imp *Importer) processDirAsMovie(ctx context.Context, dirPath string, exis
 	}
 
 	// Use the first video file as the movie.
-	videoPath := filepath.Join(dirPath, videoFiles[0])
+	videoPath := imp.fs.Join(dirPath, videoFiles[0])
 	if existingPaths[videoPath] {
 		return 0, nil
 	}
 
 	// Extract title from filename.
-	title := strings.TrimSuffix(videoFiles[0], filepath.Ext(videoFiles[0]))
+	title := trimExt(videoFiles[0])
 	title = cleanTitle(title)
 
 	// Look for poster.
-	baseName := strings.TrimSuffix(videoFiles[0], filepath.Ext(videoFiles[0]))
-	posterPath := FindPosterPath(dirPath, baseName, "")
+	base := trimExt(videoFiles[0])
+	var posterPath string
+	if _, ok := imp.fs.(*LocalImportFS); ok {
+		posterPath = FindPosterPath(dirPath, base, "")
+	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	movieItem := &model.MediaItem{
@@ -450,7 +505,7 @@ func (imp *Importer) processDirAsMovie(ctx context.Context, dirPath string, exis
 		FilePath:       videoPath,
 		PosterPath:     posterPath,
 		MetadataSource: "filename",
-		ProviderID:     "local", // TODO(phase4): S3Importer will set this to the configured S3 provider ID.
+		ProviderID:     imp.providerID,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
@@ -463,20 +518,25 @@ func (imp *Importer) processDirAsMovie(ctx context.Context, dirPath string, exis
 
 // findMovieNFO looks for a .nfo file in dir that contains a <movie> root element.
 // Returns the path to the NFO file, or "" if none found.
-func (imp *Importer) findMovieNFO(dir string) string {
-	entries, err := os.ReadDir(dir)
+func (imp *Importer) findMovieNFO(ctx context.Context, dir string) string {
+	entries, err := imp.fs.ReadDir(ctx, dir)
 	if err != nil {
 		return ""
 	}
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir {
 			continue
 		}
-		if strings.ToLower(filepath.Ext(entry.Name())) != ".nfo" {
+		name := entry.Name
+		var ext string
+		if idx := strings.LastIndex(name, "."); idx >= 0 {
+			ext = strings.ToLower(name[idx:])
+		}
+		if ext != ".nfo" {
 			continue
 		}
-		path := filepath.Join(dir, entry.Name())
-		f, err := os.Open(path)
+		path := imp.fs.Join(dir, entry.Name)
+		f, err := imp.fs.Open(ctx, path)
 		if err != nil {
 			continue
 		}
@@ -491,28 +551,32 @@ func (imp *Importer) findMovieNFO(dir string) string {
 }
 
 // findVideoFileInDir finds a video file in the directory, preferring one matching the title.
-func (imp *Importer) findVideoFileInDir(dir, title string) string {
-	entries, err := os.ReadDir(dir)
+func (imp *Importer) findVideoFileInDir(ctx context.Context, dir, title string) string {
+	entries, err := imp.fs.ReadDir(ctx, dir)
 	if err != nil {
 		return ""
 	}
 
 	var firstVideo string
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir {
 			continue
 		}
-		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		name := entry.Name
+		var ext string
+		if idx := strings.LastIndex(name, "."); idx >= 0 {
+			ext = strings.ToLower(name[idx:])
+		}
 		if !videoExtensions[ext] {
 			continue
 		}
 		if firstVideo == "" {
-			firstVideo = filepath.Join(dir, entry.Name())
+			firstVideo = imp.fs.Join(dir, entry.Name)
 		}
 		// Prefer a file whose base name matches the title.
-		baseName := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
-		if strings.EqualFold(baseName, title) {
-			return filepath.Join(dir, entry.Name())
+		baseNameNoExt := trimExt(entry.Name)
+		if strings.EqualFold(baseNameNoExt, title) {
+			return imp.fs.Join(dir, entry.Name)
 		}
 	}
 	return firstVideo
@@ -579,4 +643,33 @@ func extractNFOEpisodeThumb(thumbs []model.NFOThumb) string {
 		}
 	}
 	return ""
+}
+
+// baseName returns the last element of a path (the file or directory name).
+// This replaces filepath.Base which is OS-dependent.
+func baseName(path string) string {
+	if path == "" {
+		return ""
+	}
+	// Normalize to forward slashes for splitting.
+	normalized := strings.ReplaceAll(path, "\\", "/")
+	// Trim trailing slash.
+	normalized = strings.TrimRight(normalized, "/")
+	if normalized == "" {
+		return ""
+	}
+	idx := strings.LastIndex(normalized, "/")
+	if idx < 0 {
+		return normalized
+	}
+	return normalized[idx+1:]
+}
+
+// trimExt removes the extension from a filename.
+// This replaces filepath.Ext + TrimSuffix patterns.
+func trimExt(name string) string {
+	if idx := strings.LastIndex(name, "."); idx >= 0 {
+		return name[:idx]
+	}
+	return name
 }
