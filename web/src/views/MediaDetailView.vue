@@ -34,6 +34,20 @@
             </router-link>
           </div>
           <p class="resume-info" v-if="hasProgress && item.type !== 'show'">{{ resumeLabel }}</p>
+
+          <div class="status-row">
+            <span class="status-label">Mark as:</span>
+            <button :class="['status-btn', { active: userStatus === 'want_to_watch' }]"
+                    @click="setStatus('want_to_watch')">🔖 Want</button>
+            <button :class="['status-btn', { active: userStatus === 'watching' }]"
+                    @click="setStatus('watching')">▶ Watching</button>
+            <button :class="['status-btn', { active: userStatus === 'watched' }]"
+                    @click="setStatus('watched')">✓ Watched</button>
+            <button :class="['status-btn', { active: userStatus === 'dropped' }]"
+                    @click="setStatus('dropped')">✕ Dropped</button>
+            <button class="status-btn clear-btn" v-if="userStatus !== 'none'"
+                    @click="setStatus('none')">✕ Clear</button>
+          </div>
         </div>
       </div>
 
@@ -61,7 +75,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { getMediaDetail } from '@/api/library';
+import { getMediaDetail, setMediaStatus } from '@/api/library';
 import request from '@/api/request';
 import EpisodeList from '@/components/EpisodeList.vue';
 
@@ -70,6 +84,7 @@ const item = ref<any>(null);
 const loading = ref(true);
 const backdropFailed = ref(false);
 const progress = ref<any>(null);
+const userStatus = ref('none');
 
 const overviewExpanded = ref(false);
 const overviewNeedsExpand = ref(false);
@@ -80,7 +95,8 @@ watch(item, (val) => {
   } else {
     overviewNeedsExpand.value = false;
   }
-});
+  if (val) userStatus.value = val.user_status || 'none';
+}, { immediate: true });
 
 const hasProgress = computed(() =>
   progress.value && progress.value.position > 0 && !progress.value.finished
@@ -103,6 +119,16 @@ const progressPercent = computed(() => {
   if (!progress.value || !progress.value.duration) return 0;
   return Math.min((progress.value.position / progress.value.duration) * 100, 100);
 });
+
+async function setStatus(status: string) {
+  try {
+    await setMediaStatus(item.value.id, status);
+    userStatus.value = status;
+    item.value.user_status = status;
+  } catch {
+    console.error('Failed to update status');
+  }
+}
 
 onMounted(async () => {
   try {
@@ -269,6 +295,55 @@ function formatDuration(sec: number) {
   margin-top: 8px;
   margin-bottom: 0;
   font-weight: 500;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.status-label {
+  color: #555577;
+  font-size: 12px;
+}
+
+.status-btn {
+  padding: 6px 14px;
+  background: #1a1a2e;
+  border: 1px solid #2a2a3e;
+  border-radius: 6px;
+  color: #8888aa;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.15s;
+}
+
+.status-btn:hover {
+  border-color: #3a3a5e;
+  color: #ccccee;
+}
+
+.status-btn.active {
+  color: #fff;
+}
+
+.status-btn.active:first-of-type { background: #1565c0; border-color: #2196f3; }
+.status-btn.active:nth-of-type(2) { background: #5a52e0; border-color: #6c63ff; }
+.status-btn.active:nth-of-type(3) { background: #2e7d32; border-color: #4caf50; }
+.status-btn.active:nth-of-type(4) { background: #c62828; border-color: #ff6b6b; }
+
+.clear-btn {
+  margin-left: 4px;
+  color: #555577;
+  border-color: #2a2a3e;
+  font-size: 11px;
+}
+
+.clear-btn:hover {
+  color: #ff6b6b;
+  border-color: #ff6b6b;
 }
 
 .overview-section {

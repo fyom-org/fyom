@@ -17,12 +17,8 @@ const router = createRouter({
       children: [
         { path: '', name: 'Home', component: () => import('@/views/DashboardView.vue') },
         { path: 'library', name: 'Library', component: () => import('@/views/LibraryView.vue') },
-
-        {
-          path: 'library/:id',
-          name: 'MediaDetail',
-          component: () => import('@/views/MediaDetailView.vue'),
-        },
+        { path: 'library/:libraryId', name: 'LibraryFiltered', component: () => import('@/views/LibraryView.vue') },
+        { path: 'media/:id', name: 'MediaDetail', component: () => import('@/views/MediaDetailView.vue') },
         { path: 'play/:id', name: 'Player', component: () => import('@/views/PlayerView.vue') },
         { path: 'profile', name: 'Profile', component: () => import('@/views/ProfileView.vue') },
       ],

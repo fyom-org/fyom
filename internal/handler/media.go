@@ -24,24 +24,25 @@ import (
 // Filesystem paths are never exposed; resource URLs are generated dynamically
 // via the Provider registry.
 type MediaItemResponse struct {
-	ID             string  `json:"id"`
-	Type           string  `json:"type"`
-	Title          string  `json:"title"`
-	SortTitle      string  `json:"sort_title,omitempty"`
-	Year           *int    `json:"year,omitempty"`
-	Overview       string  `json:"overview,omitempty"`
+	ID             string   `json:"id"`
+	Type           string   `json:"type"`
+	Title          string   `json:"title"`
+	SortTitle      string   `json:"sort_title,omitempty"`
+	Year           *int     `json:"year,omitempty"`
+	Overview       string   `json:"overview,omitempty"`
 	Rating         *float64 `json:"rating,omitempty"`
-	Duration       *int    `json:"duration,omitempty"`
-	PosterURL      *string `json:"poster_url,omitempty"`
-	BackdropURL    *string `json:"backdrop_url,omitempty"`
-	StreamURL      *string `json:"stream_url,omitempty"`
-	Season         *int    `json:"season,omitempty"`
-	Episode        *int    `json:"episode,omitempty"`
-	ParentID       string  `json:"parent_id,omitempty"`
-	MetadataSource string  `json:"metadata_source,omitempty"`
-	Status         string  `json:"status"`
+	Duration       *int     `json:"duration,omitempty"`
+	PosterURL      *string  `json:"poster_url,omitempty"`
+	BackdropURL    *string  `json:"backdrop_url,omitempty"`
+	StreamURL      *string  `json:"stream_url,omitempty"`
+	Season         *int     `json:"season,omitempty"`
+	Episode        *int     `json:"episode,omitempty"`
+	ParentID       string   `json:"parent_id,omitempty"`
+	LibraryID      string   `json:"library_id,omitempty"`
+	MetadataSource string   `json:"metadata_source,omitempty"`
+	Status         string   `json:"status"`
+	UserStatus     string   `json:"user_status,omitempty"`
 }
-
 // MediaHandler handles media-related HTTP endpoints.
 type MediaHandler struct {
 	registry     *provider.Registry
@@ -49,18 +50,20 @@ type MediaHandler struct {
 	jobRepo      *repository.ImportJobRepository
 	providerRepo *repository.ProviderRepository
 	libRepo      *repository.LibraryRepository
+	statusRepo   *repository.UserMediaStatusRepository
 	db           *repository.DB
 	logger       *slog.Logger
 }
 
 // NewMediaHandler creates a new MediaHandler.
-func NewMediaHandler(registry *provider.Registry, db *repository.DB, mediaRepo *repository.MediaRepository, jobRepo *repository.ImportJobRepository, providerRepo *repository.ProviderRepository, libRepo *repository.LibraryRepository, logger *slog.Logger) *MediaHandler {
+func NewMediaHandler(registry *provider.Registry, db *repository.DB, mediaRepo *repository.MediaRepository, jobRepo *repository.ImportJobRepository, providerRepo *repository.ProviderRepository, libRepo *repository.LibraryRepository, statusRepo *repository.UserMediaStatusRepository, logger *slog.Logger) *MediaHandler {
 	return &MediaHandler{
 		registry:     registry,
 		repo:         mediaRepo,
 		jobRepo:      jobRepo,
 		providerRepo: providerRepo,
 		libRepo:      libRepo,
+		statusRepo:   statusRepo,
 		db:           db,
 		logger:       logger,
 	}
@@ -141,6 +144,26 @@ func attachPresignedURLsList(ctx context.Context, items []model.MediaItem, regis
 	return result
 }
 
+// attachUserStatuses populates the UserStatus field for each response item.
+func attachUserStatuses(ctx context.Context, statusRepo *repository.UserMediaStatusRepository, userID string, result []MediaItemResponse) {
+	if userID == "" || len(result) == 0 {
+		return
+	}
+	ids := make([]string, len(result))
+	for i, r := range result {
+		ids[i] = r.ID
+	}
+	statusMap, err := statusRepo.GetStatusesForItems(ctx, userID, ids)
+	if err != nil {
+		return
+	}
+	for i := range result {
+		if s, ok := statusMap[result[i].ID]; ok {
+			result[i].UserStatus = s
+		}
+	}
+}
+
 // TODO: re-add path restriction when multi-user mode is implemented
 
 // List returns a paginated list of media items.
@@ -207,6 +230,12 @@ func (h *MediaHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	result := attachPresignedURLsList(r.Context(), items, h.registry, h.logger)
 
+	// Attach user statuses.
+	userID := middleware.GetUserID(r)
+	if userIDStr, ok := userID.(string); ok && userIDStr != "" {
+		attachUserStatuses(r.Context(), h.statusRepo, userIDStr, result)
+	}
+
 	response.Success(w, map[string]interface{}{
 		"items":       result,
 		"total":       total,
@@ -251,6 +280,14 @@ func (h *MediaHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := attachPresignedURLs(r.Context(), item, h.registry, h.logger)
+
+	// Attach user status.
+	userID := middleware.GetUserID(r)
+	if userIDStr, ok := userID.(string); ok && userIDStr != "" {
+		status, _ := h.statusRepo.GetStatus(r.Context(), userIDStr, id)
+		result.UserStatus = status
+	}
+
 	response.Success(w, result)
 }
 
@@ -295,6 +332,13 @@ func (h *MediaHandler) ListEpisodes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := attachPresignedURLsList(r.Context(), items, h.registry, h.logger)
+
+	// Attach user statuses.
+	userID := middleware.GetUserID(r)
+	if userIDStr, ok := userID.(string); ok && userIDStr != "" {
+		attachUserStatuses(r.Context(), h.statusRepo, userIDStr, result)
+	}
+
 	response.Success(w, result)
 }
 
@@ -332,6 +376,23 @@ func (h *MediaHandler) UpdateProgress(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, 500, "internal server error")
 		return
 	}
+
+	// Auto-status transitions.
+	if req.Position > 0 || req.Finished {
+		currentStatus, _ := h.statusRepo.GetStatus(r.Context(), userIDStr, id)
+
+		// Auto: none/want_to_watch → watching (user started playing)
+		if req.Position > 0 && (currentStatus == "none" || currentStatus == "want_to_watch") {
+			_ = h.statusRepo.SetStatus(r.Context(), userIDStr, id, "watching")
+		}
+
+		// Auto: → watched (video ended)
+		// CRITICAL: Do NOT override 'dropped' — manual intent takes precedence.
+		if req.Finished && req.Position > 0 && currentStatus != "dropped" {
+			_ = h.statusRepo.SetStatus(r.Context(), userIDStr, id, "watched")
+		}
+	}
+
 	response.NoContent(w)
 }
 
@@ -384,6 +445,21 @@ func (h *MediaHandler) GetContinueWatching(w http.ResponseWriter, r *http.Reques
 			Finished:          items[i].Finished,
 		}
 	}
+
+	// Attach user statuses.
+	if userIDStr != "" {
+		ids := make([]string, len(progressItems))
+		for i := range progressItems {
+			ids[i] = progressItems[i].ID
+		}
+		statusMap, _ := h.statusRepo.GetStatusesForItems(r.Context(), userIDStr, ids)
+		for i := range progressItems {
+			if s, ok := statusMap[progressItems[i].ID]; ok {
+				progressItems[i].UserStatus = s
+			}
+		}
+	}
+
 	response.Success(w, progressItems)
 }
 
@@ -450,6 +526,131 @@ func (h *MediaHandler) GetLibraries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.Success(w, result)
+}
+
+// SetStatus sets the user's media status for an item.
+func (h *MediaHandler) SetStatus(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		response.Error(w, 400, "missing id")
+		return
+	}
+
+	userID := middleware.GetUserID(r)
+	if userID == nil {
+		response.Error(w, 401, "unauthorized")
+		return
+	}
+	userIDStr, ok := userID.(string)
+	if !ok {
+		response.Error(w, 401, "unauthorized")
+		return
+	}
+
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, 400, "invalid JSON")
+		return
+	}
+
+	valid := map[string]bool{"watching": true, "want_to_watch": true, "watched": true, "dropped": true, "none": true}
+	if !valid[req.Status] {
+		response.Error(w, 400, "invalid status: must be one of: watching, want_to_watch, watched, dropped, none")
+		return
+	}
+
+	if err := h.statusRepo.SetStatus(r.Context(), userIDStr, id, req.Status); err != nil {
+		h.logger.Error("failed to set status", "err", err)
+		response.Error(w, 500, "internal server error")
+		return
+	}
+
+	response.Success(w, map[string]interface{}{
+		"status": req.Status,
+	})
+}
+
+// GetStatus returns the user's media status for an item.
+func (h *MediaHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		response.Error(w, 400, "missing id")
+		return
+	}
+
+	userID := middleware.GetUserID(r)
+	if userID == nil {
+		response.Error(w, 401, "unauthorized")
+		return
+	}
+	userIDStr, ok := userID.(string)
+	if !ok {
+		response.Error(w, 401, "unauthorized")
+		return
+	}
+
+	status, err := h.statusRepo.GetStatus(r.Context(), userIDStr, id)
+	if err != nil {
+		h.logger.Error("failed to get status", "err", err)
+		response.Error(w, 500, "internal server error")
+		return
+	}
+
+	response.Success(w, map[string]interface{}{
+		"status": status,
+	})
+}
+
+// GetByStatus returns media items filtered by user status.
+func (h *MediaHandler) GetByStatus(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r)
+	if userID == nil {
+		response.Error(w, 401, "unauthorized")
+		return
+	}
+	userIDStr, ok := userID.(string)
+	if !ok {
+		response.Error(w, 401, "unauthorized")
+		return
+	}
+
+	status := r.URL.Query().Get("status")
+	valid := map[string]bool{"watching": true, "want_to_watch": true, "watched": true, "dropped": true}
+	if !valid[status] {
+		response.Error(w, 400, "invalid status: must be one of: watching, want_to_watch, watched, dropped")
+		return
+	}
+
+	limit := 20
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+
+	items, err := h.statusRepo.GetItemsByStatus(r.Context(), userIDStr, status, limit)
+	if err != nil {
+		h.logger.Error("failed to get items by status", "err", err)
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	if items == nil {
+		items = []model.MediaItem{}
+	}
+
+	result := attachPresignedURLsList(r.Context(), items, h.registry, h.logger)
+
+	// Set user_status on each result item.
+	for i := range result {
+		result[i].UserStatus = status
+	}
+
+	response.Success(w, map[string]interface{}{
+		"items": result,
+		"total": len(items),
+	})
 }
 
 // ImportRequest triggers an async NFO-based import.

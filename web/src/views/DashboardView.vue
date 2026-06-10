@@ -1,27 +1,55 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { getMediaList } from '@/api/library';
+import { getMediaList, getMediaByStatus } from '@/api/library';
 import request from '@/api/request';
 import MediaRow from '@/components/MediaRow.vue';
 
 const router = useRouter();
 const continueWatching = ref<unknown[]>([]);
+const wantToWatch = ref<unknown[]>([]);
 const recentlyAdded = ref<unknown[]>([]);
 const libraries = ref<any[]>([]);
 const loading = ref(true);
 const isAdmin = computed(() => localStorage.getItem('role') === 'admin');
 
+interface MediaItem {
+  id: string;
+  library_id?: string;
+  [key: string]: unknown;
+}
+
+function getLibraryName(item: unknown): string {
+  const media = item as MediaItem;
+  if (!media?.library_id) return '';
+  return libraries.value.find((l: any) => l.id === media.library_id)?.name || '';
+}
+
+const showLibraryTags = computed(() => libraries.value.length >= 2);
+
+function onStatusChanged(id: string, newStatus: string) {
+  const update = (arr: unknown[]) => {
+    const items = arr as any[];
+    const item = items.find((m: any) => m.id === id);
+    if (item) item.user_status = newStatus;
+  };
+  update(continueWatching.value);
+  update(wantToWatch.value);
+  update(recentlyAdded.value);
+}
+
 onMounted(async () => {
   try {
-    const [continueRes, recentRes, libRes] = await Promise.all([
+    const [continueRes, wantRes, recentRes, libRes] = await Promise.all([
       fetch('/api/v1/library/continue', {
         headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` },
       }).then((r) => (r.ok ? r.json() : { data: [] })),
+      getMediaByStatus('want_to_watch', 20),
       getMediaList(1, 20, { sort: 'created_desc' }),
       request.get('/libraries'),
     ]);
     continueWatching.value = continueRes.data || [];
+    wantToWatch.value = wantRes?.items || [];
     recentlyAdded.value = recentRes.items || [];
     libraries.value = (libRes as any).data || [];
   } catch {
@@ -41,8 +69,22 @@ onMounted(async () => {
       </router-link>
     </div>
     <template v-else>
-      <MediaRow title="Continue Watching" :items="continueWatching" />
-      <MediaRow title="Recently Added" :items="recentlyAdded" />
+      <MediaRow
+        title="Continue Watching"
+        :items="continueWatching"
+        @status-changed="onStatusChanged"
+      />
+      <MediaRow
+        title="🔖 Want to Watch"
+        :items="wantToWatch"
+        @status-changed="onStatusChanged"
+      />
+      <MediaRow
+        title="Recently Added"
+        :items="recentlyAdded"
+        :get-library-name="showLibraryTags ? getLibraryName : undefined"
+        @status-changed="onStatusChanged"
+      />
     </template>
   </div>
 </template>

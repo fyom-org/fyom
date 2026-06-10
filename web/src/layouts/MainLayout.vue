@@ -11,15 +11,18 @@
       <aside class="sidebar">
         <router-link to="/">Home</router-link>
         <router-link to="/library">Library</router-link>
-        <div class="library-section" v-if="libraries.length > 1">
+        <!-- Library switcher — only shows when 2+ libraries exist -->
+        <div class="library-section" v-if="libraries.length >= 2">
           <div class="section-label">Libraries</div>
           <router-link
             v-for="lib in libraries"
             :key="lib.id"
-            :to="`/library?library_id=${lib.id}`"
+            :to="`/library/${lib.id}`"
             class="nav-link library-link"
-            active-class="router-link-active"
           >
+            <span class="library-icon">
+              {{ lib.type === 'movie' ? '🎬' : lib.type === 'show' ? '📺' : '📁' }}
+            </span>
             {{ lib.name }}
           </router-link>
         </div>
@@ -130,7 +133,8 @@ function handleLogout() {
   flex-direction: column;
 }
 
-.sidebar a {
+.sidebar a,
+.nav-link {
   display: block;
   padding: 12px 20px;
   color: #8888aa;
@@ -138,11 +142,13 @@ function handleLogout() {
   font-size: 14px;
 }
 
-.sidebar a:hover {
+.sidebar a:hover,
+.nav-link:hover {
   color: #e0e0e0;
 }
 
-.sidebar a.router-link-active {
+.sidebar a.router-link-active,
+.nav-link.router-link-active {
   color: #fff;
   background: #14142a;
   border-left: 2px solid rgba(108, 99, 255, 0.4);
@@ -160,7 +166,7 @@ function handleLogout() {
 .library-section {
   margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px solid #3f3f46;
+  border-top: 1px solid #1a1a2e;
 }
 
 .section-label {
@@ -170,6 +176,11 @@ function handleLogout() {
   letter-spacing: 1px;
   padding: 0 20px;
   margin-bottom: 8px;
+}
+
+.library-icon {
+  margin-right: 6px;
+  font-size: 13px;
 }
 
 .content {

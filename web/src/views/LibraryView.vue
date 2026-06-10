@@ -1,6 +1,9 @@
 <template>
   <div class="library-view">
-    <h2 class="page-title">Library</h2>
+    <router-link to="/library" class="back-link" v-if="currentLibraryId && showBackLink">
+      ← All Libraries
+    </router-link>
+    <h2 class="page-title" v-if="!searchQuery">{{ currentLibraryName }}</h2>
 
     <!-- Toolbar -->
     <div class="toolbar">
@@ -18,23 +21,38 @@
         <button
           :class="['filter-btn', { active: activeType === TYPE_ALL }]"
           @click="setType(TYPE_ALL)"
+          v-if="!activeStatus"
         >
           All
         </button>
         <button
           :class="['filter-btn', { active: activeType === TYPE_MOVIE }]"
           @click="setType(TYPE_MOVIE)"
+          v-if="!activeStatus"
         >
           Movies
         </button>
         <button
           :class="['filter-btn', { active: activeType === TYPE_SHOW }]"
           @click="setType(TYPE_SHOW)"
+          v-if="!activeStatus"
         >
           Shows
         </button>
       </div>
-      <select v-model="activeSort" class="sort-select" @change="resetAndFetch">
+      <div class="filter-group">
+        <button :class="['filter-btn', { active: activeStatus === '' }]"
+                @click="setStatus('')">All</button>
+        <button :class="['filter-btn status-watching', { active: activeStatus === 'watching' }]"
+                @click="setStatus('watching')">▶ Watching</button>
+        <button :class="['filter-btn status-want', { active: activeStatus === 'want_to_watch' }]"
+                @click="setStatus('want_to_watch')">🔖 Want</button>
+        <button :class="['filter-btn status-watched', { active: activeStatus === 'watched' }]"
+                @click="setStatus('watched')">✓ Watched</button>
+        <button :class="['filter-btn status-dropped', { active: activeStatus === 'dropped' }]"
+                @click="setStatus('dropped')">✕ Dropped</button>
+      </div>
+      <select v-model="activeSort" class="sort-select" @change="resetAndFetch" v-if="!activeStatus">
         <option value="title_asc">Title A–Z</option>
         <option value="title_desc">Title Z–A</option>
         <option value="year_desc">Newest First</option>
@@ -54,7 +72,7 @@
 
     <!-- Grid -->
     <div v-if="items.length > 0" class="grid">
-      <MediaCard v-for="m in items" :key="m.id" :item="m" />
+      <MediaCard v-for="m in items" :key="m.id" :item="m" @status-changed="onStatusChanged" />
     </div>
 
     <!-- Empty state -->
@@ -73,9 +91,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { getMediaList } from '@/api/library';
+import { getMediaList, getMediaByStatus } from '@/api/library';
+import request from '@/api/request';
 import MediaCard from '@/components/MediaCard.vue';
 
 interface MediaItem {
@@ -83,17 +102,30 @@ interface MediaItem {
   title: string;
   year?: number;
   poster_url?: string;
+  user_status?: string;
+  [key: string]: unknown;
 }
 
 // ── Type constants (do not use raw strings elsewhere in this component) ───
-// TODO(phase3): These type values will need to match the Provider registry
-// once non-filesystem providers are introduced.
 const TYPE_ALL = 'movie,show';
 const TYPE_MOVIE = 'movie';
 const TYPE_SHOW = 'show';
 
 const route = useRoute();
-const currentLibraryId = computed(() => (route.query.library_id as string) || '');
+
+// Read library_id from route param (library/:libraryId) or query param (backward compat)
+const currentLibraryId = computed(() => (route.params.libraryId as string) || (route.query.library_id as string) || '');
+
+// ── Libraries map for name resolution ─────────────────────────────────────
+const libraryNameMap = ref<Record<string, string>>({});
+const librariesCount = ref(0);
+
+const currentLibraryName = computed(() => {
+  if (!currentLibraryId.value) return 'Library';
+  return libraryNameMap.value[currentLibraryId.value] || 'Library';
+});
+
+const showBackLink = computed(() => librariesCount.value >= 2);
 
 // ── State ──────────────────────────────────────────────────────────────────
 const items = ref<MediaItem[]>([]);
@@ -105,10 +137,31 @@ const error = ref('');
 const searchQuery = ref<string>('');
 const activeType = ref<string>(TYPE_ALL);
 const activeSort = ref<string>('title_asc');
+const activeStatus = ref<string>('');
 let searchTimer = 0;
 let abortCtrl = new AbortController();
 
-onMounted(() => fetchPage());
+onMounted(async () => {
+  // Fetch libraries for name resolution
+  try {
+    const libRes: any = await request.get('/libraries');
+    const libs = libRes.data || [];
+    const map: Record<string, string> = {};
+    for (const lib of libs) {
+      map[lib.id] = lib.name;
+    }
+    libraryNameMap.value = map;
+    librariesCount.value = libs.length;
+  } catch {
+    // ignore
+  }
+  fetchPage();
+});
+
+// Watch for route changes (navigating between libraries)
+watch(currentLibraryId, () => {
+  resetAndFetch();
+});
 
 // ── Debounced search ───────────────────────────────────────────────────────
 function onSearchInput() {
@@ -118,6 +171,11 @@ function onSearchInput() {
 
 function setType(type: string) {
   activeType.value = type;
+  resetAndFetch();
+}
+
+function setStatus(status: string) {
+  activeStatus.value = status;
   resetAndFetch();
 }
 
@@ -138,25 +196,33 @@ async function fetchPage() {
   loading.value = true;
   error.value = '';
   try {
-    const params: any = {
-      type: activeType.value,
-      q: searchQuery.value || undefined,
-      sort: activeSort.value,
-    };
-    if (currentLibraryId.value) {
-      params.library_id = currentLibraryId.value;
+    let data: any;
+    if (activeStatus.value) {
+      data = await getMediaByStatus(activeStatus.value, 20);
+      allLoaded.value = true;
+    } else {
+      const params: any = {
+        type: activeType.value,
+        q: searchQuery.value || undefined,
+        sort: activeSort.value,
+      };
+      if (currentLibraryId.value) {
+        params.library_id = currentLibraryId.value;
+      }
+      data = await getMediaList(page.value, 20, params);
     }
-    const data = await getMediaList(page.value, 20, params);
     if (!data.items?.length) {
       allLoaded.value = true;
       return;
     }
     items.value.push(...data.items);
-    total.value = data.total;
-    if (items.value.length >= total.value) {
-      allLoaded.value = true;
-    } else {
-      page.value++;
+    total.value = data.total || items.value.length;
+    if (!activeStatus.value) {
+      if (items.value.length >= total.value) {
+        allLoaded.value = true;
+      } else {
+        page.value++;
+      }
     }
   } catch (e: unknown) {
     if (e instanceof Error && e.name !== 'AbortError') {
@@ -166,6 +232,13 @@ async function fetchPage() {
     loading.value = false;
   }
 }
+
+function onStatusChanged(id: string, newStatus: string) {
+  const item = items.value.find(m => m.id === id);
+  if (item) {
+    item.user_status = newStatus;
+  }
+}
 </script>
 
 <style scoped>
@@ -173,6 +246,18 @@ async function fetchPage() {
   font-size: 22px;
   color: #e0e0e0;
   margin-bottom: 20px;
+}
+
+.back-link {
+  color: #555577;
+  font-size: 13px;
+  text-decoration: none;
+  display: inline-block;
+  margin-bottom: 12px;
+}
+
+.back-link:hover {
+  color: #8888aa;
 }
 
 .toolbar {
@@ -231,9 +316,27 @@ async function fetchPage() {
 }
 
 .filter-btn.active {
-  background: #6c63ff;
   color: #fff;
+}
+
+.filter-btn.active.status-watching {
+  background: #6c63ff;
   border-color: #6c63ff;
+}
+
+.filter-btn.active.status-want {
+  background: #2196f3;
+  border-color: #2196f3;
+}
+
+.filter-btn.active.status-watched {
+  background: #4caf50;
+  border-color: #4caf50;
+}
+
+.filter-btn.active.status-dropped {
+  background: #ff6b6b;
+  border-color: #ff6b6b;
 }
 
 .sort-select {

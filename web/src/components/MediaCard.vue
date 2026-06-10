@@ -1,5 +1,5 @@
 <template>
-  <router-link v-slot="{ navigate }" :to="`/library/${item.id}`" custom>
+  <router-link v-slot="{ navigate }" :to="`/media/${item.id}`" custom>
     <div
       class="media-card"
       role="link"
@@ -11,6 +11,11 @@
       <div class="poster-wrap">
         <img v-if="item.poster_url" :src="item.poster_url" :alt="item.title" loading="lazy" />
         <div v-else class="poster-fallback">{{ item.title?.[0] ?? '?' }}</div>
+        <div class="status-icon" v-if="item.user_status && item.user_status !== 'none'"
+             :class="item.user_status" @click.stop="cycleStatus">
+          {{ statusEmoji }}
+        </div>
+        <span class="library-tag" v-if="libraryName">{{ libraryName }}</span>
         <div v-if="hovered" class="hover-overlay">
           <button class="play-icon" @click.stop="play">▶</button>
         </div>
@@ -32,6 +37,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
+import { setMediaStatus, STATUS_NONE, STATUS_WANT, STATUS_WATCHING, STATUS_WATCHED, STATUS_DROPPED } from '@/api/library';
 
 const props = defineProps<{
   item: {
@@ -42,8 +48,14 @@ const props = defineProps<{
     poster_url?: string;
     position?: number;
     duration?: number;
+    user_status?: string;
   };
+  libraryName?: string;
 }>();
+const emit = defineEmits<{
+  (e: 'status-changed', id: string, status: string): void;
+}>();
+
 const router = useRouter();
 const hovered = ref(false);
 const onHover = () => {
@@ -59,6 +71,30 @@ const progressPercent = computed(() => {
   if (!props.item.position || !props.item.duration) return 0;
   return Math.min((props.item.position / props.item.duration) * 100, 100);
 });
+
+const statusEmoji = computed(() => {
+  switch (props.item.user_status) {
+    case STATUS_WANT: return '🔖';
+    case STATUS_WATCHING: return '▶';
+    case STATUS_WATCHED: return '✓';
+    case STATUS_DROPPED: return '✕';
+    default: return '';
+  }
+});
+
+const STATUS_CYCLE = [STATUS_NONE, STATUS_WANT, STATUS_WATCHING, STATUS_WATCHED, STATUS_DROPPED];
+
+async function cycleStatus() {
+  const current = props.item.user_status || STATUS_NONE;
+  const idx = STATUS_CYCLE.indexOf(current);
+  const next = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length];
+  try {
+    await setMediaStatus(props.item.id, next);
+    emit('status-changed', props.item.id, next);
+  } catch {
+    console.error('Failed to update status');
+  }
+}
 </script>
 
 <style scoped>
@@ -89,6 +125,51 @@ const progressPercent = computed(() => {
   justify-content: center;
   font-size: 48px;
   color: #555577;
+}
+.status-icon {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  z-index: 2;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(4px);
+}
+.status-icon.want_to_watch {
+  background: rgba(33,150,243,0.7);
+}
+.status-icon.watching {
+  background: rgba(108,99,255,0.7);
+}
+.status-icon.watched {
+  background: rgba(76,175,80,0.7);
+}
+.status-icon.dropped {
+  background: rgba(255,107,107,0.7);
+}
+.status-icon:hover {
+  transform: scale(1.15);
+}
+.library-tag {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(0,0,0,0.7);
+  color: #8888aa;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  z-index: 2;
 }
 .hover-overlay {
   position: absolute;

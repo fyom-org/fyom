@@ -2,14 +2,29 @@
   <div v-if="items.length > 0" class="media-row">
     <h2 class="row-title">{{ title }}</h2>
     <div class="row-scroll">
-      <MediaCard v-for="item in items" :key="item.id" :item="item" />
+      <MediaCard
+        v-for="item in items"
+        :key="item.id"
+        :item="item"
+        :library-name="typeof item === 'object' && item !== null ? getLibraryName(item) : ''"
+        @status-changed="(id, status) => $emit('status-changed', id, status)"
+      />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import MediaCard from './MediaCard.vue';
-defineProps<{ title: string; items: unknown[] }>();
+
+const props = defineProps<{
+  title: string;
+  items: unknown[];
+  getLibraryName?: (item: unknown) => string;
+}>();
+
+defineEmits<{
+  (e: 'status-changed', id: string, status: string): void;
+}>();
 </script>
 
 <style scoped>

@@ -16,6 +16,12 @@ export interface JobStatus {
   updated_at: string;
 }
 
+export const STATUS_NONE = 'none';
+export const STATUS_WANT = 'want_to_watch';
+export const STATUS_WATCHING = 'watching';
+export const STATUS_WATCHED = 'watched';
+export const STATUS_DROPPED = 'dropped';
+
 export function triggerImport(dirPath: string, providerID: string = 'local') {
   return request.post<ImportResponse>('/library/import', {
     source_path: dirPath,
@@ -49,5 +55,15 @@ export async function getMediaDetail(id: string) {
 
 export async function getEpisodes(showId: string) {
   const res = await request.get(`/library/${showId}/episodes`);
+  return res.data;
+}
+
+export async function setMediaStatus(id: string, status: string) {
+  const res = await request.put(`/media/${id}/status`, { status });
+  return res.data;
+}
+
+export async function getMediaByStatus(status: string, limit = 20) {
+  const res = await request.get('/library/by-status', { params: { status, limit } });
   return res.data;
 }
