@@ -47,17 +47,19 @@ type MediaHandler struct {
 	repo         *repository.MediaRepository
 	jobRepo      *repository.ImportJobRepository
 	providerRepo *repository.ProviderRepository
+	libRepo      *repository.LibraryRepository
 	db           *repository.DB
 	logger       *slog.Logger
 }
 
 // NewMediaHandler creates a new MediaHandler.
-func NewMediaHandler(registry *provider.Registry, db *repository.DB, mediaRepo *repository.MediaRepository, jobRepo *repository.ImportJobRepository, providerRepo *repository.ProviderRepository, logger *slog.Logger) *MediaHandler {
+func NewMediaHandler(registry *provider.Registry, db *repository.DB, mediaRepo *repository.MediaRepository, jobRepo *repository.ImportJobRepository, providerRepo *repository.ProviderRepository, libRepo *repository.LibraryRepository, logger *slog.Logger) *MediaHandler {
 	return &MediaHandler{
 		registry:     registry,
 		repo:         mediaRepo,
 		jobRepo:      jobRepo,
 		providerRepo: providerRepo,
+		libRepo:      libRepo,
 		db:           db,
 		logger:       logger,
 	}
@@ -164,7 +166,29 @@ func (h *MediaHandler) List(w http.ResponseWriter, r *http.Request) {
 		sort = "title_asc"
 	}
 
-	items, total, err := h.repo.ListPaged(r.Context(), page, pageSize, mediaType, q, sort)
+	// Library access filter.
+	allowedIDs := middleware.GetAllowedLibraryIDs(r)
+
+	// Optional library_id query param — must be in allowed list.
+	if libID := r.URL.Query().Get("library_id"); libID != "" {
+		if allowedIDs != nil {
+			found := false
+			for _, id := range allowedIDs {
+				if id == libID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				response.Error(w, 404, "resource not found")
+				return
+			}
+		}
+		// Filter to just this library by replacing allowedIDs.
+		allowedIDs = []string{libID}
+	}
+
+	items, total, err := h.repo.ListPaged(r.Context(), page, pageSize, mediaType, q, sort, allowedIDs)
 	if err != nil {
 		response.Error(w, 500, "internal server error")
 		return
@@ -203,6 +227,22 @@ func (h *MediaHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check library access.
+	allowedIDs := middleware.GetAllowedLibraryIDs(r)
+	if allowedIDs != nil {
+		found := false
+		for _, libID := range allowedIDs {
+			if libID == item.LibraryID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			response.Error(w, 404, "resource not found")
+			return
+		}
+	}
+
 	result := attachPresignedURLs(r.Context(), item, h.registry, h.logger)
 	response.Success(w, result)
 }
@@ -210,6 +250,34 @@ func (h *MediaHandler) Get(w http.ResponseWriter, r *http.Request) {
 // ListEpisodes returns all episodes for a given show.
 func (h *MediaHandler) ListEpisodes(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+
+	// Check that the parent show exists and is accessible.
+	parent, err := h.repo.Get(r.Context(), id)
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	if parent == nil {
+		response.Error(w, 404, "resource not found")
+		return
+	}
+
+	// Check library access for the parent show.
+	allowedIDs := middleware.GetAllowedLibraryIDs(r)
+	if allowedIDs != nil {
+		found := false
+		for _, libID := range allowedIDs {
+			if libID == parent.LibraryID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			response.Error(w, 404, "resource not found")
+			return
+		}
+	}
+
 	items, err := h.repo.GetEpisodesByShowID(r.Context(), id)
 	if err != nil {
 		response.Error(w, 500, "internal server error")
@@ -273,7 +341,9 @@ func (h *MediaHandler) GetContinueWatching(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	items, err := h.repo.GetContinueWatching(r.Context(), userIDStr, 20)
+	allowedIDs := middleware.GetAllowedLibraryIDs(r)
+
+	items, err := h.repo.GetContinueWatching(r.Context(), userIDStr, 20, allowedIDs)
 	if err != nil {
 		h.logger.Error("failed to get continue watching", "err", err)
 		response.Error(w, 500, "internal server error")
@@ -287,7 +357,6 @@ func (h *MediaHandler) GetContinueWatching(w http.ResponseWriter, r *http.Reques
 	for i := range items {
 		result[i] = attachPresignedURLs(r.Context(), &items[i].MediaItem, h.registry, h.logger)
 		result[i].PosterURL = result[i].PosterURL // keep URL
-		// Attach progress info via a custom field — we'll use a wrapper
 	}
 	_ = result
 
@@ -320,6 +389,60 @@ func (h *MediaHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.NoContent(w)
+}
+
+// GetLibraries returns libraries the current user can view, with item counts.
+func (h *MediaHandler) GetLibraries(w http.ResponseWriter, r *http.Request) {
+	allowedIDs := middleware.GetAllowedLibraryIDs(r)
+
+	var allLibs []model.Library
+	var err error
+	if allowedIDs == nil {
+		// Admin: get all libraries.
+		allLibs, err = h.libRepo.List(r.Context())
+	} else if len(allowedIDs) == 0 {
+		// User with no library access: return empty.
+		allLibs = []model.Library{}
+	} else {
+		// Regular user: fetch only allowed libraries.
+		allLibs, err = h.libRepo.List(r.Context())
+		if err == nil {
+			var filtered []model.Library
+			for _, lib := range allLibs {
+				for _, id := range allowedIDs {
+					if lib.ID == id {
+						filtered = append(filtered, lib)
+						break
+					}
+				}
+			}
+			allLibs = filtered
+		}
+	}
+
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+
+	result := make([]map[string]interface{}, len(allLibs))
+	for i, lib := range allLibs {
+		movies, shows, episodes, _ := h.libRepo.ItemCountsByType(r.Context(), lib.ID)
+		result[i] = map[string]interface{}{
+			"id":             lib.ID,
+			"name":           lib.Name,
+			"type":           lib.Type,
+			"provider_id":    lib.ProviderID,
+			"source_path":    lib.SourcePath,
+			"metadata_source": lib.MetadataSource,
+			"item_count":     movies + shows + episodes,
+			"movie_count":    movies,
+			"show_count":     shows,
+			"episode_count":  episodes,
+		}
+	}
+
+	response.Success(w, result)
 }
 
 // ImportRequest triggers an async NFO-based import.

@@ -16,6 +16,7 @@ const router = createRouter({
       children: [
         { path: '', name: 'Home', component: () => import('@/views/DashboardView.vue') },
         { path: 'library', name: 'Library', component: () => import('@/views/LibraryView.vue') },
+
         {
           path: 'library/:id',
           name: 'MediaDetail',
@@ -44,6 +45,11 @@ const router = createRouter({
           path: 'media',
           name: 'AdminMedia',
           component: () => import('@/views/admin/MediaView.vue'),
+        },
+        {
+          path: 'permissions',
+          name: 'AdminPermissions',
+          component: () => import('@/views/admin/PermissionsView.vue'),
         },
         {
           path: 'providers',

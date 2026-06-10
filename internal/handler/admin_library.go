@@ -13,11 +13,12 @@ import (
 type AdminLibraryHandler struct {
 	repo         *repository.LibraryRepository
 	providerRepo *repository.ProviderRepository
+	libPermRepo  *repository.LibraryPermissionRepository
 }
 
 // NewAdminLibraryHandler creates a new AdminLibraryHandler.
-func NewAdminLibraryHandler(repo *repository.LibraryRepository, providerRepo *repository.ProviderRepository) *AdminLibraryHandler {
-	return &AdminLibraryHandler{repo: repo, providerRepo: providerRepo}
+func NewAdminLibraryHandler(repo *repository.LibraryRepository, providerRepo *repository.ProviderRepository, libPermRepo *repository.LibraryPermissionRepository) *AdminLibraryHandler {
+	return &AdminLibraryHandler{repo: repo, providerRepo: providerRepo, libPermRepo: libPermRepo}
 }
 
 // libraryWithCounts extends Library with item count fields for the API response.
@@ -61,6 +62,9 @@ func (h *AdminLibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, 400, err.Error())
 		return
 	}
+
+	// Grant all existing users access to the new library.
+	_ = h.libPermRepo.GrantNewLibrary(r.Context(), lib.ID)
 
 	movies, shows, episodes, _ := h.repo.ItemCountsByType(r.Context(), lib.ID)
 	response.Success(w, libraryWithCounts{

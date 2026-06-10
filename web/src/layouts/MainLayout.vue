@@ -11,6 +11,18 @@
       <aside class="sidebar">
         <router-link to="/">Home</router-link>
         <router-link to="/library">Library</router-link>
+        <div class="library-section" v-if="libraries.length > 1">
+          <div class="section-label">Libraries</div>
+          <router-link
+            v-for="lib in libraries"
+            :key="lib.id"
+            :to="`/library?library_id=${lib.id}`"
+            class="nav-link library-link"
+            active-class="router-link-active"
+          >
+            {{ lib.name }}
+          </router-link>
+        </div>
         <router-link v-if="isAdmin" to="/admin" class="nav-link admin-link">⚙ Admin</router-link>
         <div class="sidebar-spacer"></div>
         <router-link to="/profile">Profile</router-link>
@@ -23,14 +35,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useUserStore } from '@/stores/user';
+import request from '@/api/request';
 
 const router = useRouter();
 const store = useUserStore();
+const libraries = ref<any[]>([]);
 
 const isAdmin = computed(() => localStorage.getItem('role') === 'admin');
+
+onMounted(async () => {
+  try {
+    const res: any = await request.get('/libraries');
+    libraries.value = res.data || [];
+  } catch {
+    // ignore
+  }
+});
 
 function handleLogout() {
   store.logout();
@@ -131,6 +154,21 @@ function handleLogout() {
 
 .admin-link {
   color: #6c63ff !important;
+}
+
+.library-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #3f3f46;
+}
+
+.section-label {
+  color: #444466;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 0 20px;
+  margin-bottom: 8px;
 }
 
 .content {

@@ -20,9 +20,9 @@ type AuthHandler struct {
 }
 
 // NewAuthHandler creates a new AuthHandler.
-func NewAuthHandler(userRepo *repository.UserRepository, settingRepo *repository.SystemSettingRepository, jwtSecret string, tokenTTLHours int) *AuthHandler {
+func NewAuthHandler(userRepo *repository.UserRepository, libPermRepo *repository.LibraryPermissionRepository, settingRepo *repository.SystemSettingRepository, jwtSecret string, tokenTTLHours int) *AuthHandler {
 	return &AuthHandler{
-		authService: service.NewAuthService(userRepo, jwtSecret, tokenTTLHours),
+		authService: service.NewAuthService(userRepo, libPermRepo, jwtSecret, tokenTTLHours),
 		settingRepo: settingRepo,
 	}
 }

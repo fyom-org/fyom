@@ -16,12 +16,13 @@ type AdminHandler struct {
 	repo        *repository.AdminRepository
 	mediaRepo   *repository.MediaRepository
 	settingRepo *repository.SystemSettingRepository
+	libPermRepo *repository.LibraryPermissionRepository
 	db          *repository.DB
 }
 
 // NewAdminHandler creates a new AdminHandler.
-func NewAdminHandler(repo *repository.AdminRepository, mediaRepo *repository.MediaRepository, settingRepo *repository.SystemSettingRepository, db *repository.DB) *AdminHandler {
-	return &AdminHandler{repo: repo, mediaRepo: mediaRepo, settingRepo: settingRepo, db: db}
+func NewAdminHandler(repo *repository.AdminRepository, mediaRepo *repository.MediaRepository, settingRepo *repository.SystemSettingRepository, libPermRepo *repository.LibraryPermissionRepository, db *repository.DB) *AdminHandler {
+	return &AdminHandler{repo: repo, mediaRepo: mediaRepo, settingRepo: settingRepo, libPermRepo: libPermRepo, db: db}
 }
 
 // GetStats returns aggregate system statistics.
@@ -231,4 +232,38 @@ func (h *AdminHandler) DeleteMedia(w http.ResponseWriter, r *http.Request) {
 	response.NoContent(w)
 }
 
+// ListPermissions returns all library permissions (admin only).
+func (h *AdminHandler) ListPermissions(w http.ResponseWriter, r *http.Request) {
+	perms, err := h.libPermRepo.GetAllPermissions(r.Context())
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	if perms == nil {
+		perms = []repository.UserLibraryPermission{}
+	}
+	response.Success(w, perms)
+}
 
+// UpdatePermission sets a single library permission (admin only).
+func (h *AdminHandler) UpdatePermission(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID    string `json:"user_id"`
+		LibraryID string `json:"library_id"`
+		CanView   bool   `json:"can_view"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, 400, "invalid JSON")
+		return
+	}
+	if req.UserID == "" || req.LibraryID == "" {
+		response.Error(w, 400, "user_id and library_id are required")
+		return
+	}
+
+	if err := h.libPermRepo.SetPermission(r.Context(), req.UserID, req.LibraryID, req.CanView); err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	response.NoContent(w)
+}

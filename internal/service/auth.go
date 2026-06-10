@@ -14,17 +14,19 @@ import (
 
 // AuthService handles authentication business logic.
 type AuthService struct {
-	userRepo  *repository.UserRepository
-	jwtSecret string
-	tokenTTL  time.Duration
+	userRepo    *repository.UserRepository
+	libPermRepo *repository.LibraryPermissionRepository
+	jwtSecret   string
+	tokenTTL    time.Duration
 }
 
 // NewAuthService creates a new AuthService.
-func NewAuthService(userRepo *repository.UserRepository, jwtSecret string, tokenTTLHours int) *AuthService {
+func NewAuthService(userRepo *repository.UserRepository, libPermRepo *repository.LibraryPermissionRepository, jwtSecret string, tokenTTLHours int) *AuthService {
 	return &AuthService{
-		userRepo:  userRepo,
-		jwtSecret: jwtSecret,
-		tokenTTL:  time.Duration(tokenTTLHours) * time.Hour,
+		userRepo:    userRepo,
+		libPermRepo: libPermRepo,
+		jwtSecret:   jwtSecret,
+		tokenTTL:    time.Duration(tokenTTLHours) * time.Hour,
 	}
 }
 
@@ -74,6 +76,11 @@ func (s *AuthService) createUserWithRole(ctx context.Context, username string, h
 
 	if err := s.userRepo.Create(ctx, user); err != nil {
 		return nil, errors.Wrap(err, errors.ErrInternal)
+	}
+
+	// Auto-grant access to all existing libraries.
+	if s.libPermRepo != nil {
+		_ = s.libPermRepo.GrantAllLibraries(ctx, user.ID)
 	}
 
 	user.Password = ""

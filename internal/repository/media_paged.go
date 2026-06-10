@@ -10,7 +10,8 @@ import (
 
 // ListPaged returns a paginated, filtered, and sorted list of media items
 // and the total count matching the filters.
-func (r *MediaRepository) ListPaged(ctx context.Context, page, limit int, mediaType string, query string, sort string) ([]model.MediaItem, int, error) {
+// allowedLibraryIDs: nil means no filter (admin), empty means no results, non-empty filters by library_id IN (...).
+func (r *MediaRepository) ListPaged(ctx context.Context, page, limit int, mediaType string, query string, sort string, allowedLibraryIDs []string) ([]model.MediaItem, int, error) {
 	var whereClauses []string
 	var whereArgs []interface{}
 
@@ -35,6 +36,16 @@ func (r *MediaRepository) ListPaged(ctx context.Context, page, limit int, mediaT
 		pattern := "%" + query + "%"
 		whereClauses = append(whereClauses, "(title LIKE ? OR sort_title LIKE ?)")
 		whereArgs = append(whereArgs, pattern, pattern)
+	}
+
+	// Library access filter.
+	if allowedLibraryIDs != nil {
+		placeholders := make([]string, len(allowedLibraryIDs))
+		for i, id := range allowedLibraryIDs {
+			placeholders[i] = "?"
+			whereArgs = append(whereArgs, id)
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("library_id IN (%s)", strings.Join(placeholders, ",")))
 	}
 
 	// Build WHERE string.

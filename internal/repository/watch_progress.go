@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/fyom/fyom/internal/model"
@@ -57,16 +59,30 @@ func (r *MediaRepository) GetProgress(ctx context.Context, userID, mediaItemID s
 }
 
 // GetContinueWatching returns media items with unfinished progress for a user.
-func (r *MediaRepository) GetContinueWatching(ctx context.Context, userID string, limit int) ([]MediaItemWithProgress, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT m.id, m.type, m.title, m.sort_title, m.year, m.overview,
+// allowedLibraryIDs: nil means no filter (admin), non-empty filters by m.library_id IN (...).
+func (r *MediaRepository) GetContinueWatching(ctx context.Context, userID string, limit int, allowedLibraryIDs []string) ([]MediaItemWithProgress, error) {
+	query := `SELECT m.id, m.type, m.title, m.sort_title, m.year, m.overview,
 		m.rating, m.duration, m.file_path, m.poster_path, m.backdrop_path, m.parent_id,
 		m.season, m.episode, m.metadata_source, m.provider_id, m.library_id, m.created_at, m.updated_at,
 		w.position, w.duration, w.finished
 		FROM watch_progress w
 		JOIN media_items m ON m.id = w.media_item_id
-		WHERE w.user_id = ? AND w.finished = 0 AND w.position > 0
-		ORDER BY w.updated_at DESC
-		LIMIT ?`, userID, limit)
+		WHERE w.user_id = ? AND w.finished = 0 AND w.position > 0`
+	args := []interface{}{userID}
+
+	if allowedLibraryIDs != nil {
+		placeholders := make([]string, len(allowedLibraryIDs))
+		for i, id := range allowedLibraryIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		query += fmt.Sprintf(" AND m.library_id IN (%s)", strings.Join(placeholders, ","))
+	}
+
+	query += " ORDER BY w.updated_at DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

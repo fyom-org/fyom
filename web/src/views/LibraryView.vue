@@ -73,7 +73,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
+import { useRoute } from 'vue-router';
 import { getMediaList } from '@/api/library';
 import MediaCard from '@/components/MediaCard.vue';
 
@@ -90,6 +91,9 @@ interface MediaItem {
 const TYPE_ALL = 'movie,show';
 const TYPE_MOVIE = 'movie';
 const TYPE_SHOW = 'show';
+
+const route = useRoute();
+const currentLibraryId = computed(() => (route.query.library_id as string) || '');
 
 // ── State ──────────────────────────────────────────────────────────────────
 const items = ref<MediaItem[]>([]);
@@ -134,11 +138,15 @@ async function fetchPage() {
   loading.value = true;
   error.value = '';
   try {
-    const data = await getMediaList(page.value, 20, {
+    const params: any = {
       type: activeType.value,
       q: searchQuery.value || undefined,
       sort: activeSort.value,
-    });
+    };
+    if (currentLibraryId.value) {
+      params.library_id = currentLibraryId.value;
+    }
+    const data = await getMediaList(page.value, 20, params);
     if (!data.items?.length) {
       allLoaded.value = true;
       return;
