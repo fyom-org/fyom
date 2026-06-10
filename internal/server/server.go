@@ -81,6 +81,8 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	authHandler := handler.NewAuthHandler(userRepo, settingRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
 	systemHandler := handler.NewSystemHandler(settingRepo, authHandler.GetAuthService())
 	adminProviderHandler := handler.NewAdminProviderHandler(providerRepo, logger)
+	adminRepo := repository.NewAdminRepository(db)
+	adminHandler := handler.NewAdminHandler(adminRepo)
 
 	// ── Public API routes (no auth) ───────────────────────────────────────
 	r.Get("/api/v1/health", healthHandler.Health)
@@ -104,10 +106,18 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 
 		// Admin-only routes
 		r.With(middleware.RequireAdmin).Post("/api/v1/library/import", mediaHandler.Import)
-		r.With(middleware.RequireAdmin).Get("/api/v1/admin/providers", adminProviderHandler.ListProviders)
-		r.With(middleware.RequireAdmin).Post("/api/v1/admin/providers", adminProviderHandler.CreateProvider)
-		r.With(middleware.RequireAdmin).Put("/api/v1/admin/providers/{id}", adminProviderHandler.UpdateProvider)
-		r.With(middleware.RequireAdmin).Delete("/api/v1/admin/providers/{id}", adminProviderHandler.DeleteProvider)
+	})
+
+	// ── Admin routes (auth + admin role) ──────────────────────────────────
+	r.Route("/api/v1/admin", func(r chi.Router) {
+		r.Use(middleware.AuthMiddleware(cfg.Auth.JWTSecret))
+		r.Use(middleware.RequireAdmin)
+		r.Get("/stats", adminHandler.GetStats)
+		r.Get("/import-jobs", adminHandler.ListImportJobs)
+		r.Get("/providers", adminProviderHandler.ListProviders)
+		r.Post("/providers", adminProviderHandler.CreateProvider)
+		r.Put("/providers/{id}", adminProviderHandler.UpdateProvider)
+		r.Delete("/providers/{id}", adminProviderHandler.DeleteProvider)
 	})
 
 	// ── Presigned media endpoints (no JWT, sig-based auth) ─────────────────
