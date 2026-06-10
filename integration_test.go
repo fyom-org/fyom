@@ -3,6 +3,7 @@ package fyom
 import (
 	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/fyom/fyom/internal/config"
 	"github.com/fyom/fyom/internal/handler"
 	"github.com/fyom/fyom/internal/middleware"
+	"github.com/fyom/fyom/internal/provider"
 	"github.com/fyom/fyom/internal/repository"
 	"github.com/fyom/fyom/pkg/presign"
 	"github.com/go-chi/chi/v5"
@@ -42,8 +44,12 @@ func setupIntegrationRouter(t *testing.T) (http.Handler, func()) {
 	jobRepo := repository.NewImportJobRepository(db)
 
 	healthHandler := handler.NewHealthHandler("test", "abc", "now", "go1.26")
-	signer := presign.NewSigner(cfg.Auth.JWTSecret, 3600)
-	mediaHandler := handler.NewMediaHandler(db, mediaRepo, jobRepo, signer)
+
+	// Provider registry with LocalProvider.
+	reg := provider.NewRegistry()
+	reg.Register(provider.NewLocalProvider(presign.NewSigner(cfg.Auth.JWTSecret, 3600)))
+	mediaHandler := handler.NewMediaHandler(reg, db, mediaRepo, jobRepo, slog.Default())
+
 	authHandler := handler.NewAuthHandler(userRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
 
 	// Public routes (no auth)

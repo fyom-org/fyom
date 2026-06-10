@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/fyom/fyom/internal/config"
 	"github.com/fyom/fyom/internal/middleware"
+	"github.com/fyom/fyom/internal/provider"
 	"github.com/fyom/fyom/internal/repository"
 	"github.com/fyom/fyom/pkg/presign"
 	"github.com/go-chi/chi/v5"
@@ -55,7 +57,11 @@ func setupTestRouter(t *testing.T) http.Handler {
 	jobRepo := repository.NewImportJobRepository(db)
 
 	healthHandler := NewHealthHandler("test", "abc123", "now", "go1.26")
-	mediaHandler := NewMediaHandler(db, mediaRepo, jobRepo, presign.NewSigner("test-secret", 3600))
+
+	reg := provider.NewRegistry()
+	reg.Register(provider.NewLocalProvider(presign.NewSigner("test-secret", 3600)))
+	mediaHandler := NewMediaHandler(reg, db, mediaRepo, jobRepo, slog.Default())
+
 	authHandler := NewAuthHandler(userRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
 
 	r.Get("/api/v1/health", healthHandler.Health)

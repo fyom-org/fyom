@@ -16,6 +16,7 @@ import (
 	"github.com/fyom/fyom/internal/config"
 	"github.com/fyom/fyom/internal/handler"
 	"github.com/fyom/fyom/internal/middleware"
+	"github.com/fyom/fyom/internal/provider"
 	"github.com/fyom/fyom/internal/repository"
 	"github.com/fyom/fyom/pkg/presign"
 	"github.com/fyom/fyom/web"
@@ -44,13 +45,20 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	jobRepo := repository.NewImportJobRepository(db)
 	settingRepo := repository.NewSystemSettingRepository(db)
 
-	// Presigned URL signer — used by handlers to generate URLs and by
+	// Presigned URL signer — used by LocalProvider to generate URLs and by
 	// middleware to validate them on media-serving endpoints.
 	signer := presign.NewSigner(cfg.Auth.JWTSecret, 3600)
 
+	// Create provider registry and register LocalProvider.
+	// TODO(phase4): Load additional provider configs from the database and
+	// register S3Provider instances here once provider config persistence
+	// is implemented.
+	reg := provider.NewRegistry()
+	reg.Register(provider.NewLocalProvider(signer))
+
 	// Handlers
 	healthHandler := handler.NewHealthHandler(version, gitCommit, buildTime, goVer)
-	mediaHandler := handler.NewMediaHandler(db, mediaRepo, jobRepo, signer)
+	mediaHandler := handler.NewMediaHandler(reg, db, mediaRepo, jobRepo, logger)
 	// TODO: re-add path restriction when multi-user mode is implemented
 	authHandler := handler.NewAuthHandler(userRepo, settingRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
 	systemHandler := handler.NewSystemHandler(settingRepo, authHandler.GetAuthService())

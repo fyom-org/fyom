@@ -1,8 +1,9 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,54 +12,56 @@ import (
 	"time"
 
 	"github.com/fyom/fyom/internal/model"
+	"github.com/fyom/fyom/internal/provider"
 	"github.com/fyom/fyom/internal/repository"
 	"github.com/fyom/fyom/internal/service"
 	"github.com/fyom/fyom/pkg/errors"
-	"github.com/fyom/fyom/pkg/presign"
 	"github.com/fyom/fyom/pkg/response"
 )
 
 // MediaItemResponse is the JSON DTO returned by library API endpoints.
-// Filesystem paths are never exposed; presigned URLs are generated dynamically.
+// Filesystem paths are never exposed; resource URLs are generated dynamically
+// via the Provider registry.
 type MediaItemResponse struct {
-	ID             string   `json:"id"`
-	Type           string   `json:"type"`
-	Title          string   `json:"title"`
-	SortTitle      string   `json:"sort_title,omitempty"`
-	Year           *int     `json:"year,omitempty"`
-	Overview       string   `json:"overview,omitempty"`
+	ID             string  `json:"id"`
+	Type           string  `json:"type"`
+	Title          string  `json:"title"`
+	SortTitle      string  `json:"sort_title,omitempty"`
+	Year           *int    `json:"year,omitempty"`
+	Overview       string  `json:"overview,omitempty"`
 	Rating         *float64 `json:"rating,omitempty"`
-	Duration       *int     `json:"duration,omitempty"`
-	PosterURL      string   `json:"poster_url,omitempty"`
-	BackdropURL    string   `json:"backdrop_url,omitempty"`
-	StreamURL      string   `json:"stream_url,omitempty"`
-	Season         *int     `json:"season,omitempty"`
-	Episode        *int     `json:"episode,omitempty"`
-	ParentID       string   `json:"parent_id,omitempty"`
-	MetadataSource string   `json:"metadata_source,omitempty"`
+	Duration       *int    `json:"duration,omitempty"`
+	PosterURL      *string `json:"poster_url,omitempty"`
+	BackdropURL    *string `json:"backdrop_url,omitempty"`
+	StreamURL      *string `json:"stream_url,omitempty"`
+	Season         *int    `json:"season,omitempty"`
+	Episode        *int    `json:"episode,omitempty"`
+	ParentID       string  `json:"parent_id,omitempty"`
+	MetadataSource string  `json:"metadata_source,omitempty"`
 }
 
 // MediaHandler handles media-related HTTP endpoints.
 type MediaHandler struct {
+	registry *provider.Registry
 	repo     *repository.MediaRepository
 	jobRepo  *repository.ImportJobRepository
 	importer *service.Importer
-	signer   *presign.Signer
+	logger   *slog.Logger
 }
 
 // NewMediaHandler creates a new MediaHandler.
-func NewMediaHandler(db *repository.DB, mediaRepo *repository.MediaRepository, jobRepo *repository.ImportJobRepository, signer *presign.Signer) *MediaHandler {
+func NewMediaHandler(registry *provider.Registry, db *repository.DB, mediaRepo *repository.MediaRepository, jobRepo *repository.ImportJobRepository, logger *slog.Logger) *MediaHandler {
 	return &MediaHandler{
+		registry: registry,
 		repo:     mediaRepo,
 		jobRepo:  jobRepo,
 		importer: service.NewImporter(db, mediaRepo, jobRepo),
-		signer:   signer,
+		logger:   logger,
 	}
 }
 
-// attachPresignedURLs converts a model.MediaItem to a MediaItemResponse
-// with presigned URLs for poster, backdrop, and stream resources.
-func (h *MediaHandler) attachPresignedURLs(item *model.MediaItem) MediaItemResponse {
+// mediaItemToResponse copies all non-URL fields from model.MediaItem to MediaItemResponse.
+func mediaItemToResponse(item *model.MediaItem) MediaItemResponse {
 	resp := MediaItemResponse{
 		ID:             item.ID,
 		Type:           item.Type,
@@ -85,25 +88,43 @@ func (h *MediaHandler) attachPresignedURLs(item *model.MediaItem) MediaItemRespo
 		resp.Episode = &item.Episode
 	}
 
-	// Generate presigned URLs (dynamic, never stored in DB).
-	if item.PosterPath != "" {
-		resp.PosterURL = h.signer.Generate(fmt.Sprintf("/api/v1/media/%s/poster", item.ID))
-	}
-	if item.BackdropPath != "" {
-		resp.BackdropURL = h.signer.Generate(fmt.Sprintf("/api/v1/media/%s/backdrop", item.ID))
-	}
-	if item.FilePath != "" {
-		resp.StreamURL = h.signer.Generate(fmt.Sprintf("/api/v1/media/%s/stream", item.ID))
+	return resp
+}
+
+// attachPresignedURLs resolves resource URLs for a media item via its provider.
+//
+// If the item's provider is not registered (stale provider_id, removed config),
+// the response is returned without URLs and a warning is logged. This is a
+// graceful degradation — the client will see nil URL fields rather than a 500.
+func attachPresignedURLs(ctx context.Context, item *model.MediaItem, registry *provider.Registry, logger *slog.Logger) MediaItemResponse {
+	resp := mediaItemToResponse(item)
+
+	p, ok := registry.Get(item.ProviderID)
+	if !ok {
+		logger.Warn("provider not found for media item",
+			"item_id",     item.ID,
+			"provider_id", item.ProviderID,
+		)
+		return resp
 	}
 
+	if u, err := p.PosterURL(ctx, item); err == nil && u != "" {
+		resp.PosterURL = &u
+	}
+	if u, err := p.BackdropURL(ctx, item); err == nil && u != "" {
+		resp.BackdropURL = &u
+	}
+	if u, err := p.StreamURL(ctx, item); err == nil && u != "" {
+		resp.StreamURL = &u
+	}
 	return resp
 }
 
 // attachPresignedURLsList maps a slice of MediaItem through attachPresignedURLs.
-func (h *MediaHandler) attachPresignedURLsList(items []model.MediaItem) []MediaItemResponse {
+func attachPresignedURLsList(ctx context.Context, items []model.MediaItem, registry *provider.Registry, logger *slog.Logger) []MediaItemResponse {
 	result := make([]MediaItemResponse, len(items))
 	for i := range items {
-		result[i] = h.attachPresignedURLs(&items[i])
+		result[i] = attachPresignedURLs(ctx, &items[i], registry, logger)
 	}
 	return result
 }
@@ -150,7 +171,7 @@ func (h *MediaHandler) List(w http.ResponseWriter, r *http.Request) {
 		items = []model.MediaItem{}
 	}
 
-	result := h.attachPresignedURLsList(items)
+	result := attachPresignedURLsList(r.Context(), items, h.registry, h.logger)
 
 	response.Success(w, map[string]interface{}{
 		"items":       result,
@@ -179,7 +200,7 @@ func (h *MediaHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := h.attachPresignedURLs(item)
+	result := attachPresignedURLs(r.Context(), item, h.registry, h.logger)
 	response.Success(w, result)
 }
 
@@ -195,7 +216,7 @@ func (h *MediaHandler) ListEpisodes(w http.ResponseWriter, r *http.Request) {
 		items = []model.MediaItem{}
 	}
 
-	result := h.attachPresignedURLsList(items)
+	result := attachPresignedURLsList(r.Context(), items, h.registry, h.logger)
 	response.Success(w, result)
 }
 
@@ -294,6 +315,15 @@ func (h *MediaHandler) ServeBackdrop(w http.ResponseWriter, r *http.Request) {
 	modTime := info.ModTime()
 	http.ServeContent(w, r, name, modTime, f)
 }
+
+// NOTE: These serve handlers (ServeStream, ServePoster, ServeBackdrop above)
+// are LocalProvider implementation details. When S3Provider is added, its URLs
+// point directly to S3 — these handlers are never called for S3 items.
+//
+// TODO(phase5): When RemoteFyomProvider is added, the handler that resolves
+// a media item's stream URL must check SupportsRedirect() and issue an
+// HTTP 302 rather than embedding the URL in JSON. This applies to the
+// GetByID and stream-initiation paths, not to these serve handlers.
 
 // ServeContent streams a media file with full HTTP Range Request support.
 func (h *MediaHandler) ServeContent(w http.ResponseWriter, r *http.Request, item *model.MediaItem) {
