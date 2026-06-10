@@ -3,37 +3,38 @@
 
 ## Design North Star
 
-fyom is not a media server — it is a **media catalog and resource dispatcher**. 
-The server never transcodes and never proxies media traffic. It only manages 
-metadata and issues time-limited, signed URLs (Presigned URLs) that allow 
+fyom is not a media server — it is a **media catalog and resource dispatcher**.
+The server never transcodes and never proxies media traffic. It only manages
+metadata and issues time-limited, signed URLs (Presigned URLs) that allow
 clients to stream directly from the source (Local Disk, S3, or Remote fyom Node).
 
 ---
 
 # MVP: The Action-Oriented Media Center
 
-The goal of the MVP is to transform fyom from a file manager into an immersive 
-media experience with professional-grade library management. Users should be able 
-to decide "what to watch" within 3 seconds, and admins should have full control 
-over library organization, content lifecycle, and access permissions.
+The goal of the MVP is to deliver an immersive media experience with
+professional-grade library management. Users decide "what to watch" within
+3 seconds. Admins have full control over library organization, content
+lifecycle, and access permissions. Every media item carries both physical
+state (where did I stop?) and emotional state (do I still care?).
 
 ## Phase 1: Core Foundation & Auth ✅
 
-Build the foundational UI shell, authentication, and the primary user action — 
+Build the foundational UI shell, authentication, and the primary user action —
 importing a pre-organized media library.
 
 - [x] Login flow (JWT auth, form validation)
-- [x] Setup Wizard (first-run admin creation, registration toggle)
+- [x] Setup Wizard (first-run admin creation + library creation + registration toggle)
 - [x] Main layout (header, sidebar, content area)
 - [x] Import view (path input, trigger button)
 - [x] Job status polling component
 - [x] RBAC (Admin/User roles, RequireAdmin middleware)
-- [x] S3-style Presigned URLs for all media resources (HMAC-SHA256)
+- [x] S3-style Presigned URLs for all media resources (HMAC-SHA256, path-bound signatures)
 
 ## Phase 2: Media Catalog & Provider Architecture ✅
 
-Browse imported movies and shows with poster art using Jellyfin/Kodi standard 
-directory parsing. Decouple fyom from local filesystem assumptions via the 
+Browse imported movies and shows with poster art using Jellyfin/Kodi standard
+directory parsing. Decouple fyom from local filesystem assumptions via the
 `MediaProvider` interface.
 
 - [x] Library list view (dark-themed poster wall grid)
@@ -43,269 +44,252 @@ directory parsing. Decouple fyom from local filesystem assumptions via the
 - [x] Native HTML5 video player (autoplay, fullscreen, seek via Range requests)
 - [x] Search, Type Filter & Sort (Debounced input, AbortController, CASE WHEN SQL)
 - [x] `MediaProvider` interface & Registry (concurrency-safe, graceful degradation)
-- [x] `LocalProvider` implementation (wraps presign.Signer)
+- [x] `LocalProvider` implementation (wraps presign.Signer, SupportsRedirect → false)
 - [x] `ImportFS` abstraction (ReadDir, Open, Exists, Join)
-- [x] `LocalImportFS` implementation (wraps os.ReadFile/filepath.WalkDir)
+- [x] `LocalImportFS` implementation (wraps os.ReadDir, os.Open, os.Stat)
+- [x] Season 0 serialization fix (*int + omitempty pattern for JSON zero-values)
 
 ## Phase 3: Cloud Native & S3 Storage ✅
 
-Expand beyond NAS boundaries. Allow media to live in B2, Wasabi, MinIO, or any 
+Expand beyond NAS boundaries. Allow media to live in B2, Wasabi, MinIO, or any
 S3-compatible object storage.
 
 - [x] `S3Provider` implementation (AWS SDK v2 presigned URL generation)
-- [x] `S3ImportFS` implementation (ListObjectsV2 with delimiter, GetObject)
+- [x] `S3ImportFS` implementation (ListObjectsV2 with delimiter, GetObject, HeadObject)
 - [x] Import from S3 bucket (read NFO from object storage, catalog metadata locally)
 - [x] CDN integration (replaceCDNHost swaps S3 host for CDN while preserving signatures)
 - [x] Admin Provider CRUD API (`/api/v1/admin/providers`)
+- [x] Provider config persistence (providers table, factory pattern)
+
+**Architecture Win:** S3 perfectly aligns with fyom's no-proxying principle.
+The Go server generates an S3 Presigned URL and returns it; the client streams
+hundreds of Mbps directly. The server stays at <1% CPU, acting only as a
+metadata dispatcher. `S3Provider` also serves as the design reference for the
+`RemoteFyomProvider` signing protocol in Future Plan 1.
 
 ## Phase 4: The 3-Second Experience ✅
 
-fyom currently looks like a file manager. This phase reshaped it into an 
-action-oriented media center. Core metric: from opening the page to clicking 
-play in under 3 seconds.
+Transform the library from a file manager into an action-oriented media center.
+Core metric: from opening the page to clicking play in under 3 seconds.
 
 ### 4.1 Action-Oriented Dashboard ✅
 - [x] Dashboard View as default landing page (replacing raw library grid)
 - [x] "Continue Watching" row (horizontal scroll, always first)
 - [x] "Recently Added" row (horizontal scroll, freshness)
-- [x] `MediaRow.vue` component (unified horizontal scroll paradigm)
+- [x] `MediaRow.vue` component (unified horizontal scroll paradigm, CSS scroll-snap)
 
 ### 4.2 Card Evolution & Hover Preview ✅
 - [x] Enhanced `MediaCard`: display year, type badge, progress bar
 - [x] Hover/Focus interaction: card scales up, play icon overlay
 - [x] Minimal auxiliary info: cover + year/type only, restrained spacing
+- [x] scaleX progress bar (GPU-composited, no layout thrash)
 
 ### 4.3 Watch Progress Tracking ✅
 - [x] Backend `watch_progress` data model (position, duration, finished)
-- [x] `PUT /api/v1/media/:id/progress` (player timeupdate fire-and-forget)
+- [x] `PUT /api/v1/media/:id/progress` (player timeupdate fire-and-forget, 10s interval)
 - [x] `GET /api/v1/library/continue` (in-progress items)
 - [x] Progress state reflected on cards (progress bar) and detail page
 
 ### 4.4 Detail Page Simplification ✅
-- [x] Strengthen primary action: visually dominant "▶ Play" button
-- [x] Interest-based expansion: overview/episodes collapsed by default
-- [x] Playback state echo: resume position displayed ("Resume from 42m")
-- [x] Collapsible season headers in EpisodeList with episode counts
+- [x] Visually dominant "▶ Play" button (purple glow, 18px, primary action)
+- [x] Interest-based expansion: overview collapsed to 2-line clamp, click to expand
+- [x] Episodes collapsed by default (season headers with episode counts, click to expand)
+- [x] Resume state displayed ("▶ Resume", "Resume from 42m / 1h 58m")
+- [x] Progress bar in backdrop area for partially watched items
 
-## Phase 5: Admin Control Hub 🔧 *Current*
+**Design Principle:** The interface asks "what do you want to watch", not
+"what do you want to manage". All browsing is horizontal scrolling + light
+filtering; all states are expressed instantly through visuals.
 
-A media library admin panel should not be a collection of configurations, but a 
+## Phase 5: Admin Control Hub ✅
+
+A media library admin panel should not be a collection of configurations, but a
 control hub with clear status and direct operations.
 
 - [x] Dedicated `/admin` layout (visually decoupled from user experience)
+- [x] Content/Admin route decoupling (RBAC route guards, localStorage role check)
 - [x] System Health Panel (library stats, import job history, storage distribution)
 - [x] Provider management page (CRUD, enable/disable toggle)
-- [x] Content/Admin route decoupling (RBAC route guards, localStorage role check)
-- [ ] Inline Operations (match/edit unrecognized media without page jumps)
-- [ ] Configuration Convergence (only expose parameters that affect outcomes)
+- [x] Settings page (registration toggle, system configuration API)
+- [x] Metadata editing (PUT /admin/media/:id, inline edit on detail page for admins)
+- [x] User management (list, promote/demote, delete, last-admin protection)
+- [x] Import progress UI (real-time polling with scaleX progress bar)
 
-## Phase 6: Library Management & Access Control
+**Design Principle:** The admin panel tells you if the system is healthy and
+where exceptions are. You only need one click to fix them.
 
-fyom currently treats all imported media as a single flat pool with no lifecycle 
-management. Admins cannot delete items, cannot organize content into separate 
-libraries, and cannot control which users see which content. This phase introduces 
-the Library as a first-class entity — the organizational unit that binds storage, 
+## Phase 6: Library Management & Access Control ✅
+
+fyom treats all imported media as a single flat pool. This phase introduces the
+Library as a first-class entity — the organizational unit that binds storage,
 metadata rules, and access permissions together.
 
-### 6.1 Library Entity Model
-- [ ] `libraries` table (id, name, type [movie|show|mixed], provider_id, source_path, 
-      metadata_source [nfo|filename], created_at, updated_at)
-- [ ] `media_items.library_id` foreign key (migration, backfill existing items)
-- [ ] Admin CRUD API for libraries (`/api/v1/admin/libraries`)
-- [ ] Admin Libraries page (create, edit, delete libraries with provider + path binding)
+### 6.1 Library Entity Model ✅
+- [x] `libraries` table (id, name, type, provider_id, source_path, metadata_source)
+- [x] `media_items.library_id` foreign key (migration, backfill)
+- [x] Admin CRUD API for libraries (`/api/v1/admin/libraries`)
+- [x] Admin Libraries page (create, delete, refresh, check-missing)
+- [x] "local" provider accepted as built-in (not stored in providers table)
+- [x] Setup wizard creates first library (optional, enabled by default)
 
-### 6.2 Content Lifecycle
-- [ ] Delete single media item (`DELETE /api/v1/admin/media/:id` — cascades episodes for shows)
-- [ ] Delete entire library (with confirmation, option to keep or remove orphans)
-- [ ] Re-import / refresh library (re-scan source path, add new, mark missing items)
-- [ ] Missing item detection (file no longer exists on disk → flag in UI)
+### 6.2 Content Lifecycle ✅
+- [x] Delete single media item (`DELETE /api/v1/admin/media/:id` — cascades episodes + progress)
+- [x] Delete entire library (cascade/orphan modes via prompt)
+- [x] Re-import / refresh library (INSERT OR IGNORE for idempotent scanning)
+- [x] Missing item detection (`media_items.status` field, check-missing endpoint)
+- [x] Missing Items admin page (list, filter by library, batch delete)
+- [x] Missing items hidden from user-facing views (status='available' filter)
 
-### 6.3 Per-Library Access Control
-- [ ] `library_permissions` table (user_id, library_id, can_view [bool])
-- [ ] Library list API respects permissions (users only see libraries they can access)
-- [ ] Admin UI for managing per-user library access
-- [ ] Default permission: new users get access to all existing libraries (MVP-safe)
+### 6.3 Per-Library Access Control ✅
+- [x] `library_permissions` table (user_id, library_id, can_view)
+- [x] Library list API respects permissions (users only see accessible libraries)
+- [x] Admin Permissions page (user × library matrix with toggle)
+- [x] Auto-grant: new users get access to all existing libraries
+- [x] Auto-grant: new libraries grant access to all existing users
+- [x] Permission middleware (ResolvePermissions, allowedLibraryIDs in context)
+- [x] 404 not 403 for inaccessible items (don't leak existence)
 
-### 6.4 Library-Aware Browsing
-- [ ] Sidebar library switcher (when multiple libraries exist)
-- [ ] Dashboard rows scoped to accessible libraries
-- [ ] Library grid filtered by `library_id` query parameter
+### 6.4 Library-Aware Browsing ✅
+- [x] Sidebar library switcher (2+ libraries, emoji icons by type)
+- [x] Dashboard rows scoped to accessible libraries
+- [x] Library grid filtered by `library_id` query parameter
+- [x] Library name in page title + breadcrumb navigation
+- [x] Library tags on dashboard cards (when 2+ libraries exist)
+- [x] Single-library grace: no library UI chrome when only 1 library
+- [x] `library_id` in API responses for frontend library mapping
 
-**Design Principle:** The Library is the atomic unit of organization. Every media 
-item belongs to exactly one library. Permissions are granted at the library level, 
-not the item level. This gives admins the power to create distinct spaces 
-(e.g., "Kids Movies" vs "Documentaries") with independent access rules, without 
-the complexity of per-item permissions.
+**Design Principle:** The Library is the atomic unit of organization. Every media
+item belongs to exactly one library. Permissions are granted at the library level,
+not the item level. This gives admins the power to create distinct spaces
+(e.g., "Kids Movies" vs "Documentaries") with independent access rules.
 
-**Architecture Note:** Jellyfin's layered override model 
-(global → library → item) is the right long-term target, but for MVP we only 
-implement the library layer. Global settings (registration, provider config) already 
-exist at the system level. Per-item overrides are a Production concern.
+## Phase 7: User Status & Intent 🔧 *Current*
+
+watch_progress tracks physical playback position. User status tracks
+emotional intent. Both are needed for a complete media experience.
+
+### 7.1 Status Data Model
+- [x] `user_media_status` table (user_id, media_item_id, status, created_at, updated_at)
+- [x] Status enum: watching, want_to_watch, watched, dropped, none (default)
+- [x] `idx_ums_user_status` index on (user_id, status) for query performance
+- [ ] PUT /api/v1/media/:id/status — set status
+- [ ] GET /api/v1/media/:id/status — get status for current user
+- [ ] GET /api/v1/library/by-status — items filtered by status
+- [ ] Auto-transition: playing an item sets status to 'watching' (if none/want)
+- [ ] Auto-transition: video ended + finished=true sets status to 'watched'
+- [ ] Auto-transition respects 'dropped' — never overrides manual intent
+
+### 7.2 Status in Browsing UI
+- [ ] Status icon on MediaCard (top-left, colored circle, click to cycle)
+- [ ] Status filter in LibraryView toolbar (All / Watching / Want / Watched / Dropped)
+- [ ] Status toggle on detail page (one-click set)
+- [ ] Event-driven prop updates (emit only, parent manages data source)
+
+### 7.3 Status-Aware Dashboard
+- [ ] "Continue Watching" row shows items with status=watching
+- [ ] "Want to Watch" row shows items with status=want_to_watch
+- [ ] Row order: Continue → Want → Recent
+- [ ] Rows merge physical progress with emotional intent
+
+**Design Note:** Status and progress are complementary. Progress answers
+"where did I stop?" Status answers "do I still care?" An item can have
+progress but be 'dropped', or be 'want_to_watch' with no progress.
+
+**Tauri Integration Point:** When libmpv fires MPV_EVENT_END_FILE,
+the desktop client calls PUT /media/:id/status with {status:'watched'}.
+The backend model already exists — zero new work needed.
+
+**Known MVP Limitations:**
+- Status filter and Type filter cannot combine (by-status ignores type param)
+- Show vs Episode status semantics undefined (both are independent for now)
+- by-status endpoint has no pagination (hard limit 20)
 
 ---
 
 # Production: Scaling & Ecosystem
 
-Features for hardening fyom for production deployment and wrapping the experience 
-in a native desktop shell.
+Features for hardening fyom for production deployment and wrapping the
+experience in a native desktop shell.
 
-### Production Phase 1: Desktop Shell
+## Production Phase 1: Desktop Shell & Tauri
 
-Wrap everything in a native desktop application and refine the client experience
-for production use.
+Wrap the Web UI in a native desktop application. The Go server runs as a
+Tauri sidecar for local-only mode.
 
 - [ ] Tauri 2 desktop shell (wrapping the Web UI)
-  > **Lifecycle prerequisite:** reserve a library-mode entry point in `cmd/fyom`
-  > so the embedded Go server can run as a Tauri sidecar in Local-Only mode.
-  > The HTML5 `<video>` player remains active in this phase — libmpv integration
-  > is Production Phase 2.
+  > **Lifecycle note:** in Local-Only mode the embedded Go server must be
+  > launchable as a Tauri sidecar. Reserve a library-mode entry point in
+  > `cmd/fyom` so the Tauri integration does not require core refactoring.
 - [ ] Local network discovery (find other fyom nodes on LAN via mDNS)
 - [ ] System tray / background service management
 - [ ] Responsive design improvements (mobile-friendly catalog)
+- [ ] Global search (across local, S3, and federated providers)
 
----
+## Production Phase 2: Native Playback with libmpv
 
-### Production Phase 2: Native Desktop Player (libmpv)
+Replace the HTML5 `<video>` player with libmpv for professional-grade playback.
 
-Replace the HTML5 `<video>` player in the Tauri shell with a libmpv-powered
-native player. This unlocks 4K HDR, Dolby Vision, Dolby Atmos, DTS-HD MA,
-and hardware-accelerated decoding — capabilities WebKit cannot provide.
+- [ ] libmpv integration via Tauri plugin
+- [ ] MPV_EVENT_END_FILE → auto-set status 'watched'
+- [ ] Hardware-accelerated decoding (GPU passthrough)
+- [ ] Subtitle rendering (ASS/SRT with libass)
+- [ ] Audio passthrough (DTS/AC3 to receiver)
+- [ ] Playback speed control (0.5x – 2.0x)
+- [ ] Chapter navigation from NFO `<epbookmark>` data
 
-The HTML5 player is **not removed**; it remains as the fallback for the web
-client and mobile. The Tauri shell detects the runtime context and routes to
-the appropriate player.
+**Architecture Note:** libmpv is the same engine powering mpv, Celluloid, and
+IINA. It handles every codec, every container, every subtitle format. fyom's
+"no server transcoding" principle means the player must handle everything —
+libmpv is the only player engine that can.
 
-Reference implementations:
-[Soia](https://github.com/FengZeng/soia) (Tauri + libmpv RawWindowHandle),
-[Tsukimi](https://github.com/tsukinaha/tsukimi) (Rust + GTK4 + libmpv render context).
+## Production Phase 3: Polish & Metadata
 
-#### Architecture: Three-Layer Integration
-
-**Layer 1 — Rendering (Soia pattern)**
-
-Rust FFI binds `libmpv` and sets the `wid` property to the window's
-`RawWindowHandle`. The video surface renders at the OS compositor layer.
-A fully transparent Vue 3 WebView overlays it for player controls (seek bar,
-volume, subtitles, fullscreen). There is no IPC overhead — interaction is
-microsecond-latency in-process FFI.
-
-> Do NOT use an external `mpv` process (IPC over socket). The video window
-> cannot be reliably embedded across platforms and introduces process
-> lifecycle complexity.
-
-Platform handle mapping:
-
-| Platform | Handle | Hardware decoder |
-|----------|--------|-----------------|
-| Windows | `HWND` | `d3d11va`, `nvdec` |
-| macOS | `NSView` | `videotoolbox` |
-| Linux / X11 | `XID` | `vaapi`, `vdpau`, `nvdec` |
-| Linux / Wayland | EGL surface | `drm`, `vaapi` via DMA-BUF |
-
-> Wayland native requires `wlr-export-dmabuf` or layer-shell protocol support.
-> Implement X11 + XWayland first; Wayland native is a follow-up iteration.
-
-**Layer 2 — State (Tsukimi pattern)**
-
-A dedicated OS thread (not `tokio::spawn` — `mpv_wait_event` is a blocking
-C call and must not run on the async executor) polls the mpv event queue:
-
-```rust
-// std::thread, not tokio::spawn — mpv_wait_event is a blocking C call.
-// Moving this to the tokio executor will cause the runtime to stall.
-std::thread::spawn(move || {
-    loop {
-        let event = unsafe { mpv_wait_event(ctx, -1.0) };
-        match event.event_id {
-            MPV_EVENT_PROPERTY_CHANGE => { /* window.emit() → Pinia */ }
-            MPV_EVENT_END_FILE        => { /* update watch progress */ }
-            MPV_EVENT_SHUTDOWN        => break,
-            _ => {}
-        }
-    }
-});
-```
-
-Properties to observe: `time-pos`, `duration`, `pause`, `volume`,
-`track-list` (audio/subtitle tracks), `chapter-list`.
-Events are emitted to the Vue frontend via `window.emit()` and consumed
-by a Pinia store that drives the player UI state.
-
-**Layer 3 — Network**
-
-fyom's Presigned URLs (Local HMAC, S3 SigV4) are self-authenticating — mpv
-receives the URL and streams directly with no header injection needed.
-
-For WebDAV / SMB mounts or future bearer-token scenarios (Phase 5 Federation),
-inject credentials directly into mpv properties via FFI (no frontend round-trip):
-
-```rust
-mpv_set_property_string(ctx, "http-header-fields",
-    "Authorization: Bearer {token}\r\nUser-Agent: fyom/1.0");
-```
-
-This hands all network buffering and retry logic to mpv's internal stream
-layer, enabling seek-to-play on 4K files over remote mounts.
-
-#### Task List
-
-- [ ] Rust `libmpv` FFI bindings (use `libmpv-sys` crate or vendor the C headers)
-- [ ] `RawWindowHandle` extraction from Tauri window; platform-specific `wid` injection
-- [ ] Dedicated `std::thread` event loop — `mpv_wait_event` → `window.emit()`
-- [ ] Tauri commands: `player_open(url)`, `player_seek(pos)`, `player_pause()`,
-  `player_set_volume(v)`, `player_set_track(id, type)`
-- [ ] Vue 3 transparent player overlay (seek bar, volume, track selector, fullscreen)
-- [ ] Pinia `usePlayerStore` — driven by Tauri events, not local component state
-- [ ] Runtime player selection: libmpv in Tauri shell, HTML5 on web / mobile
-- [ ] Watch progress write-back on `MPV_EVENT_END_FILE` and periodic `time-pos`
-- [ ] X11 implementation + XWayland fallback (Wayland native: follow-up)
-- [ ] Platform CI: Windows (HWND + d3d11va), macOS (NSView + videotoolbox),
-  Linux / X11 (XID + vaapi)
-
----
-
-### Production Phase 3: Advanced Metadata & Discovery
-
-- [ ] Full Kodi NFO template support (actors, ratings, `<uniqueid>`, fanart sets)
-- [ ] Jellyfin `<uniqueid>` multi-source ID resolution (IMDb, TMDb, TVDb)
-- [ ] `<MediaInfo>` technical metadata display (codec, resolution, audio channels,
-  HDR format, bit depth)
+- [ ] Per-item metadata overrides (layered override: global → library → item)
+- [ ] NFO write-back (Jellyfin-style bidirectional sync)
 - [ ] Collection / franchise grouping (Marvel, Star Wars, etc.)
 - [ ] Smart playlists / saved filters
-- [ ] SQLite FTS5 full-text search (replaces current `LIKE '%q%'` scan)
-  > Migration: `CREATE VIRTUAL TABLE media_fts USING fts5(...)` + triggers.
-  > The `TODO(fts5)` anchor in `media_paged.go` marks the call site.
+- [ ] Status + Type filter combination
+- [ ] Show-level status aggregation (show watched when all episodes watched)
+- [ ] by-status pagination
 
 ---
 
 # Future Plan
 
-Architectural visions for the next era. These require significant design work 
+Architectural visions for the next era. These require significant design work
 before implementation and depend on MVP being stable and complete.
 
-## Future Plan 1: Enhanced Fetures
-- [ ] Global search (across local, S3, and federated providers)
-- [ ] Per-item metadata overrides (layered override: global → library → item)
-- [ ] NFO write-back (Jellyfin-style bidirectional sync)
-
-## Future Plan 2: Federation & Remote Nodes
+## Future Plan 1: Federation & Remote Nodes
 
 Break down data silos between friends. Connect multiple fyom instances together
 without duplicating terabytes of files.
 
 - [ ] `RemoteFyomProvider` implementation (`SupportsRedirect() → true`)
-  > Add `SupportsRedirect()` to the `Provider` interface before this phase.
-  > At this point only two implementations exist (Local + S3), so the interface
-  > change is minimal.
 - [ ] Peer token exchange (authenticate with a remote fyom instance)
 - [ ] Metadata proxying (cache remote library metadata locally for fast browsing)
 - [ ] 302 Redirect streaming (local fyom returns `Location:` pointing to remote
-  Presigned URL — zero local bandwidth consumed)
-- [ ] Cross-instance watch status sync (requires Phase 2 local progress schema)
+  Presigned URL — zero local bandwidth)
+- [ ] Cross-instance watch status sync (requires MVP Phase 7 status model)
 
-**Architecture note:** When a user hits Play on a remote item, the local fyom
-server reads `SupportsRedirect() == true`, calls `GetPresignedStreamURL()` on
-the `RemoteFyomProvider`, and returns HTTP 302. The client pulls the video
-stream directly from the remote server — the local node never touches media bytes.
+**Architecture Note:** When a user hits Play on a remote item, the local fyom
+server reads `SupportsRedirect() == true`, calls the provider, and returns an
+HTTP 302. The client pulls the video stream directly from the remote server —
+the local node never touches media bytes.
 
+## Future Plan 2: Advanced Metadata & Discovery
+
+- [ ] Full Kodi NFO template support (actors, ratings, uniqueid, fanart)
+- [ ] Jellyfin `<uniqueid>` multi-source ID resolution (IMDb, TMDb, TVDb)
+- [ ] `<MediaInfo>` technical metadata (codec, resolution, audio channels)
+- [ ] FTS5 full-text search (SQLite virtual table for sub-second search)
+- [ ] Deduplication detection (same movie in multiple libraries)
+
+## Future Plan 3: Multi-User Experience
+
+- [ ] Watch history timeline (per-user activity feed)
+- [ ] Social features (share status, recommend to friends)
+- [ ] Parental controls (content ratings, time-based access)
+- [ ] Per-user watchlist (curated collection independent of status)
 ```
+
+---
