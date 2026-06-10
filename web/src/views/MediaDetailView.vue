@@ -8,7 +8,7 @@
       />
       <div class="backdrop-overlay"></div>
       <div class="backdrop-progress" v-if="hasProgress">
-        <div class="backdrop-progress-fill" :style="{ width: progressPercent + '%' }"></div>
+        <div class="backdrop-progress-fill" :style="{ transform: `scaleX(${progressPercent / 100})` }"></div>
       </div>
     </div>
 
@@ -164,7 +164,9 @@ function formatDuration(sec: number) {
 .backdrop-progress-fill {
   height: 100%;
   background: #6c63ff;
-  transition: width 0.3s;
+  transition: transform 0.3s;
+  transform-origin: left;
+  width: 100%;
 }
 
 .content {

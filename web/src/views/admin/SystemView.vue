@@ -70,7 +70,7 @@
             <span class="storage-provider">{{ provider }}</span>
             <div class="storage-bar-track">
               <div class="storage-bar-fill"
-                   :style="{ width: (count / stats.library.total_items * 100) + '%' }">
+                   :style="{ transform: `scaleX(${count / stats.library.total_items})` }">
               </div>
             </div>
             <span class="storage-count">{{ count }} items</span>
@@ -320,8 +320,9 @@ h2 {
   height: 100%;
   background: #6c63ff;
   border-radius: 4px;
-  transition: width 0.3s;
-  min-width: 2px;
+  transition: transform 0.3s;
+  transform-origin: left;
+  width: 100%;
 }
 
 .storage-count {

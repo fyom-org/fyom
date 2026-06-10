@@ -92,10 +92,10 @@ function logout() {
   background: #12121e;
 }
 .nav-link.router-link-active {
-  color: #6c63ff;
-  border-left: 3px solid #6c63ff;
-  padding-left: 17px;
-  background: #12121e;
+  color: #ffffff;
+  background: #14142a;
+  border-left: 2px solid rgba(108, 99, 255, 0.4);
+  padding-left: 18px;
 }
 .sidebar-bottom {
   border-top: 1px solid #1a1a2e;

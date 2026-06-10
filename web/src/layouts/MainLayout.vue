@@ -144,8 +144,9 @@ function handleLogout() {
 
 .sidebar a.router-link-active {
   color: #fff;
-  border-left: 3px solid #6c63ff;
-  padding-left: 17px;
+  background: #14142a;
+  border-left: 2px solid rgba(108, 99, 255, 0.4);
+  padding-left: 18px;
 }
 
 .sidebar-spacer {

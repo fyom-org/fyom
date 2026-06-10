@@ -15,7 +15,7 @@
           <button class="play-icon" @click.stop="play">▶</button>
         </div>
         <div v-if="item.position && item.duration && item.position > 0" class="progress-bar">
-          <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
+          <div class="progress-fill" :style="{ transform: `scaleX(${progressPercent / 100})` }"></div>
         </div>
       </div>
       <div class="info">
@@ -133,8 +133,9 @@ const progressPercent = computed(() => {
 .progress-fill {
   height: 100%;
   background: #6c63ff;
-  border-radius: 0 0 8px 8px;
-  transition: width 0.3s;
+  transition: transform 0.3s;
+  transform-origin: left;
+  width: 100%;
 }
 .info {
   margin-top: 8px;
