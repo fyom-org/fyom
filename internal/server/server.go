@@ -50,11 +50,29 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	signer := presign.NewSigner(cfg.Auth.JWTSecret, 3600)
 
 	// Create provider registry and register LocalProvider.
-	// TODO(phase4): Load additional provider configs from the database and
-	// register S3Provider instances here once provider config persistence
-	// is implemented.
 	reg := provider.NewRegistry()
 	reg.Register(provider.NewLocalProvider(signer))
+
+	// Load configurable providers from database and register enabled ones.
+	// TODO(phase4): FromRecord will instantiate S3Provider once implemented.
+	providerRepo := repository.NewProviderRepository(db)
+	if records, err := providerRepo.ListEnabled(context.Background()); err != nil {
+		logger.Warn("failed to load providers from database", "err", err)
+	} else {
+		for _, rec := range records {
+			p, err := provider.FromRecord(rec, signer)
+			if err != nil {
+				logger.Warn("skipping provider: unsupported type or invalid config",
+					"provider_id", rec.ID,
+					"type",        rec.Type,
+					"err",         err,
+				)
+				continue
+			}
+			reg.Register(p)
+			logger.Info("provider registered", "id", rec.ID, "type", rec.Type)
+		}
+	}
 
 	// Handlers
 	healthHandler := handler.NewHealthHandler(version, gitCommit, buildTime, goVer)
@@ -62,6 +80,7 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	// TODO: re-add path restriction when multi-user mode is implemented
 	authHandler := handler.NewAuthHandler(userRepo, settingRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
 	systemHandler := handler.NewSystemHandler(settingRepo, authHandler.GetAuthService())
+	adminProviderHandler := handler.NewAdminProviderHandler(providerRepo, logger)
 
 	// ── Public API routes (no auth) ───────────────────────────────────────
 	r.Get("/api/v1/health", healthHandler.Health)
@@ -83,6 +102,10 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 
 		// Admin-only routes
 		r.With(middleware.RequireAdmin).Post("/api/v1/library/import", mediaHandler.Import)
+		r.With(middleware.RequireAdmin).Get("/api/v1/admin/providers", adminProviderHandler.ListProviders)
+		r.With(middleware.RequireAdmin).Post("/api/v1/admin/providers", adminProviderHandler.CreateProvider)
+		r.With(middleware.RequireAdmin).Put("/api/v1/admin/providers/{id}", adminProviderHandler.UpdateProvider)
+		r.With(middleware.RequireAdmin).Delete("/api/v1/admin/providers/{id}", adminProviderHandler.DeleteProvider)
 	})
 
 	// ── Presigned media endpoints (no JWT, sig-based auth) ─────────────────
