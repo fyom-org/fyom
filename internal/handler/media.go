@@ -15,6 +15,7 @@ import (
 	"github.com/fyom/fyom/internal/provider"
 	"github.com/fyom/fyom/internal/repository"
 	"github.com/fyom/fyom/internal/service"
+	"github.com/fyom/fyom/internal/middleware"
 	"github.com/fyom/fyom/pkg/errors"
 	"github.com/fyom/fyom/pkg/response"
 )
@@ -220,6 +221,94 @@ func (h *MediaHandler) ListEpisodes(w http.ResponseWriter, r *http.Request) {
 
 	result := attachPresignedURLsList(r.Context(), items, h.registry, h.logger)
 	response.Success(w, result)
+}
+
+// UpdateProgress records watch progress for the current user.
+func (h *MediaHandler) UpdateProgress(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		response.Error(w, 400, "missing id")
+		return
+	}
+
+	userID := middleware.GetUserID(r)
+	if userID == nil {
+		response.Error(w, 401, "unauthorized")
+		return
+	}
+	userIDStr, ok := userID.(string)
+	if !ok {
+		response.Error(w, 401, "unauthorized")
+		return
+	}
+
+	var req struct {
+		Position int  `json:"position"`
+		Duration int  `json:"duration"`
+		Finished bool `json:"finished"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, 400, "invalid JSON")
+		return
+	}
+
+	if err := h.repo.UpsertProgress(r.Context(), userIDStr, id, req.Position, req.Duration, req.Finished); err != nil {
+		h.logger.Error("failed to update progress", "err", err)
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	response.NoContent(w)
+}
+
+// GetContinueWatching returns media items with unfinished progress for the current user.
+func (h *MediaHandler) GetContinueWatching(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r)
+	if userID == nil {
+		response.Error(w, 401, "unauthorized")
+		return
+	}
+	userIDStr, ok := userID.(string)
+	if !ok {
+		response.Error(w, 401, "unauthorized")
+		return
+	}
+
+	items, err := h.repo.GetContinueWatching(r.Context(), userIDStr, 20)
+	if err != nil {
+		h.logger.Error("failed to get continue watching", "err", err)
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	if items == nil {
+		items = []repository.MediaItemWithProgress{}
+	}
+
+	result := make([]MediaItemResponse, len(items))
+	for i := range items {
+		result[i] = attachPresignedURLs(r.Context(), &items[i].MediaItem, h.registry, h.logger)
+		result[i].PosterURL = result[i].PosterURL // keep URL
+		// Attach progress info via a custom field — we'll use a wrapper
+	}
+	_ = result
+
+	// Return items with progress embedded
+	type progressItem struct {
+		MediaItemResponse
+		Position int  `json:"position"`
+		Duration int  `json:"duration"`
+		Finished bool `json:"finished"`
+	}
+	progressItems := make([]progressItem, len(items))
+	for i := range items {
+		resp := attachPresignedURLs(r.Context(), &items[i].MediaItem, h.registry, h.logger)
+		progressItems[i] = progressItem{
+			MediaItemResponse: resp,
+			Position:          items[i].Position,
+			Duration:          items[i].Duration,
+			Finished:          items[i].Finished,
+		}
+	}
+	response.Success(w, progressItems)
 }
 
 // Delete removes a media item from the catalog.
