@@ -9,6 +9,7 @@ const router = createRouter({
     { path: '/login', name: 'login', component: LoginView },
     { path: '/register', name: 'Register', component: () => import('@/views/RegisterView.vue') },
     { path: '/setup', name: 'Setup', component: () => import('@/views/SetupView.vue') },
+    { path: '/home', redirect: '/' },
     {
       path: '/',
       component: MainLayout,

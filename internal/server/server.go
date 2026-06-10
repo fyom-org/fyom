@@ -111,6 +111,7 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 		r.Get("/libraries/{id}", adminLibHandler.Get)
 		r.Put("/libraries/{id}", adminLibHandler.Update)
 		r.Delete("/libraries/{id}", adminLibHandler.Delete)
+		r.Delete("/libraries/{id}/items", adminLibHandler.DeleteLibraryWithItems)
 		r.Get("/permissions", adminHandler.ListPermissions)
 		r.Put("/permissions", adminHandler.UpdatePermission)
 		r.Get("/providers", adminProviderHandler.ListProviders)

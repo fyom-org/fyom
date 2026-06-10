@@ -163,16 +163,40 @@ func (h *AdminLibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Delete removes a library.
+// Delete removes a library (empty libraries only).
 func (h *AdminLibraryHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if id == "default" {
-		response.Error(w, 403, "cannot delete the default library")
-		return
-	}
 	if err := h.repo.Delete(r.Context(), id); err != nil {
 		response.Error(w, 409, err.Error())
 		return
 	}
+	response.NoContent(w)
+}
+
+// DeleteLibraryWithItems deletes a library and all its items (cascade) or
+// orphans items to the default library.
+func (h *AdminLibraryHandler) DeleteLibraryWithItems(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	mode := r.URL.Query().Get("mode")
+	if mode == "" {
+		mode = "cascade"
+	}
+
+	if mode == "cascade" {
+		if err := h.repo.DeleteWithItems(r.Context(), id); err != nil {
+			response.Error(w, 500, "internal server error")
+			return
+		}
+	} else if mode == "orphan" {
+		// Move items to an empty placeholder — for now just error since
+		// there's no "default" library concept anymore.
+		// Admins should delete items first, then delete the empty library.
+		response.Error(w, 400, "orphan mode: delete items first, then delete the empty library")
+		return
+	} else {
+		response.Error(w, 400, "invalid mode: use 'cascade'")
+		return
+	}
+
 	response.NoContent(w)
 }

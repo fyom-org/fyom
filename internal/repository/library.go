@@ -64,13 +64,15 @@ func (r *LibraryRepository) Create(ctx context.Context, lib *model.Library) erro
 	lib.CreatedAt = now
 	lib.UpdatedAt = now
 
-	// Validate provider_id exists.
-	var dummy int
-	if err := r.db.QueryRowContext(ctx, "SELECT 1 FROM providers WHERE id = ?", lib.ProviderID).Scan(&dummy); err != nil {
-		if err == sql.ErrNoRows {
-			return errors.New("provider not found: " + lib.ProviderID)
+	// Validate provider_id exists (skip for built-in "local" provider).
+	if lib.ProviderID != "local" {
+		var dummy int
+		if err := r.db.QueryRowContext(ctx, "SELECT 1 FROM providers WHERE id = ?", lib.ProviderID).Scan(&dummy); err != nil {
+			if err == sql.ErrNoRows {
+				return errors.New("provider not found: " + lib.ProviderID)
+			}
+			return err
 		}
-		return err
 	}
 
 	_, err := r.db.ExecContext(ctx,
@@ -79,9 +81,21 @@ func (r *LibraryRepository) Create(ctx context.Context, lib *model.Library) erro
 	return err
 }
 
-// Update modifies an existing library.
+// Update modifies a library.
 func (r *LibraryRepository) Update(ctx context.Context, lib *model.Library) error {
 	lib.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+
+	// Validate provider_id exists (skip for built-in "local" provider).
+	if lib.ProviderID != "local" {
+		var dummy int
+		if err := r.db.QueryRowContext(ctx, "SELECT 1 FROM providers WHERE id = ?", lib.ProviderID).Scan(&dummy); err != nil {
+			if err == sql.ErrNoRows {
+				return errors.New("provider not found: " + lib.ProviderID)
+			}
+			return err
+		}
+	}
+
 	res, err := r.db.ExecContext(ctx,
 		"UPDATE libraries SET name = ?, type = ?, provider_id = ?, source_path = ?, metadata_source = ?, updated_at = ? WHERE id = ?",
 		lib.Name, lib.Type, lib.ProviderID, lib.SourcePath, lib.MetadataSource, lib.UpdatedAt, lib.ID)
@@ -98,11 +112,8 @@ func (r *LibraryRepository) Update(ctx context.Context, lib *model.Library) erro
 	return nil
 }
 
-// Delete removes a library. Returns error if it has items or is the default library.
+// Delete removes a library. Returns error if it has items.
 func (r *LibraryRepository) Delete(ctx context.Context, id string) error {
-	if id == "default" {
-		return errors.New("cannot delete the default library")
-	}
 	count, err := r.ItemCount(ctx, id)
 	if err != nil {
 		return err

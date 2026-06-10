@@ -477,7 +477,15 @@ func (h *MediaHandler) Import(w http.ResponseWriter, r *http.Request) {
 		req.ProviderID = "local"
 	}
 	if req.LibraryID == "" {
-		req.LibraryID = "default"
+		response.Error(w, 400, "library_id is required")
+		return
+	}
+
+	// Validate library exists.
+	lib, err := h.libRepo.GetByID(r.Context(), req.LibraryID)
+	if err != nil || lib == nil {
+		response.Error(w, 400, "library not found: "+req.LibraryID)
+		return
 	}
 
 	var fs service.ImportFS

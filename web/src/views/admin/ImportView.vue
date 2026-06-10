@@ -5,10 +5,15 @@
       Choose a target library, storage provider, and specify the source path to import from.
     </p>
 
+    <p class="warn" v-if="libraries.length === 0">
+      No libraries exist. <router-link to="/admin/libraries">Create one first</router-link>.
+    </p>
+
     <div class="form">
       <div class="field">
         <label>Target Library</label>
         <select v-model="selectedLibrary" class="library-select">
+          <option value="" disabled>Select a library...</option>
           <option v-for="lib in libraries" :key="lib.id" :value="lib.id">
             {{ lib.name }}
           </option>
@@ -35,7 +40,7 @@
         />
       </div>
 
-      <button :disabled="importing || !sourcePath.trim()" @click="handleImport">
+      <button :disabled="importing || !sourcePath.trim() || !selectedLibrary" @click="handleImport">
         {{ importing ? 'Starting...' : 'Start Import' }}
       </button>
     </div>
@@ -64,7 +69,7 @@ interface Library {
 
 const libraries = ref<Library[]>([]);
 const providers = ref<Provider[]>([]);
-const selectedLibrary = ref('default');
+const selectedLibrary = ref('');
 const selectedProvider = ref('local');
 const sourcePath = ref('');
 const importing = ref(false);
@@ -85,6 +90,9 @@ onMounted(async () => {
     ]);
     libraries.value = (libRes as any).data || [];
     providers.value = (provRes as any).data || [];
+    if (libraries.value.length > 0 && !selectedLibrary.value) {
+      selectedLibrary.value = libraries.value[0].id;
+    }
   } catch {
     // ignore
   } finally {
@@ -131,6 +139,11 @@ async function handleImport() {
   color: #555577;
   font-size: 13px;
   margin: 0 0 20px;
+}
+
+.warn {
+  color: #ff9800;
+  font-size: 13px;
 }
 
 .form {

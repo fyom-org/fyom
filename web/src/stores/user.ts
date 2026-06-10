@@ -17,7 +17,7 @@ export const useUserStore = defineStore('user', () => {
     if (!accessToken) throw new Error('login response missing access_token');
     token.value = accessToken;
     localStorage.setItem('token', accessToken);
-    await router.push('/home');
+    await router.push('/');
   }
 
   async function fetchMe(): Promise<void> {

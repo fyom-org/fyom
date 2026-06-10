@@ -45,18 +45,16 @@
     </div>
 
     <div class="library-list" v-if="libraries.length > 0">
-      <div class="library-card" v-for="lib in libraries" :key="lib.id">
-        <div class="library-header">
-          <div class="library-info">
-            <h3 class="library-name">{{ lib.name }}</h3>
-            <span class="library-meta">
-              {{ typeLabel(lib.type) }} &middot; {{ lib.provider_id }} &middot; {{ lib.metadata_source }}
-            </span>
-          </div>
-          <button class="delete-btn" v-if="lib.id !== 'default'"
-                  @click="deleteLibrary(lib)">Delete</button>
-          <span class="default-badge" v-else>Default</span>
+    <div class="library-card" v-for="lib in libraries" :key="lib.id">
+      <div class="library-header">
+        <div class="library-info">
+          <h3 class="library-name">{{ lib.name }}</h3>
+          <span class="library-meta">
+            {{ typeLabel(lib.type) }} &middot; {{ lib.provider_id }} &middot; {{ lib.metadata_source }}
+          </span>
         </div>
+        <button class="delete-btn" @click="deleteLibrary(lib)">Delete</button>
+      </div>
         <div class="library-stats" v-if="lib.item_count > 0">
           <span class="stat">{{ lib.item_count }} items</span>
           <span class="stat" v-if="lib.movie_count">{{ lib.movie_count }} movies</span>
@@ -82,7 +80,7 @@ const error = ref('');
 const showForm = ref(false);
 const form = ref({
   name: '', type: 'mixed', provider_id: 'local',
-  source_path: '', metadata_source: 'nfo',
+  source_path: '/', metadata_source: 'nfo',
 });
 const providers = ref<any[]>([]);
 
@@ -114,7 +112,20 @@ async function createLibrary() {
 }
 
 async function deleteLibrary(lib: any) {
-  if (!confirm(`Delete "${lib.name}"? This will fail if it has items.`)) return;
+  if (lib.item_count > 0) {
+    const confirmed = confirm(
+      `"${lib.name}" has ${lib.item_count} items. Delete everything?`
+    );
+    if (!confirmed) return;
+    try {
+      await request.delete(`/admin/libraries/${lib.id}/items?mode=cascade`);
+      await fetchLibraries();
+    } catch (e: any) {
+      error.value = e.response?.data?.message || 'Failed to delete';
+    }
+    return;
+  }
+  if (!confirm(`Delete "${lib.name}"?`)) return;
   try {
     await request.delete(`/admin/libraries/${lib.id}`);
     await fetchLibraries();
@@ -282,14 +293,6 @@ h1 {
 
 .delete-btn:hover {
   background: #2a1a1a;
-}
-
-.default-badge {
-  color: #555577;
-  font-size: 11px;
-  background: #1a1a2e;
-  padding: 2px 8px;
-  border-radius: 4px;
 }
 
 .empty-text {
