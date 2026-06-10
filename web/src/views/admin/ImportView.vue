@@ -1,6 +1,6 @@
 <template>
-  <div class="import-view">
-    <h2>Import Media Library</h2>
+  <div class="admin-page">
+    <h1>Import Media</h1>
     <p class="hint">
       Choose a storage provider and specify the source path / S3 prefix to import from.
     </p>
@@ -106,17 +106,13 @@ async function handleImport() {
 </script>
 
 <style scoped>
-.import-view {
-  max-width: 600px;
+.admin-page h1 {
+  font-size: 22px;
+  color: #e0e0e0;
+  margin-bottom: 16px;
 }
-
-h2 {
-  margin: 0 0 4px;
-  font-size: 20px;
-}
-
 .hint {
-  color: #a1a1aa;
+  color: #555577;
   font-size: 13px;
   margin: 0 0 20px;
 }
@@ -135,14 +131,14 @@ h2 {
 
 label {
   font-size: 13px;
-  color: #a1a1aa;
+  color: #666688;
 }
 
 .provider-select {
   padding: 8px 12px;
-  background: #27272a;
-  border: 1px solid #3f3f46;
-  color: #e4e4e7;
+  background: #0e0e1a;
+  border: 1px solid #1a1a2e;
+  color: #ccccee;
   border-radius: 6px;
   font-size: 14px;
   outline: none;
@@ -150,19 +146,19 @@ label {
 }
 
 .provider-select:focus {
-  border-color: #60a5fa;
+  border-color: #6c63ff;
 }
 
 .provider-select option {
-  background: #27272a;
-  color: #e4e4e7;
+  background: #0e0e1a;
+  color: #ccccee;
 }
 
 input {
   flex: 1;
-  background: #27272a;
-  border: 1px solid #3f3f46;
-  color: #e4e4e7;
+  background: #0e0e1a;
+  border: 1px solid #1a1a2e;
+  color: #ccccee;
   padding: 8px 12px;
   border-radius: 6px;
   font-size: 14px;
@@ -170,7 +166,7 @@ input {
 }
 
 input:focus {
-  border-color: #60a5fa;
+  border-color: #6c63ff;
 }
 
 input:disabled {
@@ -178,7 +174,7 @@ input:disabled {
 }
 
 button {
-  background: #3b82f6;
+  background: #6c63ff;
   color: #fff;
   border: none;
   padding: 8px 20px;
@@ -190,7 +186,7 @@ button {
 }
 
 button:hover:not(:disabled) {
-  background: #2563eb;
+  background: #5a52e0;
 }
 
 button:disabled {
@@ -199,7 +195,7 @@ button:disabled {
 }
 
 .error {
-  color: #f87171;
+  color: #ff6b6b;
   margin-top: 12px;
   font-size: 13px;
 }

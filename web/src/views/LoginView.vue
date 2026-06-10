@@ -44,6 +44,18 @@ async function handleLogin() {
   loading.value = true;
   try {
     await store.doLogin(username.value, password.value);
+    // Fetch and store user role
+    try {
+      const meRes = await fetch('/api/v1/auth/me', {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` },
+      });
+      if (meRes.ok) {
+        const meData = await meRes.json();
+        localStorage.setItem('role', meData.data?.role || 'user');
+      }
+    } catch {
+      // ignore
+    }
   } catch (err) {
     console.error('[fyom] login failed:', err);
     error.value = err instanceof Error ? err.message : 'Login failed';

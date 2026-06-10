@@ -9,9 +9,9 @@
     </header>
     <div class="body">
       <aside class="sidebar">
-        <router-link to="/home">Home</router-link>
-        <router-link to="/import">Import</router-link>
+        <router-link to="/">Home</router-link>
         <router-link to="/library">Library</router-link>
+        <router-link v-if="isAdmin" to="/admin" class="nav-link admin-link">⚙ Admin</router-link>
         <div class="sidebar-spacer"></div>
         <router-link to="/profile">Profile</router-link>
       </aside>
@@ -23,14 +23,18 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useUserStore } from '@/stores/user';
 
 const router = useRouter();
 const store = useUserStore();
 
+const isAdmin = computed(() => localStorage.getItem('role') === 'admin');
+
 function handleLogout() {
   store.logout();
+  localStorage.removeItem('role');
   router.push({ name: 'login' });
 }
 </script>
@@ -123,6 +127,10 @@ function handleLogout() {
 
 .sidebar-spacer {
   flex: 1;
+}
+
+.admin-link {
+  color: #6c63ff !important;
 }
 
 .content {
