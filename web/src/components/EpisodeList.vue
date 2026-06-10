@@ -1,12 +1,25 @@
 <template>
   <div v-if="seasons.length" class="episode-list">
     <div v-for="s in seasons" :key="s.season" class="season-group">
-      <h3 class="season-title">Season {{ s.season }}</h3>
-      <div v-for="ep in s.episodes" :key="ep.id" class="episode-row">
-        <span class="ep-label">{{ epLabel(ep) }}</span>
-        <span class="ep-title">{{ ep.title }}</span>
-        <span v-if="ep.duration" class="ep-duration">{{ formatDuration(ep.duration) }}</span>
-        <router-link :to="`/play/${ep.id}`" class="ep-play" @click.stop>▶</router-link>
+      <button class="season-header" @click="toggleSeason(s.season)">
+        <span class="season-name">
+          {{ s.season === 0 ? 'Specials' : `Season ${s.season}` }}
+        </span>
+        <span class="season-count">{{ s.episodes.length }} episode{{ s.episodes.length !== 1 ? 's' : '' }}</span>
+        <span class="chevron" :class="{ expanded: isSeasonExpanded(s.season) }">&#8249;</span>
+      </button>
+
+      <div class="season-episodes" v-if="isSeasonExpanded(s.season)">
+        <div
+          v-for="ep in s.episodes"
+          :key="ep.id"
+          class="episode-row"
+        >
+          <span class="ep-label">{{ epLabel(ep) }}</span>
+          <span class="ep-title">{{ ep.title }}</span>
+          <span v-if="ep.duration" class="ep-duration">{{ formatDuration(ep.duration) }}</span>
+          <router-link :to="`/play/${ep.id}`" class="ep-play" @click.stop>&#9654;</router-link>
+        </div>
       </div>
     </div>
   </div>
@@ -29,6 +42,7 @@ interface Episode {
 }
 
 const episodes = ref<Episode[]>([]);
+const expandedSeasons = ref(new Set<number>());
 
 onMounted(async () => {
   try {
@@ -41,7 +55,7 @@ onMounted(async () => {
 const seasons = computed(() => {
   const map: Record<number, Episode[]> = {};
   for (const ep of episodes.value) {
-    const s = ep.season || 0;
+    const s = ep.season ?? 0;
     if (!map[s]) map[s] = [];
     map[s].push(ep);
   }
@@ -50,10 +64,21 @@ const seasons = computed(() => {
     .map(([s, eps]) => ({ season: Number(s), episodes: eps }));
 });
 
+function toggleSeason(season: number) {
+  const s = expandedSeasons.value;
+  if (s.has(season)) s.delete(season);
+  else s.add(season);
+  expandedSeasons.value = new Set(s);
+}
+
+function isSeasonExpanded(season: number) {
+  return expandedSeasons.value.has(season);
+}
+
 function epLabel(ep: Episode) {
   const s = ep.season ?? 0;
   const e = ep.episode ?? 0;
-  return `${s}×${String(e).padStart(2, '0')}`;
+  return `${s}\u00d7${String(e).padStart(2, '0')}`;
 }
 
 function formatDuration(sec: number) {
@@ -70,15 +95,52 @@ function formatDuration(sec: number) {
 }
 
 .season-group {
-  margin-bottom: 24px;
+  margin-bottom: 4px;
 }
 
-.season-title {
-  font-size: 18px;
+.season-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #14142a;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
   color: #c0c0d0;
-  margin: 0 0 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid #2a2a3e;
+  font-size: 15px;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.season-header:hover {
+  background: #1a1a32;
+}
+
+.season-name {
+  font-weight: 600;
+  flex: 1;
+}
+
+.season-count {
+  color: #555577;
+  font-size: 13px;
+}
+
+.chevron {
+  color: #555577;
+  font-size: 18px;
+  transition: transform 0.2s;
+  transform: rotate(-90deg);
+}
+
+.chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.season-episodes {
+  padding: 4px 0 4px 16px;
 }
 
 .episode-row {
@@ -88,13 +150,13 @@ function formatDuration(sec: number) {
   padding: 10px 12px;
   border-radius: 6px;
   text-decoration: none;
-  color: #aaaacc;
+  color: #9999bb;
   font-size: 14px;
   transition: background 0.15s;
 }
 
 .episode-row:hover {
-  background: #1e1e32;
+  background: #1a1a32;
   color: #e0e0e0;
 }
 
@@ -113,19 +175,20 @@ function formatDuration(sec: number) {
 }
 
 .ep-duration {
-  color: #666688;
+  color: #555577;
   font-size: 13px;
 }
 
 .ep-play {
   color: #6c63ff;
-  font-size: 16px;
   text-decoration: none;
+  font-size: 12px;
   padding: 4px 8px;
   border-radius: 4px;
+  transition: background 0.15s;
 }
 
 .ep-play:hover {
-  color: #8b83ff;
+  background: #2a2a3e;
 }
 </style>
