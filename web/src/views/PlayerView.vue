@@ -1,6 +1,15 @@
 <template>
   <div v-if="!error" class="player-view">
-    <video v-if="streamUrl" :src="streamUrl" controls autoplay class="video-player">
+    <video
+      v-if="streamUrl"
+      ref="videoRef"
+      :src="streamUrl"
+      controls
+      autoplay
+      class="video-player"
+      @timeupdate="onTimeUpdate"
+      @ended="onEnded"
+    >
       Your browser does not support the video tag.
     </video>
     <div v-else class="loading">Loading...</div>
@@ -16,6 +25,45 @@ import { getMediaDetail } from '@/api/library';
 const route = useRoute();
 const streamUrl = ref('');
 const error = ref('');
+const videoRef = ref<HTMLVideoElement | null>(null);
+let lastReport = 0;
+
+function onTimeUpdate() {
+  const video = videoRef.value;
+  if (!video) return;
+  if (video.currentTime - lastReport > 10) {
+    lastReport = video.currentTime;
+    fetch(`/api/v1/media/${route.params.id}/progress`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${localStorage.getItem('token') || ''}`,
+      },
+      body: JSON.stringify({
+        position: Math.floor(video.currentTime),
+        duration: Math.floor(video.duration || 0),
+        finished: false,
+      }),
+    }).catch(() => {});
+  }
+}
+
+function onEnded() {
+  const video = videoRef.value;
+  if (!video) return;
+  fetch(`/api/v1/media/${route.params.id}/progress`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${localStorage.getItem('token') || ''}`,
+    },
+    body: JSON.stringify({
+      position: Math.floor(video.duration || 0),
+      duration: Math.floor(video.duration || 0),
+      finished: true,
+    }),
+  }).catch(() => {});
+}
 
 onMounted(async () => {
   try {

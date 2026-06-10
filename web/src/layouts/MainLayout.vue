@@ -9,6 +9,7 @@
     </header>
     <div class="body">
       <aside class="sidebar">
+        <router-link to="/home">Home</router-link>
         <router-link to="/import">Import</router-link>
         <router-link to="/library">Library</router-link>
         <div class="sidebar-spacer"></div>
