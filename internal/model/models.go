@@ -30,6 +30,7 @@ type MediaItem struct {
 	MetadataSource string  `json:"metadata_source,omitempty" db:"metadata_source"`
 	ProviderID     string  `json:"provider_id" db:"provider_id"`
 	LibraryID      string  `json:"library_id" db:"library_id"`
+	Status         string  `json:"status" db:"status"`
 	CreatedAt      string  `json:"created_at" db:"created_at"`
 	UpdatedAt      string  `json:"updated_at" db:"updated_at"`
 }

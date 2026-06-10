@@ -121,6 +121,44 @@ func (r *LibraryRepository) ItemCount(ctx context.Context, id string) (int, erro
 	return count, err
 }
 
+// MissingCount returns the number of missing items in a library.
+func (r *LibraryRepository) MissingCount(ctx context.Context, id string) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM media_items WHERE library_id = ? AND status = 'missing'", id).Scan(&count)
+	return count, err
+}
+
+// DeleteWithItems deletes a library and all its associated data in a transaction.
+func (r *LibraryRepository) DeleteWithItems(ctx context.Context, libraryID string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Delete watch progress for items in this library.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM watch_progress WHERE media_item_id IN (SELECT id FROM media_items WHERE library_id = ?)", libraryID); err != nil {
+		return err
+	}
+	// Delete episodes for shows in this library.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM media_items WHERE type = 'episode' AND parent_id IN (SELECT id FROM media_items WHERE library_id = ? AND type = 'show')", libraryID); err != nil {
+		return err
+	}
+	// Delete all remaining media items.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM media_items WHERE library_id = ?", libraryID); err != nil {
+		return err
+	}
+	// Delete library permissions.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM library_permissions WHERE library_id = ?", libraryID); err != nil {
+		return err
+	}
+	// Delete the library.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM libraries WHERE id = ?", libraryID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // ItemCountsByType returns counts of movies, shows, and episodes in a library.
 func (r *LibraryRepository) ItemCountsByType(ctx context.Context, id string) (movies, shows, episodes int, err error) {
 	rows, err := r.db.QueryContext(ctx, "SELECT type, COUNT(*) FROM media_items WHERE library_id = ? GROUP BY type", id)

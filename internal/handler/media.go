@@ -39,6 +39,7 @@ type MediaItemResponse struct {
 	Episode        *int    `json:"episode,omitempty"`
 	ParentID       string  `json:"parent_id,omitempty"`
 	MetadataSource string  `json:"metadata_source,omitempty"`
+	Status         string  `json:"status"`
 }
 
 // MediaHandler handles media-related HTTP endpoints.
@@ -75,6 +76,7 @@ func mediaItemToResponse(item *model.MediaItem) MediaItemResponse {
 		Overview:       item.Overview,
 		MetadataSource: item.MetadataSource,
 		ParentID:       item.ParentID,
+		Status:         item.Status,
 	}
 
 	if item.Year != 0 {
@@ -103,6 +105,11 @@ func mediaItemToResponse(item *model.MediaItem) MediaItemResponse {
 // graceful degradation — the client will see nil URL fields rather than a 500.
 func attachPresignedURLs(ctx context.Context, item *model.MediaItem, registry *provider.Registry, logger *slog.Logger) MediaItemResponse {
 	resp := mediaItemToResponse(item)
+
+	// Missing items don't have playable URLs.
+	if item.Status == "missing" {
+		return resp
+	}
 
 	p, ok := registry.Get(item.ProviderID)
 	if !ok {
@@ -188,7 +195,7 @@ func (h *MediaHandler) List(w http.ResponseWriter, r *http.Request) {
 		allowedIDs = []string{libID}
 	}
 
-	items, total, err := h.repo.ListPaged(r.Context(), page, pageSize, mediaType, q, sort, allowedIDs)
+	items, total, err := h.repo.ListPaged(r.Context(), page, pageSize, mediaType, q, sort, allowedIDs, true)
 	if err != nil {
 		response.Error(w, 500, "internal server error")
 		return

@@ -11,7 +11,7 @@ import (
 // ListPaged returns a paginated, filtered, and sorted list of media items
 // and the total count matching the filters.
 // allowedLibraryIDs: nil means no filter (admin), empty means no results, non-empty filters by library_id IN (...).
-func (r *MediaRepository) ListPaged(ctx context.Context, page, limit int, mediaType string, query string, sort string, allowedLibraryIDs []string) ([]model.MediaItem, int, error) {
+func (r *MediaRepository) ListPaged(ctx context.Context, page, limit int, mediaType string, query string, sort string, allowedLibraryIDs []string, hideMissing bool) ([]model.MediaItem, int, error) {
 	var whereClauses []string
 	var whereArgs []interface{}
 
@@ -48,6 +48,11 @@ func (r *MediaRepository) ListPaged(ctx context.Context, page, limit int, mediaT
 		whereClauses = append(whereClauses, fmt.Sprintf("library_id IN (%s)", strings.Join(placeholders, ",")))
 	}
 
+	// Status filter: hide missing items from user-facing endpoints.
+	if hideMissing {
+		whereClauses = append(whereClauses, "status = 'available'")
+	}
+
 	// Build WHERE string.
 	var where string
 	if len(whereClauses) > 0 {
@@ -80,7 +85,7 @@ func (r *MediaRepository) ListPaged(ctx context.Context, page, limit int, mediaT
 	offset := (page - 1) * limit
 	dataQuery := fmt.Sprintf(`SELECT id, type, title, sort_title, year, overview, rating, duration,
 		file_path, poster_path, backdrop_path, parent_id, season, episode,
-		metadata_source, provider_id, library_id, created_at, updated_at FROM media_items%s
+		metadata_source, provider_id, library_id, status, created_at, updated_at FROM media_items%s
 		ORDER BY %s LIMIT ? OFFSET ?`, where, orderBy)
 	dataArgs := append(whereArgs, limit, offset)
 
@@ -97,7 +102,7 @@ func (r *MediaRepository) ListPaged(ctx context.Context, page, limit int, mediaT
 		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year,
 			&m.Overview, &m.Rating, &m.Duration, &m.FilePath, &m.PosterPath,
 			&m.BackdropPath, &m.ParentID, &season, &episode,
-			&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.Status, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, 0, err
 		}
 		m.Season = IntPtr(season)

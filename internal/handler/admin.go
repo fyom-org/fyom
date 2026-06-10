@@ -166,7 +166,7 @@ func (h *AdminHandler) ListMedia(w http.ResponseWriter, r *http.Request) {
 	}
 
 	offset := (page - 1) * limit
-	dataQuery := "SELECT id, type, title, sort_title, year, overview, rating, duration, file_path, poster_path, backdrop_path, parent_id, season, episode, metadata_source, provider_id, library_id, created_at, updated_at FROM media_items" + where + " ORDER BY " + orderBy + " LIMIT ? OFFSET ?"
+	dataQuery := "SELECT id, type, title, sort_title, year, overview, rating, duration, file_path, poster_path, backdrop_path, parent_id, season, episode, metadata_source, provider_id, library_id, status, created_at, updated_at FROM media_items" + where + " ORDER BY " + orderBy + " LIMIT ? OFFSET ?"
 	dataArgs := append(whereArgs, limit, offset)
 
 	rows, err := h.db.QueryContext(r.Context(), dataQuery, dataArgs...)
@@ -183,7 +183,7 @@ func (h *AdminHandler) ListMedia(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year,
 			&m.Overview, &m.Rating, &m.Duration, &m.FilePath, &m.PosterPath,
 			&m.BackdropPath, &m.ParentID, &season, &episode,
-			&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.Status, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			response.Error(w, 500, "internal server error")
 			return
 		}
