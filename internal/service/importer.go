@@ -212,6 +212,7 @@ func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, exi
 		PosterPath:     posterPath,
 		BackdropPath:   backdropPath,
 		MetadataSource: "nfo",
+		ProviderID:     "local", // TODO(phase4): S3Importer will set this to the configured S3 provider ID.
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
@@ -327,11 +328,12 @@ func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, show
 			Season:         season,
 			Episode:        episode,
 			MetadataSource: "nfo",
+			ProviderID:     "local", // TODO(phase4): S3Importer will set this to the configured S3 provider ID.
 			CreatedAt:      now,
 			UpdatedAt:      now,
-		}
+			}
 
-		if err := imp.mediaRepo.Create(ctx, epItem); err != nil {
+			if err := imp.mediaRepo.Create(ctx, epItem); err != nil {
 			return created, err
 		}
 		created++
@@ -393,6 +395,7 @@ func (imp *Importer) processMovieDir(ctx context.Context, dirPath, nfoPath strin
 		PosterPath:     posterPath,
 		BackdropPath:   backdropPath,
 		MetadataSource: "nfo",
+		ProviderID:     "local", // TODO(phase4): S3Importer will set this to the configured S3 provider ID.
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
@@ -447,6 +450,7 @@ func (imp *Importer) processDirAsMovie(ctx context.Context, dirPath string, exis
 		FilePath:       videoPath,
 		PosterPath:     posterPath,
 		MetadataSource: "filename",
+		ProviderID:     "local", // TODO(phase4): S3Importer will set this to the configured S3 provider ID.
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
