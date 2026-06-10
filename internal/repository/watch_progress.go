@@ -75,15 +75,18 @@ func (r *MediaRepository) GetContinueWatching(ctx context.Context, userID string
 	var items []MediaItemWithProgress
 	for rows.Next() {
 		var item MediaItemWithProgress
+		var season, episode int
 		if err := rows.Scan(
 			&item.ID, &item.Type, &item.Title, &item.SortTitle, &item.Year, &item.Overview,
 			&item.Rating, &item.Duration, &item.FilePath, &item.PosterPath, &item.BackdropPath,
-			&item.ParentID, &item.Season, &item.Episode, &item.MetadataSource, &item.ProviderID,
+			&item.ParentID, &season, &episode, &item.MetadataSource, &item.ProviderID,
 			&item.CreatedAt, &item.UpdatedAt,
 			&item.Position, &item.Duration, &item.Finished,
 		); err != nil {
 			return nil, err
 		}
+		item.Season = IntPtr(season)
+		item.Episode = IntPtr(episode)
 		items = append(items, item)
 	}
 	return items, rows.Err()

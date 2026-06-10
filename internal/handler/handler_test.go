@@ -55,14 +55,16 @@ func setupTestRouter(t *testing.T) http.Handler {
 	mediaRepo := repository.NewMediaRepository(db)
 	userRepo := repository.NewUserRepository(db)
 	jobRepo := repository.NewImportJobRepository(db)
+	providerRepo := repository.NewProviderRepository(db)
+	settingRepo := repository.NewSystemSettingRepository(db)
 
 	healthHandler := NewHealthHandler("test", "abc123", "now", "go1.26")
 
 	reg := provider.NewRegistry()
 	reg.Register(provider.NewLocalProvider(presign.NewSigner("test-secret", 3600)))
-	mediaHandler := NewMediaHandler(reg, db, mediaRepo, jobRepo, slog.Default())
+	mediaHandler := NewMediaHandler(reg, db, mediaRepo, jobRepo, providerRepo, slog.Default())
 
-	authHandler := NewAuthHandler(userRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
+	authHandler := NewAuthHandler(userRepo, settingRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
 
 	r.Get("/api/v1/health", healthHandler.Health)
 	r.Get("/api/v1/version", healthHandler.Version)

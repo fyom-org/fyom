@@ -25,8 +25,8 @@ type MediaItem struct {
 	PosterPath     string  `json:"poster_path,omitempty" db:"poster_path"`
 	BackdropPath   string  `json:"backdrop_path,omitempty" db:"backdrop_path"`
 	ParentID       string  `json:"parent_id,omitempty" db:"parent_id"`
-	Season         int     `json:"season,omitempty" db:"season"`
-	Episode        int     `json:"episode,omitempty" db:"episode"`
+	Season         *int    `json:"season,omitempty" db:"season"`
+	Episode        *int    `json:"episode,omitempty" db:"episode"`
 	MetadataSource string  `json:"metadata_source,omitempty" db:"metadata_source"`
 	ProviderID     string  `json:"provider_id" db:"provider_id"`
 	CreatedAt      string  `json:"created_at" db:"created_at"`

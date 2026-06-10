@@ -9,6 +9,11 @@ import (
 	"github.com/google/uuid"
 )
 
+// IntPtr returns a pointer to the given int value.
+func IntPtr(v int) *int {
+	return &v
+}
+
 // MediaRepository provides access to media_items.
 type MediaRepository struct {
 	db *DB
@@ -41,12 +46,15 @@ func (r *MediaRepository) List(ctx context.Context, mediaType string) ([]model.M
 	var items []model.MediaItem
 	for rows.Next() {
 		var m model.MediaItem
+		var season, episode int
 		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year,
 			&m.Overview, &m.Rating, &m.Duration, &m.FilePath, &m.PosterPath,
-			&m.BackdropPath, &m.ParentID, &m.Season, &m.Episode,
+			&m.BackdropPath, &m.ParentID, &season, &episode,
 			&m.MetadataSource, &m.ProviderID, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, err
 		}
+		m.Season = IntPtr(season)
+		m.Episode = IntPtr(episode)
 		items = append(items, m)
 	}
 	return items, rows.Err()
@@ -55,12 +63,13 @@ func (r *MediaRepository) List(ctx context.Context, mediaType string) ([]model.M
 // Get returns a single media item by ID.
 func (r *MediaRepository) Get(ctx context.Context, id string) (*model.MediaItem, error) {
 	var m model.MediaItem
+	var season, episode int
 	err := r.db.QueryRowContext(ctx, `SELECT id, type, title, sort_title, year, overview,
 		rating, duration, file_path, poster_path, backdrop_path, parent_id, season,
 		episode, metadata_source, provider_id, created_at, updated_at FROM media_items WHERE id = ?`, id,
 	).Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year, &m.Overview,
 		&m.Rating, &m.Duration, &m.FilePath, &m.PosterPath, &m.BackdropPath,
-		&m.ParentID, &m.Season, &m.Episode, &m.MetadataSource, &m.ProviderID, &m.CreatedAt, &m.UpdatedAt)
+		&m.ParentID, &season, &episode, &m.MetadataSource, &m.ProviderID, &m.CreatedAt, &m.UpdatedAt)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -68,6 +77,8 @@ func (r *MediaRepository) Get(ctx context.Context, id string) (*model.MediaItem,
 	if err != nil {
 		return nil, err
 	}
+	m.Season = IntPtr(season)
+	m.Episode = IntPtr(episode)
 	return &m, nil
 }
 
@@ -80,6 +91,15 @@ func (r *MediaRepository) Create(ctx context.Context, m *model.MediaItem) error 
 	m.CreatedAt = now
 	m.UpdatedAt = now
 
+	season := 0
+	if m.Season != nil {
+		season = *m.Season
+	}
+	episode := 0
+	if m.Episode != nil {
+		episode = *m.Episode
+	}
+
 	_, err := r.db.ExecContext(ctx, `INSERT INTO media_items
 		(id, type, title, sort_title, year, overview, rating, duration, file_path,
 		 poster_path, backdrop_path, parent_id, season, episode, metadata_source,
@@ -87,7 +107,7 @@ func (r *MediaRepository) Create(ctx context.Context, m *model.MediaItem) error 
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.Type, m.Title, m.SortTitle, m.Year, m.Overview, m.Rating,
 		m.Duration, m.FilePath, m.PosterPath, m.BackdropPath, m.ParentID,
-		m.Season, m.Episode, m.MetadataSource, m.ProviderID, m.CreatedAt, m.UpdatedAt)
+		season, episode, m.MetadataSource, m.ProviderID, m.CreatedAt, m.UpdatedAt)
 	return err
 }
 
@@ -117,9 +137,12 @@ func (r *MediaRepository) GetEpisodesByShowID(ctx context.Context, showID string
 	var items []model.MediaItem
 	for rows.Next() {
 		var m model.MediaItem
-		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.Season, &m.Episode, &m.Duration, &m.Overview, &m.PosterPath, &m.ProviderID); err != nil {
+		var season, episode int
+		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &season, &episode, &m.Duration, &m.Overview, &m.PosterPath, &m.ProviderID); err != nil {
 			return nil, err
 		}
+		m.Season = IntPtr(season)
+		m.Episode = IntPtr(episode)
 		items = append(items, m)
 	}
 	return items, rows.Err()

@@ -84,11 +84,11 @@ func mediaItemToResponse(item *model.MediaItem) MediaItemResponse {
 	if item.Duration != 0 {
 		resp.Duration = &item.Duration
 	}
-	if item.Season != 0 {
-		resp.Season = &item.Season
+	if item.Season != nil {
+		resp.Season = item.Season
 	}
-	if item.Episode != 0 {
-		resp.Episode = &item.Episode
+	if item.Episode != nil {
+		resp.Episode = item.Episode
 	}
 
 	return resp

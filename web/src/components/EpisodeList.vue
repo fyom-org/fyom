@@ -51,7 +51,9 @@ const seasons = computed(() => {
 });
 
 function epLabel(ep: Episode) {
-  return `${ep.season}×${String(ep.episode).padStart(2, '0')}`;
+  const s = ep.season ?? 0;
+  const e = ep.episode ?? 0;
+  return `${s}×${String(e).padStart(2, '0')}`;
 }
 
 function formatDuration(sec: number) {

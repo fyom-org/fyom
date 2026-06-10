@@ -93,12 +93,15 @@ func (r *MediaRepository) ListPaged(ctx context.Context, page, limit int, mediaT
 	var items []model.MediaItem
 	for rows.Next() {
 		var m model.MediaItem
+		var season, episode int
 		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year,
 			&m.Overview, &m.Rating, &m.Duration, &m.FilePath, &m.PosterPath,
-			&m.BackdropPath, &m.ParentID, &m.Season, &m.Episode,
+			&m.BackdropPath, &m.ParentID, &season, &episode,
 			&m.MetadataSource, &m.ProviderID, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, 0, err
 		}
+		m.Season = IntPtr(season)
+		m.Episode = IntPtr(episode)
 		items = append(items, m)
 	}
 	return items, total, rows.Err()
