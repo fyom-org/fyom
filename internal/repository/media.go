@@ -23,7 +23,7 @@ func NewMediaRepository(db *DB) *MediaRepository {
 func (r *MediaRepository) List(ctx context.Context, mediaType string) ([]model.MediaItem, error) {
 	query := `SELECT id, type, title, sort_title, year, overview, rating, duration,
 	          file_path, poster_path, backdrop_path, parent_id, season, episode,
-	          metadata_source, created_at, updated_at FROM media_items`
+	          metadata_source, provider_id, created_at, updated_at FROM media_items`
 	args := []interface{}{}
 
 	if mediaType != "" {
@@ -44,7 +44,7 @@ func (r *MediaRepository) List(ctx context.Context, mediaType string) ([]model.M
 		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year,
 			&m.Overview, &m.Rating, &m.Duration, &m.FilePath, &m.PosterPath,
 			&m.BackdropPath, &m.ParentID, &m.Season, &m.Episode,
-			&m.MetadataSource, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			&m.MetadataSource, &m.ProviderID, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, m)
@@ -57,10 +57,10 @@ func (r *MediaRepository) Get(ctx context.Context, id string) (*model.MediaItem,
 	var m model.MediaItem
 	err := r.db.QueryRowContext(ctx, `SELECT id, type, title, sort_title, year, overview,
 		rating, duration, file_path, poster_path, backdrop_path, parent_id, season,
-		episode, metadata_source, created_at, updated_at FROM media_items WHERE id = ?`, id,
+		episode, metadata_source, provider_id, created_at, updated_at FROM media_items WHERE id = ?`, id,
 	).Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year, &m.Overview,
 		&m.Rating, &m.Duration, &m.FilePath, &m.PosterPath, &m.BackdropPath,
-		&m.ParentID, &m.Season, &m.Episode, &m.MetadataSource, &m.CreatedAt, &m.UpdatedAt)
+		&m.ParentID, &m.Season, &m.Episode, &m.MetadataSource, &m.ProviderID, &m.CreatedAt, &m.UpdatedAt)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -83,11 +83,11 @@ func (r *MediaRepository) Create(ctx context.Context, m *model.MediaItem) error 
 	_, err := r.db.ExecContext(ctx, `INSERT INTO media_items
 		(id, type, title, sort_title, year, overview, rating, duration, file_path,
 		 poster_path, backdrop_path, parent_id, season, episode, metadata_source,
-		 created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 provider_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.Type, m.Title, m.SortTitle, m.Year, m.Overview, m.Rating,
 		m.Duration, m.FilePath, m.PosterPath, m.BackdropPath, m.ParentID,
-		m.Season, m.Episode, m.MetadataSource, m.CreatedAt, m.UpdatedAt)
+		m.Season, m.Episode, m.MetadataSource, m.ProviderID, m.CreatedAt, m.UpdatedAt)
 	return err
 }
 
@@ -106,7 +106,7 @@ func (r *MediaRepository) Count(ctx context.Context) (int, error) {
 
 // GetEpisodesByShowID returns all episodes for a given show, sorted by season and episode.
 func (r *MediaRepository) GetEpisodesByShowID(ctx context.Context, showID string) ([]model.MediaItem, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, type, title, season, episode, duration, overview, poster_path
+	rows, err := r.db.QueryContext(ctx, `SELECT id, type, title, season, episode, duration, overview, poster_path, provider_id
 		FROM media_items WHERE parent_id = ? AND type = 'episode'
 		ORDER BY season ASC, episode ASC`, showID)
 	if err != nil {
@@ -117,7 +117,7 @@ func (r *MediaRepository) GetEpisodesByShowID(ctx context.Context, showID string
 	var items []model.MediaItem
 	for rows.Next() {
 		var m model.MediaItem
-		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.Season, &m.Episode, &m.Duration, &m.Overview, &m.PosterPath); err != nil {
+		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.Season, &m.Episode, &m.Duration, &m.Overview, &m.PosterPath, &m.ProviderID); err != nil {
 			return nil, err
 		}
 		items = append(items, m)

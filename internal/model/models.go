@@ -28,6 +28,7 @@ type MediaItem struct {
 	Season         int     `json:"season,omitempty" db:"season"`
 	Episode        int     `json:"episode,omitempty" db:"episode"`
 	MetadataSource string  `json:"metadata_source,omitempty" db:"metadata_source"`
+	ProviderID     string  `json:"provider_id" db:"provider_id"`
 	CreatedAt      string  `json:"created_at" db:"created_at"`
 	UpdatedAt      string  `json:"updated_at" db:"updated_at"`
 }

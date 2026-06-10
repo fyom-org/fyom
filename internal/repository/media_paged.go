@@ -80,7 +80,7 @@ func (r *MediaRepository) ListPaged(ctx context.Context, page, limit int, mediaT
 	offset := (page - 1) * limit
 	dataQuery := fmt.Sprintf(`SELECT id, type, title, sort_title, year, overview, rating, duration,
 		file_path, poster_path, backdrop_path, parent_id, season, episode,
-		metadata_source, created_at, updated_at FROM media_items%s
+		metadata_source, provider_id, created_at, updated_at FROM media_items%s
 		ORDER BY %s LIMIT ? OFFSET ?`, where, orderBy)
 	dataArgs := append(whereArgs, limit, offset)
 
@@ -96,7 +96,7 @@ func (r *MediaRepository) ListPaged(ctx context.Context, page, limit int, mediaT
 		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year,
 			&m.Overview, &m.Rating, &m.Duration, &m.FilePath, &m.PosterPath,
 			&m.BackdropPath, &m.ParentID, &m.Season, &m.Episode,
-			&m.MetadataSource, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			&m.MetadataSource, &m.ProviderID, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, 0, err
 		}
 		items = append(items, m)
