@@ -103,7 +103,7 @@ func (r *MediaRepository) Create(ctx context.Context, m *model.MediaItem) error 
 		episode = *m.Episode
 	}
 
-	_, err := r.db.ExecContext(ctx, `INSERT INTO media_items
+	_, err := r.db.ExecContext(ctx, `INSERT OR IGNORE INTO media_items
 		(id, type, title, sort_title, year, overview, rating, duration, file_path,
 		 poster_path, backdrop_path, parent_id, season, episode, metadata_source,
 		 provider_id, library_id, status, created_at, updated_at)
