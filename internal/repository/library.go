@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fyom/fyom/internal/model"
@@ -194,4 +195,64 @@ func (r *LibraryRepository) ItemCountsByType(ctx context.Context, id string) (mo
 		}
 	}
 	return movies, shows, episodes, rows.Err()
+}
+
+// MediaPathCheck holds an item ID and its file path for existence checking.
+type MediaPathCheck struct {
+	ID       string
+	FilePath string
+}
+
+// GetLocalItemPaths returns id + file_path for all non-episode items in a library.
+func (r *LibraryRepository) GetLocalItemPaths(ctx context.Context, libraryID string) ([]MediaPathCheck, error) {
+	rows, err := r.db.QueryContext(ctx, "SELECT id, file_path FROM media_items WHERE library_id = ? AND type != 'episode'", libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var results []MediaPathCheck
+	for rows.Next() {
+		var p MediaPathCheck
+		if err := rows.Scan(&p.ID, &p.FilePath); err != nil {
+			return nil, err
+		}
+		results = append(results, p)
+	}
+	return results, rows.Err()
+}
+
+// MarkMissing sets status='missing' for the given item IDs.
+func (r *LibraryRepository) MarkMissing(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := "UPDATE media_items SET status = 'missing' WHERE id IN (" + strings.Join(placeholders, ",") + ")"
+	_, err := r.db.ExecContext(ctx, query, args...)
+	return err
+}
+
+// MarkAvailableByLibrary sets status='available' for all items in a library
+// except those in the excludeIDs list.
+func (r *LibraryRepository) MarkAvailableByLibrary(ctx context.Context, libraryID string, excludeIDs []string) error {
+	if len(excludeIDs) == 0 {
+		_, err := r.db.ExecContext(ctx, "UPDATE media_items SET status = 'available' WHERE library_id = ?", libraryID)
+		return err
+	}
+	placeholders := make([]string, len(excludeIDs))
+	args := make([]interface{}, len(excludeIDs)+1)
+	args[0] = libraryID
+	for i, id := range excludeIDs {
+		placeholders[i] = "?"
+		args[i+1] = id
+	}
+	query := "UPDATE media_items SET status = 'available' WHERE library_id = ? AND id NOT IN (" + strings.Join(placeholders, ",") + ")"
+	_, err := r.db.ExecContext(ctx, query, args...)
+	return err
 }

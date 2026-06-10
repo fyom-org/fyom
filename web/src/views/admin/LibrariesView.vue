@@ -53,13 +53,28 @@
             {{ typeLabel(lib.type) }} &middot; {{ lib.provider_id }} &middot; {{ lib.metadata_source }}
           </span>
         </div>
-        <button class="delete-btn" @click="deleteLibrary(lib)">Delete</button>
+      </div>
+      <div class="library-actions">
+        <button class="action-btn refresh" @click="refreshLibrary(lib)"
+                :disabled="refreshing === lib.id">
+          {{ refreshing === lib.id ? 'Scanning...' : '↻ Refresh' }}
+        </button>
+        <button class="action-btn check" @click="checkMissing(lib)"
+                :disabled="checking === lib.id">
+          {{ checking === lib.id ? 'Checking...' : '⊕ Check Missing' }}
+        </button>
+        <button class="action-btn delete" @click="deleteLibrary(lib)">
+          Delete
+        </button>
       </div>
         <div class="library-stats" v-if="lib.item_count > 0">
           <span class="stat">{{ lib.item_count }} items</span>
           <span class="stat" v-if="lib.movie_count">{{ lib.movie_count }} movies</span>
           <span class="stat" v-if="lib.show_count">{{ lib.show_count }} shows</span>
           <span class="stat" v-if="lib.episode_count">{{ lib.episode_count }} episodes</span>
+          <span class="stat warn" v-if="lib.missing_count > 0">
+            {{ lib.missing_count }} missing
+          </span>
         </div>
         <div class="library-stats" v-else>
           <span class="stat empty">No items yet</span>
@@ -78,6 +93,8 @@ const libraries = ref<any[]>([]);
 const loading = ref(true);
 const error = ref('');
 const showForm = ref(false);
+const refreshing = ref('');
+const checking = ref('');
 const form = ref({
   name: '', type: 'mixed', provider_id: 'local',
   source_path: '/', metadata_source: 'nfo',
@@ -137,6 +154,43 @@ async function deleteLibrary(lib: any) {
 async function fetchLibraries() {
   const res: any = await request.get('/admin/libraries');
   libraries.value = res.data || [];
+}
+
+async function refreshLibrary(lib: any) {
+  refreshing.value = lib.id;
+  try {
+    const res: any = await request.post(`/admin/libraries/${lib.id}/refresh`);
+    const config = res.data;
+    // Trigger import using the library's stored configuration.
+    await request.post('/library/import', {
+      source_path: config.source_path,
+      provider_id: config.provider_id,
+      library_id: config.id,
+    });
+    alert(`Refresh started for "${lib.name}". New items will appear shortly.`);
+  } catch (e: any) {
+    alert('Refresh failed: ' + (e.response?.data?.message || 'Unknown error'));
+  } finally {
+    refreshing.value = '';
+  }
+}
+
+async function checkMissing(lib: any) {
+  checking.value = lib.id;
+  try {
+    const res: any = await request.post(`/admin/libraries/${lib.id}/check-missing`);
+    const result = res.data;
+    if (result.missing > 0) {
+      alert(`Found ${result.missing} missing item${result.missing !== 1 ? 's' : ''}.\nView them in the Missing Items page.`);
+    } else {
+      alert('All items are available ✓');
+    }
+    await fetchLibraries();
+  } catch (e: any) {
+    alert('Check failed: ' + (e.response?.data?.message || 'Unknown error'));
+  } finally {
+    checking.value = '';
+  }
 }
 
 function typeLabel(type: string) {
@@ -293,6 +347,56 @@ h1 {
 
 .delete-btn:hover {
   background: #2a1a1a;
+}
+
+.library-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.action-btn {
+  padding: 6px 12px;
+  border: 1px solid #1a1a2e;
+  border-radius: 4px;
+  background: transparent;
+  color: #8888aa;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.15s;
+}
+
+.action-btn:hover {
+  border-color: #2a2a3e;
+  color: #ccccee;
+}
+
+.action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.action-btn.refresh:hover {
+  border-color: rgba(33, 150, 243, 0.5);
+  color: #2196f3;
+}
+
+.action-btn.check:hover {
+  border-color: rgba(255, 152, 0, 0.5);
+  color: #ff9800;
+}
+
+.action-btn.delete {
+  border-color: rgba(255, 107, 107, 0.3);
+  color: #ff6b6b;
+}
+
+.action-btn.delete:hover {
+  background: #1a0f0f;
+}
+
+.stat.warn {
+  color: #ff9800;
 }
 
 .empty-text {

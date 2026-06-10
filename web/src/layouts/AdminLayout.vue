@@ -7,6 +7,7 @@
         <router-link to="/admin/libraries" class="nav-link">Libraries</router-link>
         <router-link to="/admin/permissions" class="nav-link">Access Control</router-link>
         <router-link to="/admin/media" class="nav-link">Media</router-link>
+        <router-link to="/admin/missing" class="nav-link">Missing Items</router-link>
         <router-link to="/admin/providers" class="nav-link">Providers</router-link>
         <router-link to="/admin/system" class="nav-link">System</router-link>
         <router-link to="/admin/settings" class="nav-link">Settings</router-link>

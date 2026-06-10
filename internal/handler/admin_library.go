@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 
 	"github.com/fyom/fyom/internal/model"
 	"github.com/fyom/fyom/internal/repository"
@@ -28,6 +29,7 @@ type libraryWithCounts struct {
 	MovieCount   int `json:"movie_count"`
 	ShowCount    int `json:"show_count"`
 	EpisodeCount int `json:"episode_count"`
+	MissingCount int `json:"missing_count"`
 }
 
 // Create creates a new library.
@@ -70,6 +72,7 @@ func (h *AdminLibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, libraryWithCounts{
 		Library: *lib, ItemCount: movies + shows + episodes,
 		MovieCount: movies, ShowCount: shows, EpisodeCount: episodes,
+		MissingCount: 0,
 	})
 }
 
@@ -84,9 +87,11 @@ func (h *AdminLibraryHandler) List(w http.ResponseWriter, r *http.Request) {
 	result := make([]libraryWithCounts, len(libs))
 	for i, lib := range libs {
 		movies, shows, episodes, _ := h.repo.ItemCountsByType(r.Context(), lib.ID)
+		missing, _ := h.repo.MissingCount(r.Context(), lib.ID)
 		result[i] = libraryWithCounts{
 			Library: lib, ItemCount: movies + shows + episodes,
 			MovieCount: movies, ShowCount: shows, EpisodeCount: episodes,
+			MissingCount: missing,
 		}
 	}
 	response.Success(w, result)
@@ -105,9 +110,11 @@ func (h *AdminLibraryHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	movies, shows, episodes, _ := h.repo.ItemCountsByType(r.Context(), id)
+	missing, _ := h.repo.MissingCount(r.Context(), id)
 	response.Success(w, libraryWithCounts{
 		Library: *lib, ItemCount: movies + shows + episodes,
 		MovieCount: movies, ShowCount: shows, EpisodeCount: episodes,
+		MissingCount: missing,
 	})
 }
 
@@ -199,4 +206,74 @@ func (h *AdminLibraryHandler) DeleteLibraryWithItems(w http.ResponseWriter, r *h
 	}
 
 	response.NoContent(w)
+}
+
+// Refresh triggers a re-import of the library using its stored configuration.
+func (h *AdminLibraryHandler) Refresh(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	lib, err := h.repo.GetByID(r.Context(), id)
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	if lib == nil {
+		response.Error(w, 404, "library not found")
+		return
+	}
+
+	// Return the library's stored import configuration.
+	// The frontend triggers import via POST /api/v1/library/import.
+	response.Success(w, map[string]interface{}{
+		"id":              lib.ID,
+		"source_path":     lib.SourcePath,
+		"provider_id":     lib.ProviderID,
+		"metadata_source": lib.MetadataSource,
+		"message":         "Trigger import using POST /api/v1/library/import with the above configuration",
+	})
+}
+
+// CheckMissing checks for items whose files no longer exist on disk.
+func (h *AdminLibraryHandler) CheckMissing(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	lib, err := h.repo.GetByID(r.Context(), id)
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	if lib == nil {
+		response.Error(w, 404, "library not found")
+		return
+	}
+
+	paths, err := h.repo.GetLocalItemPaths(r.Context(), id)
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+
+	var missingIDs []string
+	checked := 0
+	for _, p := range paths {
+		checked++
+		if _, err := os.Stat(p.FilePath); os.IsNotExist(err) {
+			missingIDs = append(missingIDs, p.ID)
+		}
+	}
+
+	if len(missingIDs) > 0 {
+		if err := h.repo.MarkMissing(r.Context(), missingIDs); err != nil {
+			response.Error(w, 500, "internal server error")
+			return
+		}
+	}
+
+	if err := h.repo.MarkAvailableByLibrary(r.Context(), id, missingIDs); err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+
+	response.Success(w, map[string]interface{}{
+		"checked": checked,
+		"missing": len(missingIDs),
+	})
 }

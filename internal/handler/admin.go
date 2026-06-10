@@ -267,3 +267,140 @@ func (h *AdminHandler) UpdatePermission(w http.ResponseWriter, r *http.Request) 
 	}
 	response.NoContent(w)
 }
+
+// ListMissing returns paginated missing items (admin only).
+func (h *AdminHandler) ListMissing(w http.ResponseWriter, r *http.Request) {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	libraryID := r.URL.Query().Get("library_id")
+
+	query := "SELECT id, type, title, sort_title, year, overview, rating, duration, file_path, poster_path, backdrop_path, parent_id, season, episode, metadata_source, provider_id, library_id, status, created_at, updated_at FROM media_items WHERE status = 'missing'"
+	var args []interface{}
+	if libraryID != "" {
+		query += " AND library_id = ?"
+		args = append(args, libraryID)
+	}
+	query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, (page-1)*limit)
+
+	rows, err := h.db.QueryContext(r.Context(), query, args...)
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	defer func() { _ = rows.Close() }()
+
+	var items []model.MediaItem
+	for rows.Next() {
+		var m model.MediaItem
+		var season, episode int
+		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year,
+			&m.Overview, &m.Rating, &m.Duration, &m.FilePath, &m.PosterPath,
+			&m.BackdropPath, &m.ParentID, &season, &episode,
+			&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.Status, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			response.Error(w, 500, "internal server error")
+			return
+		}
+		m.Season = repository.IntPtr(season)
+		m.Episode = repository.IntPtr(episode)
+		items = append(items, m)
+	}
+
+	var total int
+	countQuery := "SELECT COUNT(*) FROM media_items WHERE status = 'missing'"
+	var countArgs []interface{}
+	if libraryID != "" {
+		countQuery += " AND library_id = ?"
+		countArgs = append(countArgs, libraryID)
+	}
+	if err := h.db.QueryRowContext(r.Context(), countQuery, countArgs...).Scan(&total); err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+
+	response.Success(w, map[string]interface{}{
+		"items": items,
+		"total": total,
+		"page":  page,
+		"limit": limit,
+	})
+}
+
+// DeleteMissing deletes all missing items (admin only).
+func (h *AdminHandler) DeleteMissing(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		LibraryID string `json:"library_id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	tx, err := h.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Get IDs of missing items to delete.
+	query := "SELECT id FROM media_items WHERE status = 'missing'"
+	var args []interface{}
+	if req.LibraryID != "" {
+		query += " AND library_id = ?"
+		args = append(args, req.LibraryID)
+	}
+	rows, err := tx.QueryContext(r.Context(), query, args...)
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			response.Error(w, 500, "internal server error")
+			return
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+
+	if len(ids) == 0 {
+		response.Success(w, map[string]interface{}{"deleted_count": 0})
+		return
+	}
+
+	// Delete watch progress for these items.
+	placeholders := make([]string, len(ids))
+	idArgs := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		idArgs[i] = id
+	}
+	if _, err := tx.ExecContext(r.Context(), "DELETE FROM watch_progress WHERE media_item_id IN ("+strings.Join(placeholders, ",")+")", idArgs...); err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	// Delete episodes whose parent is in the list.
+	if _, err := tx.ExecContext(r.Context(), "DELETE FROM media_items WHERE parent_id IN ("+strings.Join(placeholders, ",")+")", idArgs...); err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	// Delete the items themselves.
+	if _, err := tx.ExecContext(r.Context(), "DELETE FROM media_items WHERE id IN ("+strings.Join(placeholders, ",")+")", idArgs...); err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+
+	response.Success(w, map[string]interface{}{"deleted_count": len(ids)})
+}

@@ -48,6 +48,11 @@ const router = createRouter({
           component: () => import('@/views/admin/MediaView.vue'),
         },
         {
+          path: 'missing',
+          name: 'AdminMissing',
+          component: () => import('@/views/admin/MissingView.vue'),
+        },
+        {
           path: 'permissions',
           name: 'AdminPermissions',
           component: () => import('@/views/admin/PermissionsView.vue'),
