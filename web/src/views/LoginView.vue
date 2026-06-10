@@ -2,46 +2,53 @@
   <div class="login-page">
     <h1>fyom — Login</h1>
     <input v-model="username" placeholder="username" autocomplete="username" />
-    <input v-model="password" type="password" placeholder="password" autocomplete="current-password" />
-    <button @click="handleLogin" :disabled="loading">Login</button>
+    <input
+      v-model="password"
+      type="password"
+      placeholder="password"
+      autocomplete="current-password"
+    />
+    <button :disabled="loading" @click="handleLogin">Login</button>
     <p v-if="error" class="error">{{ error }}</p>
     <p class="info"><router-link to="/register">Create an account</router-link></p>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { useUserStore } from '@/stores/user'
-import request from '@/api/request'
+import { ref, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
+import { useUserStore } from '@/stores/user';
+import request from '@/api/request';
 
-const router = useRouter()
-const store = useUserStore()
+const router = useRouter();
+const store = useUserStore();
 
-const username = ref('')
-const password = ref('')
-const loading = ref(false)
-const error = ref('')
+const username = ref('');
+const password = ref('');
+const loading = ref(false);
+const error = ref('');
 
 onMounted(async () => {
   try {
-    const res = await request.get('/system/status')
+    const res = await request.get('/system/status');
     if (!res.data.initialized) {
-      router.push('/setup')
+      router.push('/setup');
     }
-  } catch {}
-})
+  } catch {
+    // system not initialized — router.push handled above
+  }
+});
 
 async function handleLogin() {
-  error.value = ''
-  loading.value = true
+  error.value = '';
+  loading.value = true;
   try {
-    await store.doLogin(username.value, password.value)
+    await store.doLogin(username.value, password.value);
   } catch (err) {
-    console.error('[fyom] login failed:', err)
-    error.value = err instanceof Error ? err.message : 'Login failed'
+    console.error('[fyom] login failed:', err);
+    error.value = err instanceof Error ? err.message : 'Login failed';
   } finally {
-    loading.value = false
+    loading.value = false;
   }
 }
 </script>

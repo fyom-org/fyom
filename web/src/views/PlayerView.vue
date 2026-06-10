@@ -1,5 +1,5 @@
 <template>
-  <div class="player-view" v-if="!error">
+  <div v-if="!error" class="player-view">
     <video v-if="streamUrl" :src="streamUrl" controls autoplay class="video-player">
       Your browser does not support the video tag.
     </video>
@@ -9,26 +9,26 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
-import { getMediaDetail } from '@/api/library'
+import { ref, onMounted } from 'vue';
+import { useRoute } from 'vue-router';
+import { getMediaDetail } from '@/api/library';
 
-const route = useRoute()
-const streamUrl = ref('')
-const error = ref('')
+const route = useRoute();
+const streamUrl = ref('');
+const error = ref('');
 
 onMounted(async () => {
   try {
-    const data = await getMediaDetail(route.params.id as string)
+    const data = await getMediaDetail(route.params.id as string);
     if (data.stream_url) {
-      streamUrl.value = data.stream_url
+      streamUrl.value = data.stream_url;
     } else {
-      error.value = 'No stream available for this media.'
+      error.value = 'No stream available for this media.';
     }
-  } catch (e) {
-    error.value = 'Failed to load media.'
+  } catch {
+    error.value = 'Failed to load media.';
   }
-})
+});
 </script>
 
 <style scoped>
