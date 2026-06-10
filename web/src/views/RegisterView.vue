@@ -15,7 +15,7 @@
           <input v-model="password" type="password" required autocomplete="new-password" />
         </div>
 
-        <p class="error" v-if="error">{{ error }}</p>
+        <p v-if="error" class="error">{{ error }}</p>
         <button type="submit" class="submit-btn" :disabled="loading">
           {{ loading ? 'Registering...' : 'Register' }}
         </button>
@@ -29,26 +29,28 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
-import request from '@/api/request'
+import { ref } from 'vue';
+import { useRouter } from 'vue-router';
+import request from '@/api/request';
 
-const router = useRouter()
-const username = ref('')
-const password = ref('')
-const error = ref('')
-const loading = ref(false)
+const router = useRouter();
+const username = ref('');
+const password = ref('');
+const error = ref('');
+const loading = ref(false);
 
 async function submit() {
-  error.value = ''
-  loading.value = true
+  error.value = '';
+  loading.value = true;
   try {
-    await request.post('/auth/register', { username: username.value, password: password.value })
-    router.push('/login')
+    await request.post('/auth/register', { username: username.value, password: password.value });
+    router.push('/login');
   } catch (e: unknown) {
-    const err = e as { response?: { data?: { message?: string } } }
-    error.value = err.response?.data?.message || 'Registration failed'
-  } finally { loading.value = false }
+    const err = e as { response?: { data?: { message?: string } } };
+    error.value = err.response?.data?.message || 'Registration failed';
+  } finally {
+    loading.value = false;
+  }
 }
 </script>
 

@@ -1,9 +1,11 @@
 <template>
-  <div class="detail-view" v-if="item">
+  <div v-if="item" class="detail-view">
     <div class="backdrop">
-      <img v-if="!backdropFailed && item.backdrop_url"
-           :src="item.backdrop_url"
-           @error="backdropFailed = true" />
+      <img
+        v-if="!backdropFailed && item.backdrop_url"
+        :src="item.backdrop_url"
+        @error="backdropFailed = true"
+      />
       <div class="backdrop-overlay"></div>
     </div>
 
@@ -11,7 +13,7 @@
       <router-link to="/library" class="back-link">← Back to Library</router-link>
 
       <div class="main-row">
-        <img class="poster" v-if="item.poster_url" :src="item.poster_url" />
+        <img v-if="item.poster_url" class="poster" :src="item.poster_url" />
 
         <div class="meta">
           <h1 class="title">{{ item.title }}</h1>
@@ -21,11 +23,11 @@
             <span v-if="item.duration">{{ formatDuration(item.duration) }}</span>
             <span class="type-badge">{{ item.type }}</span>
           </div>
-          <p class="overview" v-if="item.overview">{{ item.overview }}</p>
+          <p v-if="item.overview" class="overview">{{ item.overview }}</p>
 
-          <a v-if="item.type !== 'show' && item.stream_url"
-             :href="item.stream_url"
-             class="play-btn">▶ Play</a>
+          <a v-if="item.type !== 'show' && item.stream_url" :href="item.stream_url" class="play-btn"
+            >▶ Play</a
+          >
         </div>
       </div>
 
@@ -38,26 +40,29 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
-import { getMediaDetail } from '@/api/library'
-import EpisodeList from '@/components/EpisodeList.vue'
+import { ref, onMounted } from 'vue';
+import { useRoute } from 'vue-router';
+import { getMediaDetail } from '@/api/library';
+import EpisodeList from '@/components/EpisodeList.vue';
 
-const route = useRoute()
-const item = ref(null)
-const loading = ref(true)
-const backdropFailed = ref(false)
+const route = useRoute();
+const item = ref(null);
+const loading = ref(true);
+const backdropFailed = ref(false);
 
 onMounted(async () => {
-  try { item.value = await getMediaDetail(route.params.id as string) }
-  finally { loading.value = false }
-})
+  try {
+    item.value = await getMediaDetail(route.params.id as string);
+  } finally {
+    loading.value = false;
+  }
+});
 
 function formatDuration(sec: number) {
-  if (!sec) return ''
-  const h = Math.floor(sec / 3600)
-  const m = Math.floor((sec % 3600) / 60)
-  return h > 0 ? `${h}h ${m}m` : `${m}m`
+  if (!sec) return '';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 </script>
 

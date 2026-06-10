@@ -1,15 +1,11 @@
 <template>
-  <div class="episode-list" v-if="seasons.length">
+  <div v-if="seasons.length" class="episode-list">
     <div v-for="s in seasons" :key="s.season" class="season-group">
       <h3 class="season-title">Season {{ s.season }}</h3>
-      <div
-        v-for="ep in s.episodes"
-        :key="ep.id"
-        class="episode-row"
-      >
+      <div v-for="ep in s.episodes" :key="ep.id" class="episode-row">
         <span class="ep-label">{{ epLabel(ep) }}</span>
         <span class="ep-title">{{ ep.title }}</span>
-        <span class="ep-duration" v-if="ep.duration">{{ formatDuration(ep.duration) }}</span>
+        <span v-if="ep.duration" class="ep-duration">{{ formatDuration(ep.duration) }}</span>
         <router-link :to="`/play/${ep.id}`" class="ep-play" @click.stop>▶</router-link>
       </div>
     </div>
@@ -17,52 +13,52 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { getEpisodes } from '@/api/library'
+import { ref, computed, onMounted } from 'vue';
+import { getEpisodes } from '@/api/library';
 
-const props = defineProps<{ showId: string }>()
+const props = defineProps<{ showId: string }>();
 
 interface Episode {
-  id: string
-  title: string
-  season: number
-  episode: number
-  duration: number
-  poster_url?: string
-  stream_url?: string
+  id: string;
+  title: string;
+  season: number;
+  episode: number;
+  duration: number;
+  poster_url?: string;
+  stream_url?: string;
 }
 
-const episodes = ref<Episode[]>([])
+const episodes = ref<Episode[]>([]);
 
 onMounted(async () => {
   try {
-    episodes.value = await getEpisodes(props.showId)
+    episodes.value = await getEpisodes(props.showId);
   } catch {
-    episodes.value = []
+    episodes.value = [];
   }
-})
+});
 
 const seasons = computed(() => {
-  const map: Record<number, Episode[]> = {}
+  const map: Record<number, Episode[]> = {};
   for (const ep of episodes.value) {
-    const s = ep.season || 0
-    if (!map[s]) map[s] = []
-    map[s].push(ep)
+    const s = ep.season || 0;
+    if (!map[s]) map[s] = [];
+    map[s].push(ep);
   }
   return Object.entries(map)
     .sort(([a], [b]) => Number(a) - Number(b))
-    .map(([s, eps]) => ({ season: Number(s), episodes: eps }))
-})
+    .map(([s, eps]) => ({ season: Number(s), episodes: eps }));
+});
 
 function epLabel(ep: Episode) {
-  return `${ep.season}×${String(ep.episode).padStart(2, '0')}`
+  return `${ep.season}×${String(ep.episode).padStart(2, '0')}`;
 }
 
 function formatDuration(sec: number) {
-  if (!sec) return ''
-  const h = Math.floor(sec / 3600)
-  const m = Math.floor((sec % 3600) / 60)
-  return h > 0 ? `${h}h ${m}m` : `${m}m`
+  if (!sec) return '';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 </script>
 

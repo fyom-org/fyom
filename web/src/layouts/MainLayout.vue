@@ -22,15 +22,15 @@
 </template>
 
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
-import { useUserStore } from '@/stores/user'
+import { useRouter } from 'vue-router';
+import { useUserStore } from '@/stores/user';
 
-const router = useRouter()
-const store = useUserStore()
+const router = useRouter();
+const store = useUserStore();
 
 function handleLogout() {
-  store.logout()
-  router.push({ name: 'login' })
+  store.logout();
+  router.push({ name: 'login' });
 }
 </script>
 

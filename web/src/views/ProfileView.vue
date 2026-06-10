@@ -1,9 +1,13 @@
 <template>
   <div class="profile-view">
     <h2 class="page-title">Profile</h2>
-    <div class="card" v-if="user">
-      <div class="info-row"><span class="label">Username</span><span>{{ user.username }}</span></div>
-      <div class="info-row"><span class="label">Role</span><span class="badge">{{ user.role }}</span></div>
+    <div v-if="user" class="card">
+      <div class="info-row">
+        <span class="label">Username</span><span>{{ user.username }}</span>
+      </div>
+      <div class="info-row">
+        <span class="label">Role</span><span class="badge">{{ user.role }}</span>
+      </div>
     </div>
 
     <div class="card">
@@ -16,37 +20,42 @@
         <label>New Password</label>
         <input v-model="newPassword" type="password" />
       </div>
-      <p class="msg" v-if="msg">{{ msg }}</p>
-      <p class="error" v-if="error">{{ error }}</p>
+      <p v-if="msg" class="msg">{{ msg }}</p>
+      <p v-if="error" class="error">{{ error }}</p>
       <button class="btn" @click="changePassword">Update Password</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import request from '@/api/request'
+import { ref, onMounted } from 'vue';
+import request from '@/api/request';
 
-const user = ref<{ username: string; role: string } | null>(null)
-const oldPassword = ref('')
-const newPassword = ref('')
-const msg = ref('')
-const error = ref('')
+const user = ref<{ username: string; role: string } | null>(null);
+const oldPassword = ref('');
+const newPassword = ref('');
+const msg = ref('');
+const error = ref('');
 
 onMounted(async () => {
-  const res = await request.get('/auth/me')
-  user.value = res.data
-})
+  const res = await request.get('/auth/me');
+  user.value = res.data;
+});
 
 async function changePassword() {
-  error.value = ''; msg.value = ''
+  error.value = '';
+  msg.value = '';
   try {
-    await request.put('/auth/me/password', { old_password: oldPassword.value, new_password: newPassword.value })
-    msg.value = 'Password updated'
-    oldPassword.value = ''; newPassword.value = ''
+    await request.put('/auth/me/password', {
+      old_password: oldPassword.value,
+      new_password: newPassword.value,
+    });
+    msg.value = 'Password updated';
+    oldPassword.value = '';
+    newPassword.value = '';
   } catch (e: unknown) {
-    const err = e as { response?: { data?: { message?: string } } }
-    error.value = err.response?.data?.message || 'Failed'
+    const err = e as { response?: { data?: { message?: string } } };
+    error.value = err.response?.data?.message || 'Failed';
   }
 }
 </script>

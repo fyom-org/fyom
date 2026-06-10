@@ -1,18 +1,33 @@
 <template>
   <div class="import-view">
     <h2>Import Media Library</h2>
-    <p class="hint">Enter the absolute server-side path to your media directory.</p>
+    <p class="hint">
+      Choose a storage provider and specify the source path / S3 prefix to import from.
+    </p>
 
     <div class="form">
-      <input
-        v-model="dirPath"
-        type="text"
-        placeholder="/media/movies"
-        :disabled="importing"
-        @keyup.enter="handleImport"
-      />
-      <button @click="handleImport" :disabled="importing || !dirPath.trim()">
-        {{ importIng ? 'Starting...' : 'Start Import' }}
+      <div class="field">
+        <label>Storage Provider</label>
+        <select v-model="selectedProvider" class="provider-select" :disabled="loadingProviders">
+          <option v-for="p in providers" :key="p.id" :value="p.id">
+            {{ p.display_name }} ({{ p.type }})
+          </option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>{{ isLocal ? 'Directory Path' : 'S3 Prefix' }}</label>
+        <input
+          v-model="sourcePath"
+          type="text"
+          :placeholder="pathPlaceholder"
+          :disabled="importing"
+          @keyup.enter="handleImport"
+        />
+      </div>
+
+      <button :disabled="importing || !sourcePath.trim()" @click="handleImport">
+        {{ importing ? 'Starting...' : 'Start Import' }}
       </button>
     </div>
 
@@ -23,31 +38,69 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { triggerImport } from '@/api/library'
-import JobStatus from '@/components/JobStatus.vue'
+import { ref, computed, onMounted } from 'vue';
+import { triggerImport } from '@/api/library';
+import JobStatus from '@/components/JobStatus.vue';
 
-const dirPath = ref('')
-const importing = ref(false)
-const jobId = ref('')
-const error = ref('')
+interface Provider {
+  id: string;
+  type: string;
+  display_name: string;
+}
+
+const providers = ref<Provider[]>([]);
+const selectedProvider = ref('local');
+const sourcePath = ref('');
+const importing = ref(false);
+const loadingProviders = ref(true);
+const jobId = ref('');
+const error = ref('');
+
+const isLocal = computed(() => selectedProvider.value === 'local');
+const pathPlaceholder = computed(() =>
+  isLocal.value ? '/path/to/media/library' : 'S3 prefix (e.g. Shows/ or Movies/)'
+);
+
+onMounted(async () => {
+  try {
+    const res = await fetch('/api/v1/admin/providers', {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem('token') || ''}`,
+      },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      providers.value = data.data || [];
+    }
+  } catch {
+    // ignore — user may not have admin role
+  } finally {
+    loadingProviders.value = false;
+  }
+  // Always include local as first option
+  providers.value.unshift({ id: 'local', type: 'local', display_name: 'Local Disk' });
+});
 
 async function handleImport() {
-  const path = dirPath.value.trim()
-  if (!path) return
+  const path = sourcePath.value.trim();
+  if (!path) return;
 
-  error.value = ''
-  jobId.value = ''
-  importing.value = true
+  error.value = '';
+  jobId.value = '';
+  importing.value = true;
 
   try {
-    const res = await triggerImport(path)
-    jobId.value = res.data.job_id
-  } catch (err) {
-    console.error('[fyom] import trigger failed:', err)
-    error.value = err instanceof Error ? err.message : 'Failed to start import'
+    const res = await triggerImport(path, selectedProvider.value);
+    jobId.value = res.data.job_id;
+  } catch (err: unknown) {
+    console.error('[fyom] import trigger failed:', err);
+    if (err instanceof Error) {
+      error.value = err.message;
+    } else {
+      error.value = 'Failed to start import';
+    }
   } finally {
-    importing.value = false
+    importing.value = false;
   }
 }
 </script>
@@ -70,7 +123,39 @@ h2 {
 
 .form {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+label {
+  font-size: 13px;
+  color: #a1a1aa;
+}
+
+.provider-select {
+  padding: 8px 12px;
+  background: #27272a;
+  border: 1px solid #3f3f46;
+  color: #e4e4e7;
+  border-radius: 6px;
+  font-size: 14px;
+  outline: none;
+  cursor: pointer;
+}
+
+.provider-select:focus {
+  border-color: #60a5fa;
+}
+
+.provider-select option {
+  background: #27272a;
+  color: #e4e4e7;
 }
 
 input {

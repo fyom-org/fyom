@@ -1,20 +1,20 @@
 <template>
-  <router-link :to="`/library/${item.id}`" custom v-slot="{ navigate }">
-    <div class="media-card" @click="navigate" role="link" tabindex="0">
+  <router-link v-slot="{ navigate }" :to="`/library/${item.id}`" custom>
+    <div class="media-card" role="link" tabindex="0" @click="navigate">
       <div class="poster-wrap">
         <img v-if="item.poster_url" :src="item.poster_url" :alt="item.title" />
         <div class="poster-fallback">{{ item.title?.[0] ?? '?' }}</div>
       </div>
       <div class="info">
         <span class="title">{{ item.title }}</span>
-        <span class="year" v-if="item.year">{{ item.year }}</span>
+        <span v-if="item.year" class="year">{{ item.year }}</span>
       </div>
     </div>
   </router-link>
 </template>
 
 <script setup lang="ts">
-defineProps<{ item: { id: string; title: string; year?: number; poster_url?: string } }>()
+defineProps<{ item: { id: string; title: string; year?: number; poster_url?: string } }>();
 </script>
 
 <style scoped>
@@ -70,6 +70,8 @@ defineProps<{ item: { id: string; title: string; year?: number; poster_url?: str
 .media-card:hover .poster-wrap {
   transform: scale(1.05);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition:
+    transform 0.2s,
+    box-shadow 0.2s;
 }
 </style>

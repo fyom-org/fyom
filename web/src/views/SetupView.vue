@@ -21,12 +21,12 @@
 
         <div class="toggle-row">
           <label class="toggle-label">
-            <input type="checkbox" v-model="allowRegistration" />
+            <input v-model="allowRegistration" type="checkbox" />
             <span>Allow public registration</span>
           </label>
         </div>
 
-        <p class="error" v-if="error">{{ error }}</p>
+        <p v-if="error" class="error">{{ error }}</p>
         <button type="submit" class="submit-btn" :disabled="loading">
           {{ loading ? 'Setting up...' : 'Complete Setup' }}
         </button>
@@ -36,34 +36,42 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
-import request from '@/api/request'
+import { ref } from 'vue';
+import { useRouter } from 'vue-router';
+import request from '@/api/request';
 
-const router = useRouter()
-const username = ref('')
-const password = ref('')
-const confirmPassword = ref('')
-const allowRegistration = ref(false)
-const error = ref('')
-const loading = ref(false)
+const router = useRouter();
+const username = ref('');
+const password = ref('');
+const confirmPassword = ref('');
+const allowRegistration = ref(false);
+const error = ref('');
+const loading = ref(false);
 
 async function submit() {
-  error.value = ''
-  if (!username.value || !password.value) { error.value = 'Fill all fields'; return }
-  if (password.value !== confirmPassword.value) { error.value = 'Passwords do not match'; return }
-  loading.value = true
+  error.value = '';
+  if (!username.value || !password.value) {
+    error.value = 'Fill all fields';
+    return;
+  }
+  if (password.value !== confirmPassword.value) {
+    error.value = 'Passwords do not match';
+    return;
+  }
+  loading.value = true;
   try {
     await request.post('/system/initialize', {
       username: username.value,
       password: password.value,
-      allow_registration: allowRegistration.value
-    })
-    router.push('/login')
+      allow_registration: allowRegistration.value,
+    });
+    router.push('/login');
   } catch (e: unknown) {
-    const err = e as { response?: { data?: { message?: string } } }
-    error.value = err.response?.data?.message || 'Setup failed'
-  } finally { loading.value = false }
+    const err = e as { response?: { data?: { message?: string } } };
+    error.value = err.response?.data?.message || 'Setup failed';
+  } finally {
+    loading.value = false;
+  }
 }
 </script>
 
@@ -147,7 +155,7 @@ async function submit() {
   cursor: pointer;
 }
 
-.toggle-label input[type=checkbox] {
+.toggle-label input[type='checkbox'] {
   accent-color: #6c63ff;
 }
 

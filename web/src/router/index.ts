@@ -1,8 +1,8 @@
-import { createRouter, createWebHistory } from 'vue-router'
-import LoginView from '@/views/LoginView.vue'
-import MainLayout from '@/layouts/MainLayout.vue'
-import ImportView from '@/views/ImportView.vue'
-import { useUserStore } from '@/stores/user'
+import { createRouter, createWebHistory } from 'vue-router';
+import LoginView from '@/views/LoginView.vue';
+import MainLayout from '@/layouts/MainLayout.vue';
+import ImportView from '@/views/ImportView.vue';
+import { useUserStore } from '@/stores/user';
 
 const router = createRouter({
   history: createWebHistory(),
@@ -15,7 +15,11 @@ const router = createRouter({
       children: [
         { path: 'import', name: 'import', component: ImportView },
         { path: 'library', name: 'Library', component: () => import('@/views/LibraryView.vue') },
-        { path: 'library/:id', name: 'MediaDetail', component: () => import('@/views/MediaDetailView.vue') },
+        {
+          path: 'library/:id',
+          name: 'MediaDetail',
+          component: () => import('@/views/MediaDetailView.vue'),
+        },
         { path: 'play/:id', name: 'Player', component: () => import('@/views/PlayerView.vue') },
         { path: 'profile', name: 'Profile', component: () => import('@/views/ProfileView.vue') },
         { path: 'home', redirect: '/import' },
@@ -25,16 +29,16 @@ const router = createRouter({
     { path: '/setup', name: 'Setup', component: () => import('@/views/SetupView.vue') },
     { path: '/register', name: 'Register', component: () => import('@/views/RegisterView.vue') },
   ],
-})
+});
 
 router.beforeEach((to) => {
   if (to.meta.requiresAuth) {
-    const store = useUserStore()
+    const store = useUserStore();
     if (!store.isLoggedIn) {
-      return { name: 'login' }
+      return { name: 'login' };
     }
   }
-  return true
-})
+  return true;
+});
 
-export default router
+export default router;

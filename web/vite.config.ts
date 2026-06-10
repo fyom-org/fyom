@@ -1,6 +1,6 @@
-import { defineConfig } from 'vite'
-import vue from '@vitejs/plugin-vue'
-import path from 'node:path'
+import { defineConfig } from 'vite';
+import vue from '@vitejs/plugin-vue';
+import path from 'node:path';
 
 export default defineConfig({
   plugins: [vue()],
@@ -27,11 +27,11 @@ export default defineConfig({
         // Debug API proxy traffic
         configure: (proxy) => {
           proxy.on('proxyReq', (_, req) => {
-            console.log('➡️ [API]', req.method, req.url)
-          })
+            console.log('➡️ [API]', req.method, req.url);
+          });
           proxy.on('proxyRes', (res, req) => {
-            console.log('⬅️ [API]', res.statusCode, req.url)
-          })
+            console.log('⬅️ [API]', res.statusCode, req.url);
+          });
         },
       },
     },
@@ -51,4 +51,4 @@ export default defineConfig({
   build: {
     sourcemap: true,
   },
-})
+});

@@ -12,10 +12,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-import { getJobStatus, type JobStatus as JobStatusType } from '@/api/library'
+import { ref, onMounted, onUnmounted } from 'vue';
+import { getJobStatus, type JobStatus as JobStatusType } from '@/api/library';
 
-const props = defineProps<{ jobId: string }>()
+const props = defineProps<{ jobId: string }>();
 
 const jobStatus = ref<JobStatusType>({
   id: props.jobId,
@@ -25,31 +25,31 @@ const jobStatus = ref<JobStatusType>({
   done_items: 0,
   created_at: '',
   updated_at: '',
-})
+});
 
-let timer: ReturnType<typeof setInterval> | null = null
+let timer: ReturnType<typeof setInterval> | null = null;
 
 onMounted(async () => {
-  await fetchStatus()
-  timer = setInterval(fetchStatus, 2000)
-})
+  await fetchStatus();
+  timer = setInterval(fetchStatus, 2000);
+});
 
 onUnmounted(() => {
-  if (timer) clearInterval(timer)
-})
+  if (timer) clearInterval(timer);
+});
 
 async function fetchStatus() {
   try {
-    const res = await getJobStatus(props.jobId)
-    jobStatus.value = res.data
+    const res = await getJobStatus(props.jobId);
+    jobStatus.value = res.data;
     if (res.data.status === 'done' || res.data.status === 'error') {
       if (timer) {
-        clearInterval(timer)
-        timer = null
+        clearInterval(timer);
+        timer = null;
       }
     }
   } catch (err) {
-    console.error('[fyom] job status poll failed:', err)
+    console.error('[fyom] job status poll failed:', err);
   }
 }
 </script>
@@ -78,10 +78,18 @@ async function fetchStatus() {
   text-transform: capitalize;
 }
 
-.status.pending { color: #fbbf24; }
-.status.running { color: #60a5fa; }
-.status.done { color: #34d399; }
-.status.error { color: #f87171; }
+.status.pending {
+  color: #fbbf24;
+}
+.status.running {
+  color: #60a5fa;
+}
+.status.done {
+  color: #34d399;
+}
+.status.error {
+  color: #f87171;
+}
 
 .error {
   color: #f87171;
