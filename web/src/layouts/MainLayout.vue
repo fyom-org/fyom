@@ -1,7 +1,7 @@
 <template>
   <div class="layout">
     <header class="header">
-      <button class="sidebar-toggle" @click="toggleSidebar" v-if="isMobile">☰</button>
+      <button class="sidebar-toggle" @click="toggleSidebar">☰</button>
       <span class="brand">fyom</span>
       <div class="header-right">
         <span class="username">{{ store.user?.username ?? '—' }}</span>
@@ -11,7 +11,10 @@
     <div class="body">
       <aside
         class="sidebar"
-        :class="{ 'sidebar-mobile': isMobile, 'sidebar-hidden': isMobile && !sidebarOpen }"
+        :class="{
+          'sidebar-mobile': isMobile,
+          'sidebar-hidden': !sidebarOpen,
+        }"
       >
         <router-link to="/">Home</router-link>
         <router-link to="/library">Library</router-link>
@@ -76,8 +79,8 @@ import request from '@/api/request';
 const router = useRouter();
 const store = useUserStore();
 const libraries = ref<any[]>([]);
-const sidebarOpen = ref(false);
 const isMobile = ref(window.innerWidth <= 768);
+const sidebarOpen = ref(!isMobile.value); // Desktop: default open, Mobile: default closed
 
 const isAdmin = computed(() => store.isAdmin);
 
@@ -87,9 +90,7 @@ const toggleSidebar = () => {
 
 const handleResize = () => {
   isMobile.value = window.innerWidth <= 768;
-  if (!isMobile.value) {
-    sidebarOpen.value = false;
-  }
+  sidebarOpen.value = !isMobile.value; // Desktop: open, Mobile: closed
 };
 
 onMounted(async () => {
@@ -200,6 +201,17 @@ function handleLogout() {
   z-index: 100;
 }
 
+/* Desktop: Collapse via width */
+@media (min-width: 769px) {
+  .sidebar.sidebar-hidden {
+    width: 0;
+    min-width: 0;
+    overflow: hidden;
+    border-right: none;
+  }
+}
+
+/* Mobile: Slide in/out */
 .sidebar-mobile {
   position: fixed;
   top: 0;
@@ -208,7 +220,7 @@ function handleLogout() {
   transform: translateX(-100%);
 }
 
-.sidebar-mobile.sidebar-hidden {
+.sidebar-hidden {
   transform: translateX(-100%);
 }
 
