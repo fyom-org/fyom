@@ -37,7 +37,6 @@
         </div>
         <div class="sidebar-footer">
           <router-link to="/profile" @click="sidebarOpen = false">Profile</router-link>
-          <button class="btn-logout" @click="handleLogout">Logout</button>
           <button class="sidebar-toggle" @click="toggleSidebar">☰</button>
         </div>
       </aside>

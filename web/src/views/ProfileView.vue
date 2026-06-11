@@ -36,13 +36,20 @@
       <p v-if="error" class="error">{{ error }}</p>
       <button class="btn" @click="changePassword">Update Password</button>
     </div>
+    <div class="card">
+      <button class="btn-logout" @click="handleLogout">Logout</button>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
 import request from '@/api/request';
+import { useUserStore } from '@/stores/user';
 
+const router = useRouter();
+const store = useUserStore();
 const user = ref<{ username: string; role: string } | null>(null);
 const oldPassword = ref('');
 const newPassword = ref('');
@@ -83,6 +90,11 @@ async function changePassword() {
     const err = e as { response?: { data?: { message?: string } } };
     error.value = err.response?.data?.message || 'Failed';
   }
+}
+
+function handleLogout() {
+  store.logout();
+  router.push({ name: 'login' });
 }
 </script>
 
@@ -217,10 +229,27 @@ h3 {
   border-radius: 6px;
   cursor: pointer;
   font-size: 14px;
+  width: 100%;
 }
 
 .btn:hover {
   background: #5a52e0;
+}
+
+.btn-logout {
+  background: none;
+  color: #ff6b6b;
+  border: none;
+  padding: 10px 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  width: 100%;
+  text-align: left;
+}
+
+.btn-logout:hover {
+  background: rgba(255, 107, 107, 0.1);
 }
 
 .msg {
