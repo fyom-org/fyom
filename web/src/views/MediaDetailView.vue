@@ -775,8 +775,8 @@ function formatDuration(sec: number) {
 
 .overview-section .overview.collapsed {
   display: -webkit-box;
-  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
   overflow: hidden;
 }
 
