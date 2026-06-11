@@ -50,20 +50,6 @@
         <router-view />
       </main>
     </div>
-    <div class="mobile-nav" v-if="isMobile">
-      <router-link to="/" class="mobile-nav-item">
-        <span class="mobile-nav-icon">🏠</span>
-        <span class="mobile-nav-label">Home</span>
-      </router-link>
-      <router-link to="/library" class="mobile-nav-item">
-        <span class="mobile-nav-icon">📚</span>
-        <span class="mobile-nav-label">Library</span>
-      </router-link>
-      <router-link to="/profile" class="mobile-nav-item">
-        <span class="mobile-nav-icon">👤</span>
-        <span class="mobile-nav-label">Profile</span>
-      </router-link>
-    </div>
   </div>
 </template>
 
@@ -305,43 +291,6 @@ function handleLogout() {
 @media (max-width: 768px) {
   .content {
     padding: var(--spacing-sm);
-  }
-}
-
-.mobile-nav {
-  display: none;
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background: #1a1a2e;
-  border-top: 1px solid var(--color-border);
-  z-index: 100;
-  padding: var(--spacing-sm) 0;
-}
-
-@media (max-width: 768px) {
-  .mobile-nav {
-    display: flex;
-    justify-content: space-around;
-  }
-
-  .mobile-nav-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    color: var(--color-text-secondary);
-    text-decoration: none;
-    font-size: var(--font-size-sm);
-  }
-
-  .mobile-nav-item.router-link-active {
-    color: var(--color-primary);
-  }
-
-  .mobile-nav-icon {
-    font-size: var(--font-size-lg);
-    margin-bottom: 2px;
   }
 }
 </style>
