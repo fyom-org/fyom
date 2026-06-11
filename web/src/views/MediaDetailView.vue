@@ -609,12 +609,11 @@ function formatDuration(sec: number) {
 }
 
 .episode-detail-number {
-  font-size: 18px;
-  padding: 2px 8px;
-  border-radius: 6px;
-  color: #e0e0e0;
-  margin: 0;
-  font-weight: 600;
+  background: #2a2a3e;
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  text-transform: capitalize;
 }
 
 .episode-detail-meta {
