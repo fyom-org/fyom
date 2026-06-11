@@ -9,6 +9,7 @@
         }"
       >
         <div class="sidebar-content">
+          <router-link to="/profile" @click="sidebarOpen = false">Profile</router-link>
           <router-link to="/" exact-active-class="router-link-active">Home</router-link>
           <router-link to="/library">Library</router-link>
           <!-- Library switcher — only shows when 2+ libraries exist -->
