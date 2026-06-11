@@ -3,10 +3,10 @@ tmp_dir = "tmp"
 
 [build]
   cmd = "CGO_ENABLED=0 go build -ldflags \"-s -w\" -o tmp/fyom ./cmd/fyom"
-  bin = "tmp/fyom"
   delay = 1500
-  include_ext = ["go", "yaml", "sql", "mod", "sum"]
+  entrypoint = "tmp/fyom"
   exclude_dir = ["web/src", "web/node_modules", "tmp", "build", "data"]
+  include_ext = ["go", "yaml", "sql", "mod", "sum"]
   include_dir = ["web/dist"]
   log = "air-build-errors.log"
 
