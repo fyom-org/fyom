@@ -135,7 +135,7 @@ function handleLogout() {
   justify-content: space-between;
   padding: 0 var(--spacing-md);
   height: var(--touch-target);
-  background: #27272a;
+  background: #1e1e2e;
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
 }
