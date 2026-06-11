@@ -6,7 +6,7 @@
         v-for="item in items"
         :key="item.id"
         :item="item"
-        :library-name="typeof item === 'object' && item !== null ? getLibraryName(item) : ''"
+        :library-name="getLibraryName ? getLibraryName(item) : ''"
         @status-changed="(id, status) => $emit('status-changed', id, status)"
       />
     </div>

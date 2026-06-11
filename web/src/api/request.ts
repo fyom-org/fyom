@@ -31,6 +31,10 @@ request.interceptors.request.use(
 request.interceptors.response.use(
   (response: AxiosResponse<ApiResponse>) => {
     const body = response.data;
+    // 204 No Content or non-JSON responses — pass through
+    if (typeof body !== 'object' || body === null) {
+      return body as any;
+    }
     if (body.code !== 0) {
       console.error('[API Error]', body.code, body.message);
       return Promise.reject(new Error(body.message));
