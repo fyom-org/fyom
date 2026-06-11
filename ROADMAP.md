@@ -99,22 +99,45 @@ by deep, Kodi-compliant metadata.
 - [x] Kodi-standard `<ratings>` block (child `<value>/<votes>`, named rating sets)
 - [x] `<uniqueid type="...">` multi-source ID parsing (new Kodi format)
 - [x] Old-format ID fields: `<imdb_id>`, `<tvdbid>`, `<tmdbid>`, `<id>` (classic Kodi)
-- [x] `<set>` support (franchise/collection grouping pointer)
+- [x] `<set>` support (franchise/collection grouping pointer, with `<overview>`)
 - [x] Multi-episode NFO file support (`ParseEpisodeNFOs` — splits on
       `<episodedetails>`, single-episode fallback)
+
 - [x] Deep metadata fields: genres, studios, mpaa, tagline, outline, premiered,
       set_name, directors, credits, tags, countries
+
 - [x] Actor extraction from `<actor>` blocks (name, role, type, sortorder, thumb)
 - [x] Technical stream metadata from `<fileinfo>`
       (video codec/res/fps, audio codec/channels/lang, subtitle lang list)
+
 - [x] JSON string storage in SQLite for variable-length arrays/objects
       (deliberate MVP trade-off — see Architecture Note below)
+
 - [x] `actorsToJSON`, `uniqueIDsToJSON`, `subtitlesToJSON`, `stringsToJSON`
       helpers in importer
+
 - [x] `NFOActor.Type` field — distinguishes Actor/GuestStar/Producer/Director/Writer
 - [x] `NFOActor.SortOrder` xml tag corrected to `xml:"sortorder"`
 - [x] `NFOVideo.Aspect` changed from float64 to string (Kodi format: "16:9")
 - [x] `logo_path` column — logo.png/clearlogo.png discovery during import, presigned URL serving
+
+- [x] **Jellyfin NFO spec compliance** — full movie metadata alignment:
+      `<sortname>`, `<releasedate>`, `<enddate>`, `<customrating>`,
+      `<collectionnumber>`, `<language>`, `<countrycode>`,
+      `<dateadded>`, `<lastplayed>`, `<playcount>`, `<userrating>`,
+      `<displayorder>`, `<set><overview>`
+
+- [x] 13 new DB columns (migration 0015): set_overview, language, country_code,
+      custom_rating, collection_number, end_date, release_date, display_order,
+      original_title, user_rating, date_added, last_played, playcount
+
+- [x] All new fields mapped in `applyMovieNFOFields()` importer
+- [x] All new fields exposed in `MediaItemResponse` API
+- [x] Admin handler queries updated to use `MediaColumns` constant
+      (prevents column-count mismatch on SELECT/Scan)
+
+- [x] Frontend: movie detail page shows original title, language, country code,
+      custom rating, release/end dates, play count, user rating, collection/set info
 
 ### 8.2 Import Pipeline: Normalization ✅
 
