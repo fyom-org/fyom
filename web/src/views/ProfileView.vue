@@ -57,9 +57,6 @@ import { useUserStore } from '@/stores/user';
 
 const router = useRouter();
 const store = useUserStore();
-
-const router = useRouter();
-const store = useUserStore();
 const user = ref<{ username: string; role: string } | null>(null);
 const oldPassword = ref('');
 const newPassword = ref('');
