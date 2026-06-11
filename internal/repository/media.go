@@ -24,11 +24,59 @@ func NewMediaRepository(db *DB) *MediaRepository {
 	return &MediaRepository{db: db}
 }
 
+const mediaColumns = `id, type, title, sort_title, year, overview, rating, duration,
+		file_path, poster_path, backdrop_path, parent_id, season, episode,
+		metadata_source, provider_id, library_id, status, created_at, updated_at,
+		mpaa, genres, studios, actors, unique_ids, premiered, outline, tagline,
+		countries, directors, credits, tags, set_name, video_codec, video_width,
+		video_height, video_duration_seconds, audio_codec, audio_channels,
+		subtitle_languages`
+
+const mediaInsertColumns = `(id, type, title, sort_title, year, overview, rating, duration,
+		file_path, poster_path, backdrop_path, parent_id, season, episode,
+		metadata_source, provider_id, library_id, status, created_at, updated_at,
+		mpaa, genres, studios, actors, unique_ids, premiered, outline, tagline,
+		countries, directors, credits, tags, set_name, video_codec, video_width,
+		video_height, video_duration_seconds, audio_codec, audio_channels,
+		subtitle_languages)`
+
+const mediaInsertPlaceholders = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+func scanMediaItem(rows *sql.Rows, m *model.MediaItem) error {
+	var season, episode int
+	if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year,
+		&m.Overview, &m.Rating, &m.Duration, &m.FilePath, &m.PosterPath,
+		&m.BackdropPath, &m.ParentID, &season, &episode,
+		&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.Status, &m.CreatedAt, &m.UpdatedAt,
+		&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
+		&m.Outline, &m.Tagline, &m.Countries, &m.Directors, &m.Credits, &m.Tags,
+		&m.SetName, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
+		&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages); err != nil {
+		return err
+	}
+	m.Season = IntPtr(season)
+	m.Episode = IntPtr(episode)
+	return nil
+}
+
+func scanMediaRow(row *sql.Row, m *model.MediaItem) error {
+	var season, episode int
+	err := row.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year, &m.Overview,
+		&m.Rating, &m.Duration, &m.FilePath, &m.PosterPath, &m.BackdropPath,
+		&m.ParentID, &season, &episode, &m.MetadataSource, &m.ProviderID, &m.LibraryID,
+		&m.Status, &m.CreatedAt, &m.UpdatedAt,
+		&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
+		&m.Outline, &m.Tagline, &m.Countries, &m.Directors, &m.Credits, &m.Tags,
+		&m.SetName, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
+		&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages)
+	m.Season = IntPtr(season)
+	m.Episode = IntPtr(episode)
+	return err
+}
+
 // List returns all media items, optionally filtered by type.
 func (r *MediaRepository) List(ctx context.Context, mediaType string) ([]model.MediaItem, error) {
-	query := `SELECT id, type, title, sort_title, year, overview, rating, duration,
-	          file_path, poster_path, backdrop_path, parent_id, season, episode,
-	          metadata_source, provider_id, library_id, status, created_at, updated_at FROM media_items`
+	query := `SELECT ` + mediaColumns + ` FROM media_items`
 	args := []interface{}{}
 
 	if mediaType != "" {
@@ -46,15 +94,9 @@ func (r *MediaRepository) List(ctx context.Context, mediaType string) ([]model.M
 	var items []model.MediaItem
 	for rows.Next() {
 		var m model.MediaItem
-		var season, episode int
-		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year,
-			&m.Overview, &m.Rating, &m.Duration, &m.FilePath, &m.PosterPath,
-			&m.BackdropPath, &m.ParentID, &season, &episode,
-			&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.Status, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		if err := scanMediaItem(rows, &m); err != nil {
 			return nil, err
 		}
-		m.Season = IntPtr(season)
-		m.Episode = IntPtr(episode)
 		items = append(items, m)
 	}
 	return items, rows.Err()
@@ -63,22 +105,13 @@ func (r *MediaRepository) List(ctx context.Context, mediaType string) ([]model.M
 // Get returns a single media item by ID.
 func (r *MediaRepository) Get(ctx context.Context, id string) (*model.MediaItem, error) {
 	var m model.MediaItem
-	var season, episode int
-	err := r.db.QueryRowContext(ctx, `SELECT id, type, title, sort_title, year, overview,
-		rating, duration, file_path, poster_path, backdrop_path, parent_id, season,
-		episode, metadata_source, provider_id, library_id, status, created_at, updated_at FROM media_items WHERE id = ?`, id,
-	).Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year, &m.Overview,
-		&m.Rating, &m.Duration, &m.FilePath, &m.PosterPath, &m.BackdropPath,
-		&m.ParentID, &season, &episode, &m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.Status, &m.CreatedAt, &m.UpdatedAt)
-
+	err := scanMediaRow(r.db.QueryRowContext(ctx, `SELECT `+mediaColumns+` FROM media_items WHERE id = ?`, id), &m)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	m.Season = IntPtr(season)
-	m.Episode = IntPtr(episode)
 	return &m, nil
 }
 
@@ -104,13 +137,16 @@ func (r *MediaRepository) Create(ctx context.Context, m *model.MediaItem) error 
 	}
 
 	_, err := r.db.ExecContext(ctx, `INSERT OR IGNORE INTO media_items
-		(id, type, title, sort_title, year, overview, rating, duration, file_path,
-		 poster_path, backdrop_path, parent_id, season, episode, metadata_source,
-		 provider_id, library_id, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`+mediaInsertColumns+`
+		VALUES `+mediaInsertPlaceholders,
 		m.ID, m.Type, m.Title, m.SortTitle, m.Year, m.Overview, m.Rating,
 		m.Duration, m.FilePath, m.PosterPath, m.BackdropPath, m.ParentID,
-		season, episode, m.MetadataSource, m.ProviderID, m.LibraryID, m.Status, m.CreatedAt, m.UpdatedAt)
+		season, episode, m.MetadataSource, m.ProviderID, m.LibraryID, m.Status,
+		m.CreatedAt, m.UpdatedAt,
+		m.MPAA, m.Genres, m.Studios, m.Actors, m.UniqueIDs, m.Premiered,
+		m.Outline, m.Tagline, m.Countries, m.Directors, m.Credits, m.Tags,
+		m.SetName, m.VideoCodec, m.VideoWidth, m.VideoHeight, m.VideoDurationSeconds,
+		m.AudioCodec, m.AudioChannels, m.SubtitleLanguages)
 	return err
 }
 
@@ -128,19 +164,15 @@ func (r *MediaRepository) DeleteShowWithEpisodes(ctx context.Context, showID str
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Delete watch progress for episodes of this show.
 	if _, err := tx.ExecContext(ctx, "DELETE FROM watch_progress WHERE media_item_id IN (SELECT id FROM media_items WHERE parent_id = ?)", showID); err != nil {
 		return err
 	}
-	// Delete watch progress for the show itself.
 	if _, err := tx.ExecContext(ctx, "DELETE FROM watch_progress WHERE media_item_id = ?", showID); err != nil {
 		return err
 	}
-	// Delete episodes.
 	if _, err := tx.ExecContext(ctx, "DELETE FROM media_items WHERE parent_id = ?", showID); err != nil {
 		return err
 	}
-	// Delete the show.
 	if _, err := tx.ExecContext(ctx, "DELETE FROM media_items WHERE id = ?", showID); err != nil {
 		return err
 	}

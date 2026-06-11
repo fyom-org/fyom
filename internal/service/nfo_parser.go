@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/fyom/fyom/internal/model"
 )
@@ -25,6 +26,45 @@ func ParseEpisodeNFO(r io.Reader) (*model.NFOEpisode, error) {
 		return nil, err
 	}
 	return &ep, nil
+}
+
+// ParseEpisodeNFOs parses a multi-episode NFO file containing multiple
+// <episodedetails> elements. Falls back to single-episode parsing if
+// the multi-episode approach finds nothing.
+func ParseEpisodeNFOs(r io.Reader) ([]model.NFOEpisode, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+
+	var episodes []model.NFOEpisode
+	content := string(data)
+	parts := strings.Split(content, "<episodedetails")
+
+	for i, part := range parts {
+		if i == 0 {
+			continue
+		}
+		block := "<episodedetails" + part
+		var ep model.NFOEpisode
+		if err := xml.Unmarshal([]byte(block), &ep); err == nil {
+			if ep.Title != "" {
+				episodes = append(episodes, ep)
+			}
+		}
+	}
+
+	if len(episodes) == 0 {
+		var ep model.NFOEpisode
+		if err := xml.Unmarshal(data, &ep); err != nil {
+			return nil, err
+		}
+		if ep.Title != "" {
+			episodes = append(episodes, ep)
+		}
+	}
+
+	return episodes, nil
 }
 
 // ParseMovieNFO parses a movie NFO file.
@@ -50,7 +90,6 @@ func FindPosterPath(dir, baseName, nfoPoster string) string {
 		if filepath.IsAbs(nfoPoster) && fileExists(nfoPoster) {
 			return nfoPoster
 		}
-		// Try relative to the media directory
 		candidate := filepath.Join(dir, nfoPoster)
 		if fileExists(candidate) {
 			return candidate
@@ -77,7 +116,6 @@ func FindPosterPath(dir, baseName, nfoPoster string) string {
 
 // FindBackdropPath resolves the backdrop path, checking both NFO and disk.
 func FindBackdropPath(dir, baseName, nfoBackdrop string) string {
-	// 1. NFO <fanart><thumb> path
 	if nfoBackdrop != "" {
 		if filepath.IsAbs(nfoBackdrop) && fileExists(nfoBackdrop) {
 			return nfoBackdrop
@@ -88,7 +126,6 @@ func FindBackdropPath(dir, baseName, nfoBackdrop string) string {
 		}
 	}
 
-	// 2. Common backdrop filenames
 	backdropNames := []string{
 		baseName + "-backdrop.jpg", baseName + "-backdrop.png",
 		baseName + "-fanart.jpg", baseName + "-fanart.png",
@@ -107,7 +144,6 @@ func FindBackdropPath(dir, baseName, nfoBackdrop string) string {
 
 // FindEpisodeThumbnailPath looks for an episode thumbnail like S01E01-thumb.jpg.
 func FindEpisodeThumbnailPath(dir, baseName, nfoThumb string) string {
-	// 1. NFO <thumb> path
 	if nfoThumb != "" {
 		if filepath.IsAbs(nfoThumb) && fileExists(nfoThumb) {
 			return nfoThumb
@@ -118,7 +154,6 @@ func FindEpisodeThumbnailPath(dir, baseName, nfoThumb string) string {
 		}
 	}
 
-	// 2. Common episode thumb naming
 	thumbNames := []string{
 		baseName + "-thumb.jpg", baseName + "-thumb.png",
 		baseName + "-landscape.jpg", baseName + "-landscape.png",

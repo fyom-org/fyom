@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"regexp"
 	"strconv"
@@ -61,13 +62,9 @@ func (imp *Importer) SetLibraryID(id string) {
 
 // ImportRequest triggers an asynchronous import.
 func (imp *Importer) ImportRequest(ctx context.Context, sourcePath string) (*model.ImportJob, error) {
-	// For S3 imports, sourcePath is a prefix — it may not exist as a single
-	// object. Check if we can list any entries under the prefix instead.
 	if _, err := imp.fs.ReadDir(ctx, sourcePath); err != nil {
 		return nil, &errors.AppError{Code: 404, Message: "directory not found"}
 	}
-	// Note: for local FS, ReadDir on a non-existent dir returns an error above.
-	// For S3, an empty prefix listing is valid (import the whole bucket).
 
 	job, err := imp.jobRepo.Create(ctx, sourcePath, imp.libraryID)
 	if err != nil {
@@ -85,7 +82,6 @@ func (imp *Importer) runImport(jobID, sourcePath string) {
 
 	_ = imp.jobRepo.UpdateProgress(ctx, jobID, 0, 0, "running")
 
-	// Phase 1: Count total video files for progress tracking.
 	total := imp.countVideoFiles(ctx, sourcePath)
 	if total == 0 {
 		_ = imp.jobRepo.UpdateProgress(ctx, jobID, 0, 0, "done")
@@ -93,14 +89,12 @@ func (imp *Importer) runImport(jobID, sourcePath string) {
 	}
 	_ = imp.jobRepo.UpdateProgress(ctx, jobID, total, 0, "running")
 
-	// Phase 2: Build existing file path set for dedup.
 	existing, _ := imp.mediaRepo.List(ctx, "")
 	existingPaths := make(map[string]bool)
 	for _, item := range existing {
 		existingPaths[item.FilePath] = true
 	}
 
-	// Phase 3: Process each top-level subdirectory.
 	entries, err := imp.fs.ReadDir(ctx, sourcePath)
 	if err != nil {
 		_ = imp.jobRepo.UpdateError(ctx, jobID, err.Error())
@@ -116,7 +110,6 @@ func (imp *Importer) runImport(jobID, sourcePath string) {
 		}
 		dirPath := imp.fs.Join(sourcePath, entry.Name)
 
-		// Check for tvshow.nfo — this is a TV show directory.
 		tvshowNFOPath := imp.fs.Join(dirPath, "tvshow.nfo")
 		if imp.fs.Exists(ctx, tvshowNFOPath) {
 			n, err := imp.processShowDir(ctx, dirPath, existingPaths)
@@ -128,7 +121,6 @@ func (imp *Importer) runImport(jobID, sourcePath string) {
 			continue
 		}
 
-		// Check for any .nfo with <movie> root — this is a movie directory.
 		movieNFO := imp.findMovieNFO(ctx, dirPath)
 		if movieNFO != "" {
 			n, err := imp.processMovieDir(ctx, dirPath, movieNFO, existingPaths)
@@ -140,7 +132,6 @@ func (imp *Importer) runImport(jobID, sourcePath string) {
 			continue
 		}
 
-		// No NFO found — check for video files to treat as movie.
 		n, err := imp.processDirAsMovie(ctx, dirPath, existingPaths)
 		if err != nil {
 			importErr = err
@@ -163,10 +154,8 @@ func (imp *Importer) countVideoFiles(ctx context.Context, sourcePath string) int
 		if entry.IsDir {
 			return
 		}
-		ext := strings.ToLower(imp.fs.Join(path)) // get ext via string manipulation
-		// We need the extension of the file name, not the joined path.
-		// Use a simple approach: get the last dot in the name.
 		name := entry.Name
+		var ext string
 		if idx := strings.LastIndex(name, "."); idx >= 0 {
 			ext = strings.ToLower(name[idx:])
 		} else {
@@ -180,7 +169,6 @@ func (imp *Importer) countVideoFiles(ctx context.Context, sourcePath string) int
 }
 
 // walkDir recursively walks the directory tree using imp.fs.ReadDir.
-// The callback receives the full path and the DirEntry.
 func (imp *Importer) walkDir(ctx context.Context, dir string, cb func(path string, entry DirEntry)) {
 	entries, err := imp.fs.ReadDir(ctx, dir)
 	if err != nil {
@@ -195,8 +183,176 @@ func (imp *Importer) walkDir(ctx context.Context, dir string, cb func(path strin
 	}
 }
 
+// stringsToJSON serializes a string slice to JSON.
+func stringsToJSON(ss []string) string {
+	if len(ss) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(ss)
+	return string(b)
+}
+
+// actorsToJSON serializes NFOActor slice to a compact JSON array of {name, role}.
+func actorsToJSON(actors []model.NFOActor) string {
+	if len(actors) == 0 {
+		return ""
+	}
+	type actorJSON struct {
+		Name string `json:"name"`
+		Role string `json:"role"`
+	}
+	out := make([]actorJSON, 0, len(actors))
+	for _, a := range actors {
+		if a.Name != "" {
+			out = append(out, actorJSON{Name: a.Name, Role: a.Role})
+		}
+	}
+	b, _ := json.Marshal(out)
+	return string(b)
+}
+
+// uniqueIDsToJSON serializes NFOUniqueID slice to a map.
+func uniqueIDsToJSON(ids []model.NFOUniqueID) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	m := make(map[string]string)
+	for _, id := range ids {
+		if id.Type != "" && id.Value != "" {
+			m[id.Type] = id.Value
+		}
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
+}
+
+// subtitlesToJSON serializes NFOSubtitle slice to a language array.
+func subtitlesToJSON(subs []model.NFOSubtitle) string {
+	if len(subs) == 0 {
+		return ""
+	}
+	var langs []string
+	for _, s := range subs {
+		if s.Language != "" {
+			langs = append(langs, s.Language)
+		}
+	}
+	return stringsToJSON(langs)
+}
+
+// applyMovieNFOFields populates enhanced fields from parsed NFO onto a MediaItem.
+func applyMovieNFOFields(item *model.MediaItem, nfo *model.NFOMovie) {
+	item.MPAA = nfo.MPAA
+	item.Genres = stringsToJSON(nfo.Genres)
+	item.Studios = stringsToJSON(nfo.Studios)
+	item.Actors = actorsToJSON(nfo.Actors)
+	item.UniqueIDs = uniqueIDsToJSON(nfo.UniqueIDs)
+	item.Premiered = nfo.Premiered
+	item.Outline = nfo.Outline
+	item.Tagline = nfo.Tagline
+	item.Countries = stringsToJSON(nfo.Countries)
+	item.Directors = stringsToJSON(nfo.Directors)
+	item.Credits = stringsToJSON(nfo.Credits)
+	item.Tags = stringsToJSON(nfo.Tags)
+	if nfo.Set != nil {
+		item.SetName = nfo.Set.Name
+	}
+	item.VideoCodec = nfo.FileInfo.StreamDetails.Video.Codec
+	item.VideoWidth = nfo.FileInfo.StreamDetails.Video.Width
+	item.VideoHeight = nfo.FileInfo.StreamDetails.Video.Height
+	item.VideoDurationSeconds = nfo.FileInfo.StreamDetails.Video.DurationInSeconds
+	if len(nfo.FileInfo.StreamDetails.Audios) > 0 {
+		item.AudioCodec = nfo.FileInfo.StreamDetails.Audios[0].Codec
+		item.AudioChannels = nfo.FileInfo.StreamDetails.Audios[0].Channels
+	}
+	item.SubtitleLanguages = subtitlesToJSON(nfo.FileInfo.StreamDetails.Subtitles)
+
+	// Use premiered for year if year is 0
+	if item.Year == 0 && nfo.Premiered != "" && len(nfo.Premiered) >= 4 {
+		if y, err := strconv.Atoi(nfo.Premiered[:4]); err == nil {
+			item.Year = y
+		}
+	}
+
+	// Use FileInfo duration if runtime is 0
+	if item.Duration == 0 && nfo.FileInfo.StreamDetails.Video.DurationInSeconds > 0 {
+		item.Duration = nfo.FileInfo.StreamDetails.Video.DurationInSeconds
+	}
+
+	// Use best rating from ratings block if legacy rating is 0
+	if item.Rating == 0 && len(nfo.Ratings.Rating) > 0 {
+		for _, r := range nfo.Ratings.Rating {
+			if r.Value > 0 {
+				item.Rating = r.Value
+				break
+			}
+		}
+	}
+}
+
+// applyShowNFOFields populates enhanced fields from parsed NFO onto a MediaItem (show).
+func applyShowNFOFields(item *model.MediaItem, nfo *model.NFOTVShow) {
+	item.Genres = stringsToJSON(nfo.Genres)
+	item.Studios = stringsToJSON(nfo.Studios)
+	item.Actors = actorsToJSON(nfo.Actors)
+	item.UniqueIDs = uniqueIDsToJSON(nfo.UniqueIDs)
+	item.Premiered = nfo.Premiered
+	item.Outline = nfo.Outline
+	item.Tags = stringsToJSON(nfo.Tags)
+	item.MPAA = nfo.MPAA
+
+	if nfo.Status != "" {
+		// passthrough — stored in a dedicated column if present,
+		// but for now it's informational only.
+	}
+
+	if item.Year == 0 && nfo.Premiered != "" && len(nfo.Premiered) >= 4 {
+		if y, err := strconv.Atoi(nfo.Premiered[:4]); err == nil {
+			item.Year = y
+		}
+	}
+
+	if item.Rating == 0 && len(nfo.Ratings.Rating) > 0 {
+		for _, r := range nfo.Ratings.Rating {
+			if r.Value > 0 {
+				item.Rating = r.Value
+				break
+			}
+		}
+	}
+}
+
+// applyEpisodeNFOFields populates enhanced fields from parsed NFO onto a MediaItem (episode).
+func applyEpisodeNFOFields(item *model.MediaItem, nfoEp *model.NFOEpisode) {
+	item.MPAA = nfoEp.MPAA
+	item.Genres = stringsToJSON(nfoEp.Genres)
+	item.Studios = stringsToJSON(nfoEp.Studios)
+	item.Actors = actorsToJSON(nfoEp.Actors)
+	item.UniqueIDs = uniqueIDsToJSON(nfoEp.UniqueIDs)
+	item.Outline = nfoEp.Outline
+	item.Premiered = nfoEp.Premiered
+	item.Directors = stringsToJSON(nfoEp.Directors)
+	item.Credits = stringsToJSON(nfoEp.Credits)
+	item.VideoCodec = nfoEp.FileInfo.StreamDetails.Video.Codec
+	item.VideoWidth = nfoEp.FileInfo.StreamDetails.Video.Width
+	item.VideoHeight = nfoEp.FileInfo.StreamDetails.Video.Height
+	if len(nfoEp.FileInfo.StreamDetails.Audios) > 0 {
+		item.AudioCodec = nfoEp.FileInfo.StreamDetails.Audios[0].Codec
+		item.AudioChannels = nfoEp.FileInfo.StreamDetails.Audios[0].Channels
+	}
+	item.SubtitleLanguages = subtitlesToJSON(nfoEp.FileInfo.StreamDetails.Subtitles)
+
+	if item.Rating == 0 && len(nfoEp.Ratings.Rating) > 0 {
+		for _, r := range nfoEp.Ratings.Rating {
+			if r.Value > 0 {
+				item.Rating = r.Value
+				break
+			}
+		}
+	}
+}
+
 // processShowDir handles a TV show directory containing tvshow.nfo.
-// Returns the number of items created.
 func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, existingPaths map[string]bool) (int, error) {
 	showNFOPath := imp.fs.Join(showDirPath, "tvshow.nfo")
 
@@ -213,16 +369,11 @@ func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, exi
 
 	title := showNFO.Title
 	if title == "" {
-		// Use the last path component as title.
 		title = baseName(showDirPath)
 	}
 
-	overview := showNFO.Overview
-	if overview == "" {
-		overview = showNFO.Plot
-	}
+	overview := showNFO.Plot
 
-	// Extract poster and backdrop from NFO.
 	nfoPoster := extractNFOPosterThumb(showNFO.Thumbs)
 	nfoBackdrop := extractNFOFanartPath(showNFO.Fanart)
 
@@ -233,12 +384,10 @@ func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, exi
 		posterPath = FindPosterPath(showDirPath, base, nfoPoster)
 		backdropPath = FindBackdropPath(showDirPath, base, nfoBackdrop)
 	} else {
-		// For S3: use NFO thumb path directly (no disk-based file existence checks).
 		posterPath = nfoPoster
 		backdropPath = nfoBackdrop
 	}
 
-	// Create the show item.
 	showID := uuid.New().String()
 	now := time.Now().UTC().Format(time.RFC3339)
 	showItem := &model.MediaItem{
@@ -258,13 +407,13 @@ func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, exi
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
+	applyShowNFOFields(showItem, showNFO)
 
 	if err := imp.mediaRepo.Create(ctx, showItem); err != nil {
 		return 0, err
 	}
 
-	// Scan season subdirectories and the show dir itself for episode files.
-	created := 1 // the show itself
+	created := 1
 
 	entries, err := imp.fs.ReadDir(ctx, showDirPath)
 	if err != nil {
@@ -294,7 +443,6 @@ func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, show
 		return 0, nil
 	}
 
-	// Collect video files.
 	var videoFiles []string
 	for _, entry := range entries {
 		if entry.IsDir {
@@ -318,11 +466,8 @@ func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, show
 		}
 
 		baseNameNoExt := trimExt(vf)
-
-		// Extract season/episode from filename.
 		season, episode := extractEpisodeInfo(vf)
 
-		// Look for matching episode NFO.
 		episodeNFOPath := imp.fs.Join(dirPath, baseNameNoExt+".nfo")
 		var epTitle, epOverview string
 		var epRating float64
@@ -331,15 +476,12 @@ func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, show
 
 		if imp.fs.Exists(ctx, episodeNFOPath) {
 			if nf, err := imp.fs.Open(ctx, episodeNFOPath); err == nil {
-				epNFO, err := ParseEpisodeNFO(nf)
+				episodes, err := ParseEpisodeNFOs(nf)
 				nf.Close()
-				if err == nil {
+				if err == nil && len(episodes) > 0 {
+					epNFO := episodes[0]
 					epTitle = epNFO.Title
-					if epNFO.Overview != "" {
-						epOverview = epNFO.Overview
-					} else {
-						epOverview = epNFO.Plot
-					}
+					epOverview = epNFO.Plot
 					epRating = epNFO.Rating
 					epRuntime = epNFO.Runtime
 					nfoThumb = extractNFOEpisodeThumb(epNFO.Thumbs)
@@ -357,7 +499,6 @@ func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, show
 			epTitle = baseNameNoExt
 		}
 
-		// Find episode thumbnail.
 		var thumbPath string
 		if _, ok := imp.fs.(*LocalImportFS); ok {
 			thumbPath = FindEpisodeThumbnailPath(dirPath, baseNameNoExt, nfoThumb)
@@ -372,7 +513,7 @@ func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, show
 			Title:          epTitle,
 			Overview:       epOverview,
 			Rating:         epRating,
-			Duration:       epRuntime * 60, // minutes -> seconds
+			Duration:       epRuntime * 60,
 			FilePath:       videoPath,
 			PosterPath:     thumbPath,
 			ParentID:       showID,
@@ -383,6 +524,17 @@ func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, show
 			LibraryID:      imp.libraryID,
 			CreatedAt:      now,
 			UpdatedAt:      now,
+		}
+
+		// Apply enhanced fields from NFO if available
+		if imp.fs.Exists(ctx, episodeNFOPath) {
+			if nf, err := imp.fs.Open(ctx, episodeNFOPath); err == nil {
+				episodes, err := ParseEpisodeNFOs(nf)
+				nf.Close()
+				if err == nil && len(episodes) > 0 {
+					applyEpisodeNFOFields(epItem, &episodes[0])
+				}
+			}
 		}
 
 		if err := imp.mediaRepo.Create(ctx, epItem); err != nil {
@@ -412,12 +564,8 @@ func (imp *Importer) processMovieDir(ctx context.Context, dirPath, nfoPath strin
 		title = trimExt(baseName(nfoPath))
 	}
 
-	overview := movieNFO.Overview
-	if overview == "" {
-		overview = movieNFO.Plot
-	}
+	overview := movieNFO.Plot
 
-	// Find the video file.
 	videoPath := imp.findVideoFileInDir(ctx, dirPath, title)
 	if videoPath == "" {
 		return 0, nil
@@ -426,7 +574,6 @@ func (imp *Importer) processMovieDir(ctx context.Context, dirPath, nfoPath strin
 		return 0, nil
 	}
 
-	// Poster and backdrop.
 	nfoPoster := extractNFOPosterThumb(movieNFO.Thumbs)
 	nfoBackdrop := extractNFOFanartPath(movieNFO.Fanart)
 	base := trimExt(baseName(nfoPath))
@@ -449,7 +596,7 @@ func (imp *Importer) processMovieDir(ctx context.Context, dirPath, nfoPath strin
 		Year:           movieNFO.Year,
 		Overview:       overview,
 		Rating:         movieNFO.Rating,
-		Duration:       movieNFO.Runtime * 60, // minutes -> seconds
+		Duration:       movieNFO.Runtime * 60,
 		FilePath:       videoPath,
 		PosterPath:     posterPath,
 		BackdropPath:   backdropPath,
@@ -459,6 +606,7 @@ func (imp *Importer) processMovieDir(ctx context.Context, dirPath, nfoPath strin
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
+	applyMovieNFOFields(movieItem, movieNFO)
 
 	if err := imp.mediaRepo.Create(ctx, movieItem); err != nil {
 		return 0, err
@@ -492,17 +640,14 @@ func (imp *Importer) processDirAsMovie(ctx context.Context, dirPath string, exis
 		return 0, nil
 	}
 
-	// Use the first video file as the movie.
 	videoPath := imp.fs.Join(dirPath, videoFiles[0])
 	if existingPaths[videoPath] {
 		return 0, nil
 	}
 
-	// Extract title from filename.
 	title := trimExt(videoFiles[0])
 	title = cleanTitle(title)
 
-	// Look for poster.
 	base := trimExt(videoFiles[0])
 	var posterPath string
 	if _, ok := imp.fs.(*LocalImportFS); ok {
@@ -530,7 +675,6 @@ func (imp *Importer) processDirAsMovie(ctx context.Context, dirPath string, exis
 }
 
 // findMovieNFO looks for a .nfo file in dir that contains a <movie> root element.
-// Returns the path to the NFO file, or "" if none found.
 func (imp *Importer) findMovieNFO(ctx context.Context, dir string) string {
 	entries, err := imp.fs.ReadDir(ctx, dir)
 	if err != nil {
@@ -586,7 +730,6 @@ func (imp *Importer) findVideoFileInDir(ctx context.Context, dir, title string) 
 		if firstVideo == "" {
 			firstVideo = imp.fs.Join(dir, entry.Name)
 		}
-		// Prefer a file whose base name matches the title.
 		baseNameNoExt := trimExt(entry.Name)
 		if strings.EqualFold(baseNameNoExt, title) {
 			return imp.fs.Join(dir, entry.Name)
@@ -597,13 +740,11 @@ func (imp *Importer) findVideoFileInDir(ctx context.Context, dir, title string) 
 
 // extractEpisodeInfo extracts season and episode numbers from a filename.
 func extractEpisodeInfo(filename string) (season, episode int) {
-	// Try S01E01 pattern first.
 	if m := episodePattern.FindStringSubmatch(filename); m != nil {
 		season, _ = strconv.Atoi(m[1])
 		episode, _ = strconv.Atoi(m[2])
 		return
 	}
-	// Try 1x01 pattern.
 	if m := altEpisodePattern.FindStringSubmatch(filename); m != nil {
 		season, _ = strconv.Atoi(m[1])
 		episode, _ = strconv.Atoi(m[2])
@@ -623,13 +764,13 @@ func cleanTitle(s string) string {
 // aspect="poster" is preferred; otherwise the first thumb is used.
 func extractNFOPosterThumb(thumbs []model.NFOThumb) string {
 	for _, t := range thumbs {
-		if strings.ToLower(t.Aspect) == "poster" && t.Path != "" {
-			return t.Path
+		if strings.ToLower(t.Aspect) == "poster" && t.URL != "" {
+			return t.URL
 		}
 	}
 	for _, t := range thumbs {
-		if t.Path != "" {
-			return t.Path
+		if t.URL != "" {
+			return t.URL
 		}
 	}
 	return ""
@@ -641,8 +782,8 @@ func extractNFOFanartPath(fanart *model.NFOFanart) string {
 		return ""
 	}
 	for _, t := range fanart.Thumbs {
-		if t.Path != "" {
-			return t.Path
+		if t.URL != "" {
+			return t.URL
 		}
 	}
 	return ""
@@ -651,22 +792,19 @@ func extractNFOFanartPath(fanart *model.NFOFanart) string {
 // extractNFOEpisodeThumb extracts the thumb path from episode NFO thumb elements.
 func extractNFOEpisodeThumb(thumbs []model.NFOThumb) string {
 	for _, t := range thumbs {
-		if t.Path != "" {
-			return t.Path
+		if t.URL != "" {
+			return t.URL
 		}
 	}
 	return ""
 }
 
 // baseName returns the last element of a path (the file or directory name).
-// This replaces filepath.Base which is OS-dependent.
 func baseName(path string) string {
 	if path == "" {
 		return ""
 	}
-	// Normalize to forward slashes for splitting.
 	normalized := strings.ReplaceAll(path, "\\", "/")
-	// Trim trailing slash.
 	normalized = strings.TrimRight(normalized, "/")
 	if normalized == "" {
 		return ""
@@ -679,7 +817,6 @@ func baseName(path string) string {
 }
 
 // trimExt removes the extension from a filename.
-// This replaces filepath.Ext + TrimSuffix patterns.
 func trimExt(name string) string {
 	if idx := strings.LastIndex(name, "."); idx >= 0 {
 		return name[:idx]

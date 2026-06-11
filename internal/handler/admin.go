@@ -166,7 +166,7 @@ func (h *AdminHandler) ListMedia(w http.ResponseWriter, r *http.Request) {
 	}
 
 	offset := (page - 1) * limit
-	dataQuery := "SELECT id, type, title, sort_title, year, overview, rating, duration, file_path, poster_path, backdrop_path, parent_id, season, episode, metadata_source, provider_id, library_id, status, created_at, updated_at FROM media_items" + where + " ORDER BY " + orderBy + " LIMIT ? OFFSET ?"
+	dataQuery := "SELECT id, type, title, sort_title, year, overview, rating, duration, file_path, poster_path, backdrop_path, parent_id, season, episode, metadata_source, provider_id, library_id, status, created_at, updated_at, mpaa, genres, studios, actors, unique_ids, premiered, outline, tagline, countries, directors, credits, tags, set_name, video_codec, video_width, video_height, video_duration_seconds, audio_codec, audio_channels, subtitle_languages FROM media_items" + where + " ORDER BY " + orderBy + " LIMIT ? OFFSET ?"
 	dataArgs := append(whereArgs, limit, offset)
 
 	rows, err := h.db.QueryContext(r.Context(), dataQuery, dataArgs...)
@@ -183,7 +183,11 @@ func (h *AdminHandler) ListMedia(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year,
 			&m.Overview, &m.Rating, &m.Duration, &m.FilePath, &m.PosterPath,
 			&m.BackdropPath, &m.ParentID, &season, &episode,
-			&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.Status, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.Status, &m.CreatedAt, &m.UpdatedAt,
+			&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
+			&m.Outline, &m.Tagline, &m.Countries, &m.Directors, &m.Credits, &m.Tags,
+			&m.SetName, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
+			&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages); err != nil {
 			response.Error(w, 500, "internal server error")
 			return
 		}
@@ -280,7 +284,7 @@ func (h *AdminHandler) ListMissing(w http.ResponseWriter, r *http.Request) {
 	}
 	libraryID := r.URL.Query().Get("library_id")
 
-	query := "SELECT id, type, title, sort_title, year, overview, rating, duration, file_path, poster_path, backdrop_path, parent_id, season, episode, metadata_source, provider_id, library_id, status, created_at, updated_at FROM media_items WHERE status = 'missing'"
+	query := "SELECT id, type, title, sort_title, year, overview, rating, duration, file_path, poster_path, backdrop_path, parent_id, season, episode, metadata_source, provider_id, library_id, status, created_at, updated_at, mpaa, genres, studios, actors, unique_ids, premiered, outline, tagline, countries, directors, credits, tags, set_name, video_codec, video_width, video_height, video_duration_seconds, audio_codec, audio_channels, subtitle_languages FROM media_items WHERE status = 'missing'"
 	var args []interface{}
 	if libraryID != "" {
 		query += " AND library_id = ?"
@@ -303,7 +307,11 @@ func (h *AdminHandler) ListMissing(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year,
 			&m.Overview, &m.Rating, &m.Duration, &m.FilePath, &m.PosterPath,
 			&m.BackdropPath, &m.ParentID, &season, &episode,
-			&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.Status, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.Status, &m.CreatedAt, &m.UpdatedAt,
+			&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
+			&m.Outline, &m.Tagline, &m.Countries, &m.Directors, &m.Credits, &m.Tags,
+			&m.SetName, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
+			&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages); err != nil {
 			response.Error(w, 500, "internal server error")
 			return
 		}

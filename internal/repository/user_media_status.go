@@ -19,15 +19,14 @@ func NewUserMediaStatusRepository(db *DB) *UserMediaStatusRepository {
 }
 
 var validStatuses = map[string]bool{
-	"none":           true,
-	"want_to_watch":  true,
-	"watching":       true,
-	"watched":        true,
-	"dropped":        true,
+	"none":          true,
+	"want_to_watch": true,
+	"watching":      true,
+	"watched":       true,
+	"dropped":       true,
 }
 
 // SetStatus sets the user's status for a media item.
-// Validates status is one of: none, want_to_watch, watching, watched, dropped.
 func (r *UserMediaStatusRepository) SetStatus(ctx context.Context, userID, mediaItemID, status string) error {
 	if !validStatuses[status] {
 		return fmt.Errorf("invalid status: %s", status)
@@ -43,7 +42,6 @@ func (r *UserMediaStatusRepository) SetStatus(ctx context.Context, userID, media
 }
 
 // GetStatus returns the user's status for a media item.
-// Returns "none" if no row found (not an error).
 func (r *UserMediaStatusRepository) GetStatus(ctx context.Context, userID, mediaItemID string) (string, error) {
 	var status string
 	err := r.db.QueryRowContext(ctx,
@@ -57,11 +55,14 @@ func (r *UserMediaStatusRepository) GetStatus(ctx context.Context, userID, media
 }
 
 // GetItemsByStatus returns media items with the given status for the user.
-// Joins with media_items to get full item data, filtered to available items only.
 func (r *UserMediaStatusRepository) GetItemsByStatus(ctx context.Context, userID, status string, limit int) ([]model.MediaItem, error) {
 	query := `SELECT m.id, m.type, m.title, m.sort_title, m.year, m.overview, m.rating, m.duration,
 		m.file_path, m.poster_path, m.backdrop_path, m.parent_id, m.season, m.episode,
-		m.metadata_source, m.provider_id, m.library_id, m.status, m.created_at, m.updated_at
+		m.metadata_source, m.provider_id, m.library_id, m.status, m.created_at, m.updated_at,
+		m.mpaa, m.genres, m.studios, m.actors, m.unique_ids, m.premiered, m.outline, m.tagline,
+		m.countries, m.directors, m.credits, m.tags, m.set_name, m.video_codec, m.video_width,
+		m.video_height, m.video_duration_seconds, m.audio_codec, m.audio_channels,
+		m.subtitle_languages
 		FROM media_items m
 		JOIN user_media_status s ON s.media_item_id = m.id
 		WHERE s.user_id = ? AND s.status = ? AND m.status = 'available'
@@ -80,7 +81,11 @@ func (r *UserMediaStatusRepository) GetItemsByStatus(ctx context.Context, userID
 		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year,
 			&m.Overview, &m.Rating, &m.Duration, &m.FilePath, &m.PosterPath,
 			&m.BackdropPath, &m.ParentID, &season, &episode,
-			&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.Status, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.Status, &m.CreatedAt, &m.UpdatedAt,
+			&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
+			&m.Outline, &m.Tagline, &m.Countries, &m.Directors, &m.Credits, &m.Tags,
+			&m.SetName, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
+			&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages); err != nil {
 			return nil, err
 		}
 		m.Season = IntPtr(season)
@@ -91,7 +96,6 @@ func (r *UserMediaStatusRepository) GetItemsByStatus(ctx context.Context, userID
 }
 
 // GetStatusesForItems returns a map of media_item_id -> status for the given item IDs.
-// Items not in the map have status "none".
 func (r *UserMediaStatusRepository) GetStatusesForItems(ctx context.Context, userID string, itemIDs []string) (map[string]string, error) {
 	if len(itemIDs) == 0 {
 		return map[string]string{}, nil

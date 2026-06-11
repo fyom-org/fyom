@@ -62,6 +62,16 @@
       </select>
     </div>
 
+    <!-- Genre filter -->
+    <div class="genre-filter" v-if="availableGenres.length > 1 && !activeStatus">
+      <button :class="['genre-tag-btn', { active: !selectedGenre }]"
+              @click="filterByGenre('')">All</button>
+      <button :class="['genre-tag-btn', { active: selectedGenre === g }]"
+              v-for="g in availableGenres" :key="g" @click="filterByGenre(g)">
+        {{ g }}
+      </button>
+    </div>
+
     <!-- Result count -->
     <div v-if="!loading && total > 0" class="result-info">
       {{ total }} item{{ total !== 1 ? 's' : '' }}
@@ -138,8 +148,17 @@ const searchQuery = ref<string>('');
 const activeType = ref<string>(TYPE_ALL);
 const activeSort = ref<string>('title_asc');
 const activeStatus = ref<string>('');
+const selectedGenre = ref<string>('');
 let searchTimer = 0;
 let abortCtrl = new AbortController();
+
+const availableGenres = computed(() => {
+  const set = new Set<string>();
+  for (const item of items.value) {
+    if (item.genres) item.genres.forEach((g: string) => set.add(g));
+  }
+  return Array.from(set).sort();
+});
 
 onMounted(async () => {
   // Fetch libraries for name resolution
@@ -176,6 +195,11 @@ function setType(type: string) {
 
 function setStatus(status: string) {
   activeStatus.value = status;
+  resetAndFetch();
+}
+
+function filterByGenre(genre: string) {
+  selectedGenre.value = genre;
   resetAndFetch();
 }
 
@@ -217,6 +241,12 @@ async function fetchPage() {
     }
     items.value.push(...data.items);
     total.value = data.total || items.value.length;
+
+    // Client-side genre filtering
+    if (selectedGenre.value) {
+      items.value = items.value.filter((m: MediaItem) => m.genres?.includes(selectedGenre.value));
+    }
+
     if (!activeStatus.value) {
       if (items.value.length >= total.value) {
         allLoaded.value = true;
@@ -353,6 +383,35 @@ function onStatusChanged(id: string, newStatus: string) {
 .sort-select option {
   background: #1a1a2e;
   color: #e0e0e0;
+}
+
+.genre-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.genre-tag-btn {
+  background: #1a1a2e;
+  color: #8888aa;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  border: 1px solid #2a2a3e;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.genre-tag-btn:hover {
+  border-color: #3a3a5e;
+  color: #ccccee;
+}
+
+.genre-tag-btn.active {
+  background: #6c63ff;
+  color: #fff;
+  border-color: #6c63ff;
 }
 
 .result-info {

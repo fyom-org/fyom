@@ -64,6 +64,10 @@ func (r *MediaRepository) GetContinueWatching(ctx context.Context, userID string
 	query := `SELECT m.id, m.type, m.title, m.sort_title, m.year, m.overview,
 		m.rating, m.duration, m.file_path, m.poster_path, m.backdrop_path, m.parent_id,
 		m.season, m.episode, m.metadata_source, m.provider_id, m.library_id, m.status, m.created_at, m.updated_at,
+		m.mpaa, m.genres, m.studios, m.actors, m.unique_ids, m.premiered, m.outline, m.tagline,
+		m.countries, m.directors, m.credits, m.tags, m.set_name, m.video_codec, m.video_width,
+		m.video_height, m.video_duration_seconds, m.audio_codec, m.audio_channels,
+		m.subtitle_languages,
 		w.position, w.duration, w.finished
 		FROM watch_progress w
 		JOIN media_items m ON m.id = w.media_item_id
@@ -79,9 +83,7 @@ func (r *MediaRepository) GetContinueWatching(ctx context.Context, userID string
 		query += fmt.Sprintf(" AND m.library_id IN (%s)", strings.Join(placeholders, ","))
 	}
 
-	// Filter out missing items from user-facing continue watching.
 	query += " AND m.status = 'available'"
-
 	query += " ORDER BY w.updated_at DESC LIMIT ?"
 	args = append(args, limit)
 
@@ -100,6 +102,11 @@ func (r *MediaRepository) GetContinueWatching(ctx context.Context, userID string
 			&item.Rating, &item.Duration, &item.FilePath, &item.PosterPath, &item.BackdropPath,
 			&item.ParentID, &season, &episode, &item.MetadataSource, &item.ProviderID,
 			&item.LibraryID, &item.Status, &item.CreatedAt, &item.UpdatedAt,
+			&item.MPAA, &item.Genres, &item.Studios, &item.Actors, &item.UniqueIDs,
+			&item.Premiered, &item.Outline, &item.Tagline, &item.Countries, &item.Directors,
+			&item.Credits, &item.Tags, &item.SetName, &item.VideoCodec, &item.VideoWidth,
+			&item.VideoHeight, &item.VideoDurationSeconds, &item.AudioCodec, &item.AudioChannels,
+			&item.SubtitleLanguages,
 			&item.Position, &item.Duration, &item.Finished,
 		); err != nil {
 			return nil, err

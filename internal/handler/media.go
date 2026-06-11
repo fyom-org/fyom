@@ -23,25 +23,49 @@ import (
 // MediaItemResponse is the JSON DTO returned by library API endpoints.
 // Filesystem paths are never exposed; resource URLs are generated dynamically
 // via the Provider registry.
+type ActorResponse struct {
+	Name string `json:"name"`
+	Role string `json:"role"`
+}
+
 type MediaItemResponse struct {
-	ID             string   `json:"id"`
-	Type           string   `json:"type"`
-	Title          string   `json:"title"`
-	SortTitle      string   `json:"sort_title,omitempty"`
-	Year           *int     `json:"year,omitempty"`
-	Overview       string   `json:"overview,omitempty"`
-	Rating         *float64 `json:"rating,omitempty"`
-	Duration       *int     `json:"duration,omitempty"`
-	PosterURL      *string  `json:"poster_url,omitempty"`
-	BackdropURL    *string  `json:"backdrop_url,omitempty"`
-	StreamURL      *string  `json:"stream_url,omitempty"`
-	Season         *int     `json:"season,omitempty"`
-	Episode        *int     `json:"episode,omitempty"`
-	ParentID       string   `json:"parent_id,omitempty"`
-	LibraryID      string   `json:"library_id,omitempty"`
-	MetadataSource string   `json:"metadata_source,omitempty"`
-	Status         string   `json:"status"`
-	UserStatus     string   `json:"user_status,omitempty"`
+	ID                string            `json:"id"`
+	Type              string            `json:"type"`
+	Title             string            `json:"title"`
+	SortTitle         string            `json:"sort_title,omitempty"`
+	Year              *int              `json:"year,omitempty"`
+	Overview          string            `json:"overview,omitempty"`
+	Rating            *float64          `json:"rating,omitempty"`
+	Duration          *int              `json:"duration,omitempty"`
+	PosterURL         *string           `json:"poster_url,omitempty"`
+	BackdropURL       *string           `json:"backdrop_url,omitempty"`
+	StreamURL         *string           `json:"stream_url,omitempty"`
+	Season            *int              `json:"season,omitempty"`
+	Episode           *int              `json:"episode,omitempty"`
+	ParentID          string            `json:"parent_id,omitempty"`
+	LibraryID         string            `json:"library_id,omitempty"`
+	MetadataSource    string            `json:"metadata_source,omitempty"`
+	Status            string            `json:"status"`
+	UserStatus        string            `json:"user_status,omitempty"`
+	MPAA              string            `json:"mpaa,omitempty"`
+	Genres            []string          `json:"genres,omitempty"`
+	Studios           []string          `json:"studios,omitempty"`
+	Actors            []ActorResponse   `json:"actors,omitempty"`
+	UniqueIDs         map[string]string `json:"unique_ids,omitempty"`
+	Premiered         string            `json:"premiered,omitempty"`
+	Outline           string            `json:"outline,omitempty"`
+	Tagline           string            `json:"tagline,omitempty"`
+	Countries         []string          `json:"countries,omitempty"`
+	Directors         []string          `json:"directors,omitempty"`
+	Credits           []string          `json:"credits,omitempty"`
+	Tags              []string          `json:"tags,omitempty"`
+	SetName           string            `json:"set_name,omitempty"`
+	VideoCodec        string            `json:"video_codec,omitempty"`
+	VideoWidth        int               `json:"video_width,omitempty"`
+	VideoHeight       int               `json:"video_height,omitempty"`
+	AudioCodec        string            `json:"audio_codec,omitempty"`
+	AudioChannels     int               `json:"audio_channels,omitempty"`
+	SubtitleLanguages []string          `json:"subtitle_languages,omitempty"`
 }
 // MediaHandler handles media-related HTTP endpoints.
 type MediaHandler struct {
@@ -80,6 +104,16 @@ func mediaItemToResponse(item *model.MediaItem) MediaItemResponse {
 		MetadataSource: item.MetadataSource,
 		ParentID:       item.ParentID,
 		Status:         item.Status,
+		MPAA:           item.MPAA,
+		Premiered:      item.Premiered,
+		Outline:        item.Outline,
+		Tagline:        item.Tagline,
+		SetName:        item.SetName,
+		VideoCodec:     item.VideoCodec,
+		VideoWidth:     item.VideoWidth,
+		VideoHeight:    item.VideoHeight,
+		AudioCodec:     item.AudioCodec,
+		AudioChannels:  item.AudioChannels,
 	}
 
 	if item.Year != 0 {
@@ -98,7 +132,44 @@ func mediaItemToResponse(item *model.MediaItem) MediaItemResponse {
 		resp.Episode = item.Episode
 	}
 
+	resp.Genres = decodeStrings(item.Genres)
+	resp.Studios = decodeStrings(item.Studios)
+	resp.Actors = decodeActors(item.Actors)
+	resp.UniqueIDs = decodeUniqueIDs(item.UniqueIDs)
+	resp.Countries = decodeStrings(item.Countries)
+	resp.Directors = decodeStrings(item.Directors)
+	resp.Credits = decodeStrings(item.Credits)
+	resp.Tags = decodeStrings(item.Tags)
+	resp.SubtitleLanguages = decodeStrings(item.SubtitleLanguages)
+
 	return resp
+}
+
+func decodeStrings(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var r []string
+	json.Unmarshal([]byte(s), &r)
+	return r
+}
+
+func decodeActors(s string) []ActorResponse {
+	if s == "" {
+		return nil
+	}
+	var r []ActorResponse
+	json.Unmarshal([]byte(s), &r)
+	return r
+}
+
+func decodeUniqueIDs(s string) map[string]string {
+	if s == "" {
+		return nil
+	}
+	var r map[string]string
+	json.Unmarshal([]byte(s), &r)
+	return r
 }
 
 // attachPresignedURLs resolves resource URLs for a media item via its provider.

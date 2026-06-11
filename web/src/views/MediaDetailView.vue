@@ -20,11 +20,16 @@
 
         <div class="meta">
           <h1 class="title">{{ item.title }}</h1>
+          <p class="tagline" v-if="item.tagline">{{ item.tagline }}</p>
           <div class="facts">
             <span v-if="item.year">{{ item.year }}</span>
+            <span class="mpaa-badge" v-if="item.mpaa">{{ item.mpaa }}</span>
             <span v-if="item.rating">&#9733; {{ item.rating.toFixed(1) }}</span>
             <span v-if="item.duration">{{ formatDuration(item.duration) }}</span>
             <span class="type-badge">{{ item.type }}</span>
+          </div>
+          <div class="genres" v-if="item.genres?.length">
+            <span class="genre-tag" v-for="g in item.genres" :key="g">{{ g }}</span>
           </div>
 
           <div class="action-row" v-if="item.type !== 'show'">
@@ -62,6 +67,19 @@
         >
           {{ overviewExpanded ? 'Show less' : 'Show more' }}
         </button>
+      </div>
+
+      <div class="cast-section" v-if="item.actors?.length">
+        <h3 class="section-subtitle">Cast</h3>
+        <div class="cast-list">
+          <div class="cast-member" v-for="a in item.actors.slice(0, 6)" :key="a.name">
+            <div class="cast-avatar">{{ a.name?.[0] || '?' }}</div>
+            <div class="cast-info">
+              <span class="cast-name">{{ a.name }}</span>
+              <span class="cast-role" v-if="a.role">{{ a.role }}</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <EpisodeList v-if="item.type === 'show'" :show-id="item.id" />
@@ -253,6 +271,95 @@ function formatDuration(sec: number) {
   border-radius: 4px;
   font-size: 12px;
   text-transform: capitalize;
+}
+
+.mpaa-badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border: 1px solid #3a3a5e;
+  border-radius: 3px;
+  color: #8888aa;
+  font-weight: 600;
+}
+
+.tagline {
+  color: #6c63ff;
+  font-size: 15px;
+  font-style: italic;
+  margin: 4px 0 0;
+  font-weight: 300;
+}
+
+.genres {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.genre-tag {
+  background: #1a1a2e;
+  color: #8888aa;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  border: 1px solid #2a2a3e;
+}
+
+.genre-tag:hover {
+  border-color: #3a3a5e;
+}
+
+.section-subtitle {
+  font-size: 14px;
+  color: #8888aa;
+  margin: 0 0 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.cast-section {
+  margin-top: 24px;
+}
+
+.cast-list {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.cast-member {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cast-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #2a2a3e;
+  color: #666688;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cast-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.cast-name {
+  color: #ccccee;
+  font-size: 13px;
+}
+
+.cast-role {
+  color: #555577;
+  font-size: 11px;
 }
 
 .action-row {
