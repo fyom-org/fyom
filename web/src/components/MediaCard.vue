@@ -241,6 +241,12 @@ async function cycleStatus() {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
+}
+
+.play-icon::before,
+.play-icon::after {
+  display: none;
 }
 
 .progress-bar {

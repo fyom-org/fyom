@@ -77,7 +77,6 @@
 
           <div class="action-row" v-if="item.type !== 'show'">
             <router-link :to="`/play/${item.id}`" class="play-btn">
-              <span class="play-icon">&#9654;</span>
               <span class="play-text">{{ playLabel }}</span>
             </router-link>
           </div>
