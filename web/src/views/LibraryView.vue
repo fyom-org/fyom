@@ -59,7 +59,7 @@
           :class="['filter-btn status-want', { active: activeStatus === 'want_to_watch' }]"
           @click="setStatus('want_to_watch')"
         >
-          🔖 Want
+          ✦ Want
         </button>
         <button
           :class="['filter-btn status-watched', { active: activeStatus === 'watched' }]"
