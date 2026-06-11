@@ -135,8 +135,8 @@ function handleLogout() {
   color: var(--color-text);
   font-size: 1.5rem;
   cursor: pointer;
-  padding: var(--spacing-sm) var(--spacing-md);
-  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
   width: 100%;
   text-align: left;
 }
@@ -188,8 +188,8 @@ function handleLogout() {
 }
 
 .sidebar {
-  width: 200px;
-  min-width: 180px;
+  width: 160px;
+  min-width: 140px;
   background: #1a1a2e;
   border-right: 1px solid var(--color-border);
   flex-shrink: 0;
@@ -202,15 +202,15 @@ function handleLogout() {
 .sidebar-content {
   flex: 1;
   overflow-y: auto;
-  padding: var(--spacing-lg) var(--spacing-md) 0;
+  padding: var(--spacing-sm) var(--spacing-sm) 0;
 }
 
 .sidebar-footer {
-  padding: var(--spacing-md);
+  padding: var(--spacing-sm);
   border-top: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-sm);
+  gap: var(--spacing-xs);
 }
 
 /* Desktop: Collapse via width */
@@ -253,10 +253,10 @@ function handleLogout() {
 .sidebar a,
 .nav-link {
   display: block;
-  padding: var(--spacing-sm) var(--spacing-md);
+  padding: var(--spacing-xs) var(--spacing-sm);
   color: #8888aa;
   text-decoration: none;
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-sm);
 }
 
 .sidebar a:hover,
@@ -269,7 +269,7 @@ function handleLogout() {
   color: #fff;
   background: #14142a;
   border-left: 2px solid rgba(108, 99, 255, 0.4);
-  padding-left: calc(var(--spacing-md) - 2px);
+  padding-left: calc(var(--spacing-sm) - 2px);
 }
 
 .admin-link {
