@@ -75,7 +75,6 @@ const store = useUserStore();
 const libraries = ref<any[]>([]);
 const isMobile = ref(window.innerWidth <= 768);
 const sidebarOpen = ref(!isMobile.value); // Desktop: default open, Mobile: default closed
-const isMediaDetailPage = computed(() => router.currentRoute.value.path.startsWith('/media/'));
 
 const isAdmin = computed(() => store.isAdmin);
 
