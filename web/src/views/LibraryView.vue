@@ -152,6 +152,7 @@ const activeStatus = ref<string>('');
 const selectedGenre = ref<string>('');
 let searchTimer = 0;
 let abortCtrl = new AbortController();
+let fetchGen = 0;
 
 const availableGenres = computed(() => {
   const set = new Set<string>();
@@ -217,7 +218,8 @@ function resetAndFetch() {
 
 // ── Fetch one page ─────────────────────────────────────────────────────────
 async function fetchPage() {
-  if (loading.value || allLoaded.value) return;
+  if (allLoaded.value) return;
+  const gen = ++fetchGen;
   loading.value = true;
   error.value = '';
   try {
@@ -260,9 +262,11 @@ async function fetchPage() {
       error.value = 'Failed to load library. Please try again.';
     }
   } finally {
-  	loading.value = false;
-  	hasFetched.value = true;
-  }
+      if (gen === fetchGen) {
+        loading.value = false;
+        hasFetched.value = true;
+      }
+    }
   }
 
   function onStatusChanged(id: string, newStatus: string) {
