@@ -30,7 +30,7 @@
           </div>
         </div>
         <div class="sidebar-footer">
-          <button class="sidebar-toggle" @click="toggleSidebar">☰</button>
+          <!-- 仅保留 Profile 和 Logout，移除 sidebar-toggle 按钮 -->
         </div>
       </aside>
       <div
@@ -113,18 +113,6 @@ function handleLogout() {
   height: 100vh;
   background: var(--color-bg);
   color: var(--color-text);
-}
-
-.sidebar-toggle {
-  background: none;
-  border: none;
-  color: var(--color-text);
-  font-size: 1.5rem;
-  cursor: pointer;
-  padding: var(--spacing-xs) var(--spacing-sm);
-  margin-bottom: var(--spacing-sm);
-  width: 100%;
-  text-align: left;
 }
 
 .floating-sidebar-toggle {
