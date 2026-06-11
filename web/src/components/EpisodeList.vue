@@ -44,9 +44,26 @@ interface Episode {
 const episodes = ref<Episode[]>([]);
 const expandedSeasons = ref(new Set<number>());
 
+// Read user preference: default expanded or collapsed
+const defaultCollapsed = (() => {
+  try {
+    return localStorage.getItem('seasons_collapsed_default') === 'true';
+  } catch {
+    return false;
+  }
+})();
+
 onMounted(async () => {
   try {
     episodes.value = await getEpisodes(props.showId);
+    // Pre-expand all seasons by default
+    if (!defaultCollapsed) {
+      const allSeasons = new Set<number>();
+      for (const ep of episodes.value) {
+        allSeasons.add(ep.season ?? 0);
+      }
+      expandedSeasons.value = allSeasons;
+    }
   } catch {
     episodes.value = [];
   }

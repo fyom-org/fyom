@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -18,16 +19,21 @@ import (
 	"github.com/fyom/fyom/internal/middleware"
 	"github.com/fyom/fyom/internal/provider"
 	"github.com/fyom/fyom/internal/repository"
+	"github.com/fyom/fyom/internal/service"
 	"github.com/fyom/fyom/pkg/presign"
 	"github.com/fyom/fyom/web"
 	"github.com/go-chi/chi/v5"
 )
 
 type Server struct {
-	httpServer *http.Server
-	router     *chi.Mux
-	logger     *slog.Logger
-	cfg        *config.Config
+	httpServer  *http.Server
+	router      *chi.Mux
+	logger      *slog.Logger
+	cfg         *config.Config
+	db          *repository.DB
+	libRepo     *repository.LibraryRepository
+	settingRepo *repository.SystemSettingRepository
+	mediaRepo   *repository.MediaRepository
 }
 
 func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gitCommit, buildTime, goVer string) *Server {
@@ -168,7 +174,16 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 		IdleTimeout:  120 * time.Second,
 	}
 
-	return &Server{httpServer: httpServer, router: r, logger: logger, cfg: cfg}
+	return &Server{
+		httpServer:  httpServer,
+		router:      r,
+		logger:      logger,
+		cfg:         cfg,
+		db:          db,
+		libRepo:     libRepo,
+		settingRepo: settingRepo,
+		mediaRepo:   mediaRepo,
+	}
 }
 
 func serveIndexHTML(w http.ResponseWriter, _ *http.Request, staticFS fs.FS) {
@@ -193,6 +208,9 @@ func (s *Server) Run() error {
 		}
 	}()
 
+	// Start library refresh scheduler
+	go s.runLibraryRefreshScheduler(context.Background())
+
 	<-quit
 	s.logger.Info("server shutting down...")
 
@@ -205,4 +223,76 @@ func (s *Server) Run() error {
 
 	s.logger.Info("server stopped gracefully")
 	return nil
+}
+
+// runLibraryRefreshScheduler periodically checks library schedules and triggers refreshes.
+func (s *Server) runLibraryRefreshScheduler(ctx context.Context) {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.checkAndRefreshLibraries(ctx)
+		}
+	}
+}
+
+// checkAndRefreshLibraries reads refresh schedules from settings and triggers overdue refreshes.
+func (s *Server) checkAndRefreshLibraries(ctx context.Context) {
+	// List all libraries
+	libraries, err := s.libRepo.List(ctx)
+	if err != nil {
+		s.logger.Error("scheduler: failed to list libraries", "error", err)
+		return
+	}
+
+	for _, lib := range libraries {
+		intervalKey := "library_refresh_interval_" + lib.ID
+		lastKey := "library_last_refresh_" + lib.ID
+
+		intervalStr, err := s.settingRepo.GetSetting(ctx, intervalKey)
+		if err != nil {
+			// No schedule configured for this library
+			continue
+		}
+
+		interval, err := strconv.Atoi(intervalStr)
+		if err != nil || interval <= 0 {
+			continue
+		}
+
+		lastRefreshStr, _ := s.settingRepo.GetSetting(ctx, lastKey)
+		lastRefreshUnix, _ := strconv.ParseInt(lastRefreshStr, 10, 64)
+
+		now := time.Now().Unix()
+		if now-lastRefreshUnix < int64(interval) {
+			continue // Not yet due
+		}
+
+		s.logger.Info("scheduler: triggering library refresh",
+			"library_id", lib.ID,
+			"name", lib.Name,
+			"interval_seconds", interval,
+		)
+
+		// Trigger import
+		imp := service.NewImporter(
+			service.NewLocalImportFS(),
+			"local",
+			s.db,
+			s.mediaRepo,
+			repository.NewImportJobRepository(s.db),
+		)
+		imp.SetLibraryID(lib.ID)
+		if _, err := imp.ImportRequest(ctx, lib.SourcePath); err != nil {
+			s.logger.Error("scheduler: import failed", "library_id", lib.ID, "error", err)
+			continue
+		}
+
+		// Record last refresh time
+		_ = s.settingRepo.SetSetting(ctx, lastKey, strconv.FormatInt(now, 10))
+	}
 }

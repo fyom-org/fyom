@@ -19,16 +19,47 @@
 
     <div class="result-info" v-if="total > 0">{{ total }} items</div>
 
-    <div class="media-list" v-if="items.length > 0">
-      <div class="media-row" v-for="item in items" :key="item.id">
-        <span class="item-type" :class="item.type">{{ typeBadge(item.type) }}</span>
-        <span class="item-title">{{ item.title }}</span>
-        <span class="item-year" v-if="item.year">{{ item.year }}</span>
-        <span class="item-library">{{ item.library_id }}</span>
-        <span class="item-provider">{{ item.provider_id }}</span>
-        <span class="item-date">{{ formatDate(item.created_at) }}</span>
-        <button class="delete-btn" @click="deleteItem(item)">Delete</button>
-      </div>
+    <!-- Grouped view (shows with nested episodes; movies standalone) -->
+    <div class="media-list" v-if="groupedItems.length > 0">
+      <template v-for="g in groupedItems" :key="g.id">
+        <!-- Show row -->
+        <div v-if="g.type === 'show'" class="media-row show-row" @click="toggleShow(g.id)">
+          <span class="expand-icon">{{ expandedShows.has(g.id) ? '▼' : '▶' }}</span>
+          <span class="item-type show">Show</span>
+          <span class="item-title">{{ g.title }}</span>
+          <span class="item-year" v-if="g.year">{{ g.year }}</span>
+          <span class="item-library">{{ g.library_id }}</span>
+          <span class="item-provider">{{ g.provider_id }}</span>
+          <span class="item-date">{{ formatDate(g.created_at) }}</span>
+          <span class="ep-count">{{ g.episodeCount }} ep.</span>
+          <button class="delete-btn" @click.stop="deleteItem(g)">Delete</button>
+        </div>
+        <!-- Episode rows (nested under show) -->
+        <div v-if="g.type === 'show' && expandedShows.has(g.id)" class="episode-children">
+          <div v-for="ep in g.episodes" :key="ep.id" class="media-row ep-row">
+            <span class="expand-placeholder"></span>
+            <span class="item-type episode">Episode</span>
+            <span class="ep-number">{{ ep.season }}x{{ String(ep.episode).padStart(2, '0') }}</span>
+            <span class="item-title ep-title">{{ ep.title }}</span>
+            <span class="item-year" v-if="ep.year">{{ ep.year }}</span>
+            <span class="item-library">{{ ep.library_id }}</span>
+            <span class="item-provider">{{ ep.provider_id }}</span>
+            <span class="item-date">{{ formatDate(ep.created_at) }}</span>
+            <button class="delete-btn" @click.stop="deleteItem(ep)">Delete</button>
+          </div>
+        </div>
+        <!-- Movie row (standalone, no expand) -->
+        <div v-else-if="g.type !== 'show'" class="media-row">
+          <span class="expand-placeholder"></span>
+          <span class="item-type movie">Movie</span>
+          <span class="item-title">{{ g.title }}</span>
+          <span class="item-year" v-if="g.year">{{ g.year }}</span>
+          <span class="item-library">{{ g.library_id }}</span>
+          <span class="item-provider">{{ g.provider_id }}</span>
+          <span class="item-date">{{ formatDate(g.created_at) }}</span>
+          <button class="delete-btn" @click.stop="deleteItem(g)">Delete</button>
+        </div>
+      </template>
     </div>
 
     <div class="pagination" v-if="total > limit">
@@ -42,10 +73,28 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import request from '@/api/request';
 
-const items = ref<any[]>([]);
+interface AdminItem {
+  id: string;
+  type: string;
+  title: string;
+  year?: number;
+  library_id: string;
+  provider_id: string;
+  created_at: string;
+  parent_id?: string;
+  season?: number;
+  episode?: number;
+}
+
+interface ShowGroup extends AdminItem {
+  episodeCount: number;
+  episodes: AdminItem[];
+}
+
+const items = ref<AdminItem[]>([]);
 const total = ref(0);
 const page = ref(1);
 const limit = 20;
@@ -55,6 +104,36 @@ const typeFilter = ref('');
 const libraryFilter = ref('');
 const libraries = ref<any[]>([]);
 let searchTimer: any = 0;
+const expandedShows = ref(new Set<string>());
+
+const groupedItems = computed<ShowGroup[]>(() => {
+  if (typeFilter.value === 'episode') {
+    // When filtering by episode, just show flat list
+    return items.value.map(i => ({ ...i, episodeCount: 0, episodes: [] }));
+  }
+
+  const shows = new Map<string, ShowGroup>();
+  const standalone: ShowGroup[] = [];
+
+  for (const item of items.value) {
+    if (item.type === 'show') {
+      shows.set(item.id, { ...item, episodeCount: 0, episodes: [] });
+    }
+  }
+
+  for (const item of items.value) {
+    if (item.type === 'episode' && item.parent_id && shows.has(item.parent_id)) {
+      const show = shows.get(item.parent_id)!;
+      show.episodes.push(item);
+      show.episodeCount = show.episodes.length;
+    } else if (item.type === 'movie' || (item.type === 'episode' && !item.parent_id)) {
+      standalone.push({ ...item, episodeCount: 0, episodes: [] });
+    }
+  }
+
+  // Sort shows before movies
+  return [...shows.values(), ...standalone];
+});
 
 onMounted(async () => {
   try {
@@ -91,6 +170,13 @@ function onSearchInput() {
   }, 300);
 }
 
+function toggleShow(id: string) {
+  const s = expandedShows.value;
+  if (s.has(id)) s.delete(id);
+  else s.add(id);
+  expandedShows.value = new Set(s);
+}
+
 async function deleteItem(item: any) {
   const label = item.type === 'show'
     ? `"${item.title}" and all its episodes`
@@ -107,15 +193,6 @@ async function deleteItem(item: any) {
 function formatDate(iso: string) {
   if (!iso) return '';
   return new Date(iso).toLocaleDateString();
-}
-
-function typeBadge(type: string) {
-  switch (type) {
-    case 'movie': return 'Movie';
-    case 'show': return 'Show';
-    case 'episode': return 'Episode';
-    default: return type;
-  }
 }
 </script>
 
@@ -182,6 +259,36 @@ h1 {
   background: #1a1a32;
 }
 
+.show-row {
+  cursor: pointer;
+}
+
+.expand-icon {
+  color: #6c63ff;
+  font-size: 10px;
+  min-width: 16px;
+}
+
+.expand-placeholder {
+  min-width: 16px;
+}
+
+.episode-children {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 24px;
+}
+
+.ep-row {
+  background: #0e0e18;
+  font-size: 12px;
+}
+
+.ep-row:hover {
+  background: #16162e;
+}
+
 .item-type {
   font-size: 11px;
   padding: 2px 6px;
@@ -215,11 +322,18 @@ h1 {
   text-overflow: ellipsis;
 }
 
-.item-year {
-  color: #555577;
+.ep-title {
+  font-size: 12px;
+}
+
+.ep-number {
+  color: #6c63ff;
+  font-weight: 600;
+  font-size: 11px;
   min-width: 40px;
 }
 
+.item-year,
 .item-library,
 .item-provider {
   color: #555577;
@@ -231,6 +345,12 @@ h1 {
   color: #555577;
   font-size: 12px;
   min-width: 80px;
+}
+
+.ep-count {
+  color: #555577;
+  font-size: 11px;
+  min-width: 40px;
 }
 
 .delete-btn {

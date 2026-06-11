@@ -96,7 +96,7 @@ func (h *AdminHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for key, value := range body {
-		if !allowed[key] {
+		if !allowed[key] && !strings.HasPrefix(key, "library_refresh_interval_") {
 			response.Error(w, 400, "unknown setting: "+key)
 			return
 		}

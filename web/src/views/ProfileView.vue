@@ -11,6 +11,18 @@
     </div>
 
     <div class="card">
+      <h3>Preferences</h3>
+      <div class="pref-row">
+        <span class="pref-label">Default expand seasons</span>
+        <label class="toggle">
+          <input type="checkbox" v-model="seasonsExpanded" @change="saveSeasonsPref" />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <p class="hint">When enabled, all season groups in TV show pages are expanded by default.</p>
+    </div>
+
+    <div class="card">
       <h3>Change Password</h3>
       <div class="field">
         <label>Current Password</label>
@@ -36,11 +48,25 @@ const oldPassword = ref('');
 const newPassword = ref('');
 const msg = ref('');
 const error = ref('');
+const seasonsExpanded = ref(true);
 
 onMounted(async () => {
   const res = await request.get('/auth/me');
   user.value = res.data;
+  try {
+    seasonsExpanded.value = localStorage.getItem('seasons_collapsed_default') !== 'true';
+  } catch {
+    // ignore
+  }
 });
+
+function saveSeasonsPref() {
+  try {
+    localStorage.setItem('seasons_collapsed_default', seasonsExpanded.value ? 'false' : 'true');
+  } catch {
+    // ignore
+  }
+}
 
 async function changePassword() {
   error.value = '';
@@ -98,6 +124,66 @@ h3 {
   margin: 0 0 16px;
   color: #d0d0d0;
   font-size: 16px;
+}
+
+.pref-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.pref-label {
+  color: #aaaacc;
+  font-size: 14px;
+}
+
+.hint {
+  color: #555577;
+  font-size: 12px;
+  margin: 8px 0 0;
+}
+
+/* Toggle switch */
+.toggle {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  cursor: pointer;
+}
+
+.toggle input {
+  display: none;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: #2a2a3e;
+  border-radius: 12px;
+  transition: background 0.2s;
+}
+
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  left: 3px;
+  bottom: 3px;
+  background: #666688;
+  border-radius: 50%;
+  transition: all 0.2s;
+}
+
+.toggle input:checked + .toggle-slider {
+  background: #6c63ff;
+}
+
+.toggle input:checked + .toggle-slider::before {
+  transform: translateX(20px);
+  background: #fff;
 }
 
 .field label {

@@ -86,7 +86,7 @@
     </div>
 
     <!-- Empty state -->
-    <div v-if="items.length === 0 && !loading && !error" class="empty-state">
+    <div v-if="items.length === 0 && !loading && hasFetched && !error" class="empty-state">
       <p v-if="searchQuery">No results for "{{ searchQuery }}"</p>
       <p v-else>Your library is empty. Import some media to get started.</p>
     </div>
@@ -141,7 +141,8 @@ const showBackLink = computed(() => librariesCount.value >= 2);
 const items = ref<MediaItem[]>([]);
 const page = ref(1);
 const total = ref(0);
-const loading = ref(false);
+const loading = ref(true); // Start true to prevent empty-state flash
+const hasFetched = ref(false);
 const allLoaded = ref(false);
 const error = ref('');
 const searchQuery = ref<string>('');
@@ -259,11 +260,12 @@ async function fetchPage() {
       error.value = 'Failed to load library. Please try again.';
     }
   } finally {
-    loading.value = false;
+  	loading.value = false;
+  	hasFetched.value = true;
   }
-}
+  }
 
-function onStatusChanged(id: string, newStatus: string) {
+  function onStatusChanged(id: string, newStatus: string) {
   const item = items.value.find(m => m.id === id);
   if (item) {
     item.user_status = newStatus;

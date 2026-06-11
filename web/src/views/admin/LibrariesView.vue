@@ -63,6 +63,16 @@
                 :disabled="checking === lib.id">
           {{ checking === lib.id ? 'Checking...' : '⊕ Check Missing' }}
         </button>
+        <!-- Schedule selector -->
+        <select class="schedule-select" :value="getSchedule(lib.id)"
+                @change="setSchedule(lib.id, ($event.target as HTMLSelectElement).value)"
+                :disabled="savingSchedule === lib.id">
+          <option value="0">Manual</option>
+          <option value="3600">Every hour</option>
+          <option value="21600">Every 6 hours</option>
+          <option value="86400">Daily</option>
+          <option value="604800">Weekly</option>
+        </select>
         <button class="action-btn delete" @click="deleteLibrary(lib)">
           Delete
         </button>
@@ -95,26 +105,55 @@ const error = ref('');
 const showForm = ref(false);
 const refreshing = ref('');
 const checking = ref('');
+const savingSchedule = ref('');
 const form = ref({
   name: '', type: 'mixed', provider_id: 'local',
   source_path: '/', metadata_source: 'nfo',
 });
 const providers = ref<any[]>([]);
+const schedules = ref<Record<string, string>>({});
 
 onMounted(async () => {
   try {
-    const [libRes, provRes] = await Promise.all([
+    const [libRes, provRes, settingsRes] = await Promise.all([
       request.get('/admin/libraries'),
       request.get('/admin/providers'),
+      request.get('/admin/settings'),
     ]);
     libraries.value = (libRes as any).data || [];
     providers.value = (provRes as any).data || [];
+    const settings = (settingsRes as any).data || {};
+    // Extract library refresh schedules from settings
+    for (const [key, val] of Object.entries(settings)) {
+      if (key.startsWith('library_refresh_interval_')) {
+        const libId = key.slice('library_refresh_interval_'.length);
+        schedules.value[libId] = val as string;
+      }
+    }
   } catch {
     error.value = 'Failed to load';
   } finally {
     loading.value = false;
   }
 });
+
+function getSchedule(libId: string): string {
+  return schedules.value[libId] || '0';
+}
+
+async function setSchedule(libId: string, interval: string) {
+  savingSchedule.value = libId;
+  try {
+    await request.put('/admin/settings', {
+      [`library_refresh_interval_${libId}`]: interval,
+    });
+    schedules.value = { ...schedules.value, [libId]: interval };
+  } catch (e: any) {
+    alert('Failed to save schedule: ' + (e.response?.data?.message || 'Unknown error'));
+  } finally {
+    savingSchedule.value = '';
+  }
+}
 
 async function createLibrary() {
   error.value = '';
@@ -161,7 +200,6 @@ async function refreshLibrary(lib: any) {
   try {
     const res: any = await request.post(`/admin/libraries/${lib.id}/refresh`);
     const config = res.data;
-    // Trigger import using the library's stored configuration.
     await request.post('/library/import', {
       source_path: config.source_path,
       provider_id: config.provider_id,
@@ -335,24 +373,11 @@ h1 {
   font-style: italic;
 }
 
-.delete-btn {
-  padding: 4px 12px;
-  border: 1px solid #3a1a1a;
-  border-radius: 4px;
-  background: transparent;
-  color: #ff6b6b;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.delete-btn:hover {
-  background: #2a1a1a;
-}
-
 .library-actions {
   display: flex;
   gap: 8px;
   margin-top: 12px;
+  align-items: center;
 }
 
 .action-btn {
@@ -393,6 +418,26 @@ h1 {
 
 .action-btn.delete:hover {
   background: #1a0f0f;
+}
+
+.schedule-select {
+  padding: 5px 8px;
+  background: #0a0a14;
+  border: 1px solid #1a1a2e;
+  border-radius: 4px;
+  color: #aaaacc;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.schedule-select:focus {
+  border-color: #6c63ff;
+  outline: none;
+}
+
+.schedule-select option {
+  background: #0a0a14;
+  color: #ccccee;
 }
 
 .stat.warn {
