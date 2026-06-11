@@ -29,11 +29,6 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresAdmin: true },
       children: [
         {
-          path: 'import',
-          name: 'AdminImport',
-          component: () => import('@/views/admin/ImportView.vue'),
-        },
-        {
           path: 'libraries',
           name: 'AdminLibraries',
           component: () => import('@/views/admin/LibrariesView.vue'),

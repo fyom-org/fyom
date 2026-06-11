@@ -3,7 +3,6 @@
     <aside class="admin-sidebar">
       <div class="brand">fyom admin</div>
       <nav class="admin-nav">
-        <router-link to="/admin/import" class="nav-link">Import</router-link>
         <router-link to="/admin/libraries" class="nav-link">Libraries</router-link>
         <router-link to="/admin/permissions" class="nav-link">Access Control</router-link>
         <router-link to="/admin/media" class="nav-link">Media</router-link>

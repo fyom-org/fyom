@@ -89,6 +89,7 @@
         <div class="library-stats" v-else>
           <span class="stat empty">No items yet</span>
         </div>
+        <JobStatus v-if="activeJobId" :job-id="activeJobId" />
       </div>
     </div>
     <p class="empty-text" v-else-if="!loading">No libraries configured.</p>
@@ -98,6 +99,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import request from '@/api/request';
+import JobStatus from '@/components/JobStatus.vue';
 
 const libraries = ref<any[]>([]);
 const loading = ref(true);
@@ -106,6 +108,7 @@ const showForm = ref(false);
 const refreshing = ref('');
 const checking = ref('');
 const savingSchedule = ref('');
+const activeJobId = ref('');
 const form = ref({
   name: '', type: 'mixed', provider_id: 'local',
   source_path: '/', metadata_source: 'nfo',
@@ -197,15 +200,16 @@ async function fetchLibraries() {
 
 async function refreshLibrary(lib: any) {
   refreshing.value = lib.id;
+  activeJobId.value = '';
   try {
     const res: any = await request.post(`/admin/libraries/${lib.id}/refresh`);
     const config = res.data;
-    await request.post('/library/import', {
+    const jobRes: any = await request.post('/library/import', {
       source_path: config.source_path,
       provider_id: config.provider_id,
       library_id: config.id,
     });
-    alert(`Refresh started for "${lib.name}". New items will appear shortly.`);
+    activeJobId.value = jobRes.data?.job_id || '';
   } catch (e: any) {
     alert('Refresh failed: ' + (e.response?.data?.message || 'Unknown error'));
   } finally {
