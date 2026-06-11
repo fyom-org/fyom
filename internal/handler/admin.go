@@ -187,7 +187,7 @@ func (h *AdminHandler) ListMedia(w http.ResponseWriter, r *http.Request) {
 			&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
 			&m.Outline, &m.Tagline, &m.Countries, &m.Directors, &m.Credits, &m.Tags,
 			&m.SetName, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
-			&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages, &m.Aired); err != nil {
+			&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages, &m.Aired, &m.LogoPath); err != nil {
 			response.Error(w, 500, "internal server error")
 			return
 		}
@@ -284,7 +284,7 @@ func (h *AdminHandler) ListMissing(w http.ResponseWriter, r *http.Request) {
 	}
 	libraryID := r.URL.Query().Get("library_id")
 
-	query := "SELECT id, type, title, sort_title, year, overview, rating, duration, file_path, poster_path, backdrop_path, parent_id, season, episode, metadata_source, provider_id, library_id, status, created_at, updated_at, mpaa, genres, studios, actors, unique_ids, premiered, outline, tagline, countries, directors, credits, tags, set_name, video_codec, video_width, video_height, video_duration_seconds, audio_codec, audio_channels, subtitle_languages, aired FROM media_items WHERE status = 'missing'"
+	query := "SELECT id, type, title, sort_title, year, overview, rating, duration, file_path, poster_path, backdrop_path, parent_id, season, episode, metadata_source, provider_id, library_id, status, created_at, updated_at, mpaa, genres, studios, actors, unique_ids, premiered, outline, tagline, countries, directors, credits, tags, set_name, video_codec, video_width, video_height, video_duration_seconds, audio_codec, audio_channels, subtitle_languages, aired, logo_path FROM media_items WHERE status = 'missing'"
 	var args []interface{}
 	if libraryID != "" {
 		query += " AND library_id = ?"
@@ -311,7 +311,7 @@ func (h *AdminHandler) ListMissing(w http.ResponseWriter, r *http.Request) {
 			&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
 			&m.Outline, &m.Tagline, &m.Countries, &m.Directors, &m.Credits, &m.Tags,
 			&m.SetName, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
-			&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages); err != nil {
+			&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages, &m.Aired, &m.LogoPath); err != nil {
 			response.Error(w, 500, "internal server error")
 			return
 		}

@@ -83,10 +83,9 @@ router.beforeEach(async (to) => {
     return;
   }
 
-  // Not authenticated
+  // Not authenticated — redirect to login
   if (!token) {
-    router.push('/login');
-    return;
+    return router.push('/login');
   }
 
   // Admin routes: verify role via API, not localStorage
@@ -96,17 +95,14 @@ router.beforeEach(async (to) => {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) {
-        router.push('/login');
-        return;
+        return router.push('/login');
       }
       const data = await res.json();
       if (data.data?.role !== 'admin') {
-        router.push('/');
-        return;
+        return router.push('/');
       }
     } catch {
-      router.push('/login');
-      return;
+      return router.push('/login');
     }
   }
 });
