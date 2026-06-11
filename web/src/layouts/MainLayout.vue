@@ -1,14 +1,14 @@
 <template>
   <div class="layout">
-    <header class="header">
-      <button class="sidebar-toggle" @click="toggleSidebar">☰</button>
-      <span class="brand">fyom</span>
-      <div class="header-right">
-        <span class="username">{{ store.user?.username ?? '—' }}</span>
-        <button class="btn-logout" @click="handleLogout">Logout</button>
-      </div>
-    </header>
     <div class="body">
+      <aside
+        class="sidebar"
+        :class="{
+          'sidebar-mobile': isMobile,
+          'sidebar-hidden': !sidebarOpen
+        }"
+      >
+        <button class="sidebar-toggle" @click="toggleSidebar">☰</button>
       <aside
         class="sidebar"
         :class="{
@@ -43,6 +43,7 @@
         >
         <div class="sidebar-spacer"></div>
         <router-link to="/profile" @click="sidebarOpen = false">Profile</router-link>
+        <button class="btn-logout" @click="handleLogout">Logout</button>
       </aside>
       <div
         class="sidebar-overlay"
@@ -86,17 +87,14 @@ const isMediaDetailPage = computed(() => router.currentRoute.value.path.startsWi
 const isAdmin = computed(() => store.isAdmin);
 
 const toggleSidebar = () => {
-  // Only allow toggling on mobile, or if not on media detail page
-  if (isMobile.value || !isMediaDetailPage.value) {
-    sidebarOpen.value = !sidebarOpen.value;
-  }
+  sidebarOpen.value = !sidebarOpen.value;
 };
 
 const handleResize = () => {
   isMobile.value = window.innerWidth <= 768;
-  // On desktop, always keep sidebar open (unless on media detail page)
+  // On desktop, always keep sidebar open
   if (!isMobile.value) {
-    sidebarOpen.value = !isMediaDetailPage.value;
+    sidebarOpen.value = true;
   }
 };
 
@@ -136,56 +134,32 @@ function handleLogout() {
   color: var(--color-text);
 }
 
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 var(--spacing-md);
-  height: var(--touch-target);
-  background: #1e1e2e;
-  border-bottom: 1px solid var(--color-border);
-  flex-shrink: 0;
-}
-
 .sidebar-toggle {
   background: none;
   border: none;
   color: var(--color-text);
   font-size: 1.5rem;
   cursor: pointer;
-  padding: 0 var(--spacing-sm);
-  margin-right: var(--spacing-sm);
-}
-
-.brand {
-  font-size: var(--font-size-lg);
-  font-weight: 700;
-  letter-spacing: 0.5px;
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-}
-
-.username {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  padding: var(--spacing-sm) var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+  width: 100%;
+  text-align: left;
 }
 
 .btn-logout {
-  background: var(--color-border);
+  background: none;
   color: var(--color-text);
   border: none;
-  padding: 4px 12px;
-  border-radius: 4px;
-  font-size: var(--font-size-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: var(--font-size-md);
   cursor: pointer;
+  width: 100%;
+  text-align: left;
+  margin-top: var(--spacing-sm);
 }
 
 .btn-logout:hover {
-  background: #52525b;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .body {
@@ -208,20 +182,13 @@ function handleLogout() {
   z-index: 100;
 }
 
-/* Desktop: Collapse via width (except on media detail page) */
+/* Desktop: Collapse via width */
 @media (min-width: 769px) {
   .sidebar.sidebar-hidden {
     width: 0;
     min-width: 0;
     overflow: hidden;
     border-right: none;
-  }
-
-  /* Force sidebar open on media detail page */
-  .layout:has(.content .media-detail) .sidebar.sidebar-hidden {
-    width: 200px;
-    min-width: 180px;
-    border-right: 1px solid var(--color-border);
   }
 }
 
