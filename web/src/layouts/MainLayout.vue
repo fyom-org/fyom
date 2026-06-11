@@ -27,13 +27,6 @@
               {{ lib.name }}
             </router-link>
           </div>
-          <router-link
-            v-if="isAdmin"
-            to="/admin"
-            class="nav-link admin-link"
-            @click="sidebarOpen = false"
-            >⚙ Admin</router-link
-          >
         </div>
         <div class="sidebar-footer">
           <router-link to="/profile" @click="sidebarOpen = false">Profile</router-link>

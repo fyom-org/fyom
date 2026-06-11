@@ -6,7 +6,14 @@
         <span class="label">Username</span><span>{{ user.username }}</span>
       </div>
       <div class="info-row">
-        <span class="label">Role</span><span class="badge">{{ user.role }}</span>
+        <span class="label">Role</span>
+        <span
+          class="badge"
+          :class="{ 'admin-badge': user.role === 'admin' }"
+          @click="navigateToAdmin"
+        >
+          {{ user.role }}
+        </span>
       </div>
     </div>
 
@@ -47,6 +54,9 @@ import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import request from '@/api/request';
 import { useUserStore } from '@/stores/user';
+
+const router = useRouter();
+const store = useUserStore();
 
 const router = useRouter();
 const store = useUserStore();
@@ -96,6 +106,12 @@ function handleLogout() {
   store.logout();
   router.push({ name: 'login' });
 }
+
+function navigateToAdmin() {
+  if (user.value?.role === 'admin') {
+    router.push('/admin');
+  }
+}
 </script>
 
 <style scoped>
@@ -130,6 +146,15 @@ function handleLogout() {
   border-radius: 4px;
   text-transform: capitalize;
   color: #6c63ff;
+  cursor: default;
+}
+
+.admin-badge {
+  cursor: pointer;
+}
+
+.admin-badge:hover {
+  background: rgba(108, 99, 255, 0.2);
 }
 
 h3 {
