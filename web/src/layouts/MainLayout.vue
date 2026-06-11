@@ -130,13 +130,13 @@ function handleLogout() {
 .floating-sidebar-toggle {
   position: fixed;
   left: 0;
-  bottom: 10%;
+  bottom: 0;
   width: 40px;
   height: 40px;
   background: rgba(26, 26, 46, 0.8);
   color: var(--color-text);
   border: none;
-  border-radius: 0 4px 4px 0;
+  border-radius: 4px 0 0 0;
   cursor: pointer;
   font-size: 1.5rem;
   display: flex;
