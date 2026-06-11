@@ -72,6 +72,7 @@ type MediaItemResponse struct {
 	AudioCodec        string            `json:"audio_codec,omitempty"`
 	AudioChannels     int               `json:"audio_channels,omitempty"`
 	SubtitleLanguages []string          `json:"subtitle_languages,omitempty"`
+	LogoURL           *string           `json:"logo_url,omitempty"`
 	Aired             string            `json:"aired,omitempty"`
 }
 // MediaHandler handles media-related HTTP endpoints.
@@ -251,6 +252,9 @@ func attachPresignedURLs(ctx context.Context, item *model.MediaItem, registry *p
 	}
 	if u, err := p.StreamURL(ctx, item); err == nil && u != "" {
 		resp.StreamURL = &u
+	}
+	if u, err := p.LogoURL(ctx, item); err == nil && u != "" {
+		resp.LogoURL = &u
 	}
 	return resp
 }
@@ -946,6 +950,30 @@ func (h *MediaHandler) ServeContent(w http.ResponseWriter, r *http.Request, item
 	}
 
 	http.ServeContent(w, r, name, modTime, f)
+}
+
+// ServeLogo serves the logo image.
+func (h *MediaHandler) ServeLogo(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	item, err := h.repo.Get(r.Context(), id)
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	if item == nil || item.LogoPath == "" {
+		response.Error(w, 404, "resource not found")
+		return
+	}
+	_, err = os.Stat(item.LogoPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			jsonError(w, 404, "logo file not found on disk")
+			return
+		}
+		jsonError(w, 500, "internal server error")
+		return
+	}
+	http.ServeFile(w, r, item.LogoPath)
 }
 
 // Stream serves a media file with Range request support.

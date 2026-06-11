@@ -30,7 +30,7 @@ const mediaColumns = `id, type, title, sort_title, year, overview, rating, durat
 		mpaa, genres, studios, actors, unique_ids, premiered, outline, tagline,
 		countries, directors, credits, tags, set_name, video_codec, video_width,
 		video_height, video_duration_seconds, audio_codec, audio_channels,
-		subtitle_languages, aired`
+		subtitle_languages, aired, logo_path`
 
 const mediaInsertColumns = `(id, type, title, sort_title, year, overview, rating, duration,
 		file_path, poster_path, backdrop_path, parent_id, season, episode,
@@ -38,9 +38,9 @@ const mediaInsertColumns = `(id, type, title, sort_title, year, overview, rating
 		mpaa, genres, studios, actors, unique_ids, premiered, outline, tagline,
 		countries, directors, credits, tags, set_name, video_codec, video_width,
 		video_height, video_duration_seconds, audio_codec, audio_channels,
-		subtitle_languages, aired)`
+		subtitle_languages, aired, logo_path)`
 
-const mediaInsertPlaceholders = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+const mediaInsertPlaceholders = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 func scanMediaItem(rows *sql.Rows, m *model.MediaItem) error {
 	var season, episode int
@@ -51,7 +51,7 @@ func scanMediaItem(rows *sql.Rows, m *model.MediaItem) error {
 		&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
 		&m.Outline, &m.Tagline, &m.Countries, &m.Directors, &m.Credits, &m.Tags,
 		&m.SetName, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
-		&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages, &m.Aired); err != nil {
+		&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages, &m.Aired, &m.LogoPath); err != nil {
 		return err
 	}
 	m.Season = IntPtr(season)
@@ -68,7 +68,7 @@ func scanMediaRow(row *sql.Row, m *model.MediaItem) error {
 		&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
 		&m.Outline, &m.Tagline, &m.Countries, &m.Directors, &m.Credits, &m.Tags,
 		&m.SetName, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
-		&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages, &m.Aired)
+		&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages, &m.Aired, &m.LogoPath)
 	m.Season = IntPtr(season)
 	m.Episode = IntPtr(episode)
 	return err
@@ -146,7 +146,7 @@ func (r *MediaRepository) Create(ctx context.Context, m *model.MediaItem) error 
 		m.MPAA, m.Genres, m.Studios, m.Actors, m.UniqueIDs, m.Premiered,
 		m.Outline, m.Tagline, m.Countries, m.Directors, m.Credits, m.Tags,
 		m.SetName, m.VideoCodec, m.VideoWidth, m.VideoHeight, m.VideoDurationSeconds,
-		m.AudioCodec, m.AudioChannels, m.SubtitleLanguages, m.Aired)
+					m.AudioCodec, m.AudioChannels, m.SubtitleLanguages, m.Aired, m.LogoPath)
 	return err
 }
 
@@ -188,7 +188,7 @@ func (r *MediaRepository) Count(ctx context.Context) (int, error) {
 
 // GetEpisodesByShowID returns all episodes for a given show, sorted by season and episode.
 func (r *MediaRepository) GetEpisodesByShowID(ctx context.Context, showID string) ([]model.MediaItem, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, type, title, season, episode, duration, overview, poster_path, provider_id, library_id, status
+	rows, err := r.db.QueryContext(ctx, `SELECT id, type, title, season, episode, duration, overview, poster_path, backdrop_path, provider_id, library_id, status
 		FROM media_items WHERE parent_id = ? AND type = 'episode'
 		ORDER BY season ASC, episode ASC`, showID)
 	if err != nil {
@@ -200,7 +200,7 @@ func (r *MediaRepository) GetEpisodesByShowID(ctx context.Context, showID string
 	for rows.Next() {
 		var m model.MediaItem
 		var season, episode int
-		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &season, &episode, &m.Duration, &m.Overview, &m.PosterPath, &m.ProviderID, &m.LibraryID, &m.Status); err != nil {
+		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &season, &episode, &m.Duration, &m.Overview, &m.PosterPath, &m.BackdropPath, &m.ProviderID, &m.LibraryID, &m.Status); err != nil {
 			return nil, err
 		}
 		m.Season = IntPtr(season)

@@ -19,7 +19,8 @@
         <img v-if="item.poster_url" class="poster" :src="item.poster_url" />
 
         <div class="meta">
-          <h1 class="title">{{ item.title }}</h1>
+          <img v-if="item.logo_url && !logoFailed" class="logo-image" :src="item.logo_url" @error="logoFailed = true" />
+          <h1 class="title" :class="{ 'with-logo': item.logo_url && !logoFailed }">{{ item.title }}</h1>
           <p class="tagline" v-if="item.tagline">{{ item.tagline }}</p>
           <div class="facts">
             <span v-if="item.year">{{ item.year }}</span>
@@ -129,6 +130,7 @@ const route = useRoute();
 const item = ref<any>(null);
 const loading = ref(true);
 const backdropFailed = ref(false);
+const logoFailed = ref(false);
 const progress = ref<any>(null);
 const userStatus = ref('none');
 
@@ -147,6 +149,7 @@ watch(item, (val) => {
 async function fetchMediaDetail(id: string) {
   loading.value = true;
   backdropFailed.value = false;
+  logoFailed.value = false;
   progress.value = null;
   userStatus.value = 'none';
   try {
@@ -222,23 +225,27 @@ function formatDuration(sec: number) {
 }
 
 .backdrop {
-  position: relative;
-  height: 300px;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100vh;
   overflow: hidden;
   background: #1a1a2e;
+  z-index: 0;
 }
 
 .backdrop img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: blur(2px) brightness(0.6);
+  filter: blur(4px) brightness(0.35);
 }
 
 .backdrop-overlay {
   position: absolute;
   inset: 0;
-  background: linear-gradient(to bottom, rgba(15, 15, 26, 0.3), #0f0f1a);
+  background: linear-gradient(to bottom, rgba(15, 15, 26, 0.1) 0%, rgba(15, 15, 26, 0.85) 60%, #0f0f1a 100%);
 }
 
 .backdrop-progress {
@@ -259,10 +266,11 @@ function formatDuration(sec: number) {
 }
 
 .content {
+  position: relative;
+  z-index: 1;
   max-width: 960px;
   margin: 0 auto;
-  padding: 0 24px 40px;
-  margin-top: -80px;
+  padding: 72px 24px 40px;
 }
 
 .back-link {
@@ -299,6 +307,17 @@ function formatDuration(sec: number) {
   font-size: 28px;
   color: #e0e0e0;
   margin: 0 0 12px;
+}
+
+.title.with-logo {
+  display: none;
+}
+
+.logo-image {
+  max-width: 320px;
+  max-height: 100px;
+  margin-bottom: 12px;
+  display: block;
 }
 
 .facts {

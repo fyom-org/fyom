@@ -94,16 +94,101 @@ by deep, Kodi-compliant metadata.
 - [x] Status toggle on detail page (with clear option)
 - [x] Dashboard "Want to Watch" row (Continue → Want → Recent)
 
-## Phase 8: Rich Metadata & NFO Compliance ✅
+## Phase 8: Rich Metadata & NFO Compliance 🔧 *Corrections in Progress*
 
-- [x] Kodi-standard NFO parsing (`<ratings>` with child `<value>`, `<uniqueid>`, `<set>`)
-- [x] Multi-episode NFO support (`ParseEpisodeNFOs` splitting on `<episodedetails`)
-- [x] Deep metadata extraction (actors, genres, studios, uniqueids, mpaa, tagline, set_name)
-- [x] Technical metadata from `<fileinfo>` (video/audio/subtitle streams)
-- [x] JSON string storage in SQLite for arrays/objects (no join tables)
-- [x] API response decoding (JSON strings → typed arrays/objects)
-- [x] Frontend genre tags, cast display (avatar initials), MPAA badge, tagline
-- [x] Client-side genre filter in LibraryView
+### 8.1 NFO Parser & Data Model ✅
+- [x] Kodi-standard `<ratings>` block (child `<value>/<votes>`, named rating sets)
+- [x] `<uniqueid type="...">` multi-source ID parsing (new Kodi format)
+- [x] `<set>` support (franchise/collection grouping pointer)
+- [x] Multi-episode NFO file support (`ParseEpisodeNFOs` — splits on
+      `<episodedetails>`, single-episode fallback)
+- [x] Deep metadata fields: genres, studios, mpaa, tagline, outline, premiered,
+      set_name, directors, credits, tags, countries
+- [x] Actor extraction from `<actor>` blocks (name, role, thumb)
+- [x] Technical stream metadata from `<fileinfo>`
+      (video codec/res/fps, audio codec/channels/lang, subtitle lang list)
+- [x] JSON string storage in SQLite for variable-length arrays/objects
+      (deliberate MVP trade-off — see Architecture Note below)
+- [x] `actorsToJSON`, `uniqueIDsToJSON`, `subtitlesToJSON`, `stringsToJSON`
+      helpers in importer
+
+### 8.2 NFO Compliance Bugs (Epic 21 — in progress)
+> Three structural defects introduced during the Epic 20 rewrite,
+> identified via real-world NFO file review.
+
+- [ ] `NFOActor.Type` field missing — `<type>Actor|GuestStar|Producer|...</type>`
+      unparsed; Producers/Directors contaminate the cast API response
+- [ ] `NFOActor.SortOrder` xml tag incorrect — was `xml:"order"`,
+      correct is `xml:"sortorder"`; all sort positions silently zero
+- [ ] Old-format ID fields unhandled — `<imdb_id>`, `<tvdbid>`, `<tmdbid>`, `<id>`
+      (classic Kodi/tinyMediaManager output) silently dropped on import
+
+### 8.3 Import Pipeline: Normalization Layer (Epic 21 — in progress)
+> Raw NFO data currently flows parser → storage with no intermediate
+> sanitization pass. Each apply*NFOFields() call must independently remember
+> every edge case — a class of bugs, not individual bugs. A Normalize() stage
+> makes the pipeline correct by construction.
+>
+> This is the architectural fix that closes the regression class, not just
+> the individual Episode Title incident.
+
+- [ ] `NormalizeMediaItem(item, nfo)` — single entry point before any DB write
+- [ ] ID merge: old-format fields folded into UniqueIDs slice, deduped
+      (precedence: `<uniqueid type="...">` > old-format fields)
+- [ ] Actor classification: `Actor`/`""` → main cast; `GuestStar` → guest list;
+      `Producer`/`Director`/`Writer` → stripped from both cast fields
+- [ ] Title safety: `if nfo.Title != "" { item.Title = nfo.Title }` —
+      closes the episode title regression class across all media types
+- [ ] Shared by Movie, Show, and Episode import paths (no per-type duplication)
+
+### 8.4 API Response Layer ✅ *partial*
+- [x] `ActorResponse` struct (name, role, thumb)
+- [x] `decodeActors`, `decodeUniqueIDs`, `decodeStrings` helpers
+- [x] All extended metadata fields exposed in `MediaItemResponse`
+- [ ] Main cast filtered to `type=Actor`, sorted by `sortorder`, limit N
+- [ ] `GuestStars []ActorResponse` as distinct field (limit M)
+- [ ] Producers/Directors/Writers absent from both cast fields
+
+### 8.5 Frontend Metadata Display ✅ *partial*
+- [x] Genre tag pills, MPAA badge, tagline on detail page
+- [x] Cast section with avatar-initial circles
+- [x] Client-side genre filter row in LibraryView
+- [ ] Cast section consumes clean `actors` field only (post-8.3 fix)
+- [ ] GuestStars section on episode detail pages
+
+### 8.6 Episode Detail UX (Epic 21 — in progress)
+> Per-episode metadata (individual plot, rating, aired date, guest cast) was
+> fully extracted in 8.1 but had no UI entry point. Episodes were play-only
+> entries; their metadata was invisible.
+
+- [ ] Episode row title in EpisodeList is a router-link → `/media/:episode_id`
+      (▶ play button retained as direct-play shortcut, unchanged)
+- [ ] Detail page renders `type=episode` context: episode plot, S×E label,
+      aired date, individual rating
+- [ ] GuestStars section on episode detail
+- [ ] "← Back to show" contextual link on episode detail pages
+
+---
+
+**Architecture Note — JSON Storage & the Query Debt**
+
+Genres, actors, and other variable-length fields are stored as JSON strings in
+SQLite (no join tables). This was a deliberate MVP decision: fast delivery,
+zero schema complexity, survives re-import without migration.
+
+Known limitation: server-side filtering on these fields requires either
+deserializing rows in application memory or using SQLite's `json_each()`
+operator (available SQLite ≥ 3.38, zero schema change). Current client-side
+genre filtering is unaffected.
+
+Resolution path:
+- **Now through Production Phase 1**: client-side filtering is sufficient;
+  `json_each()` available as a drop-in if a server-side filter endpoint is
+  needed before Phase 3.
+- **Production Phase 3**: FTS5 full-text search covers the primary discovery
+  use case. Genre/actor server-side filtering addressed at that point —
+  either via `json_each()` queries or a targeted `media_genres` join table.
+  Decision deferred until actual query performance becomes the constraint.
 
 ---
 

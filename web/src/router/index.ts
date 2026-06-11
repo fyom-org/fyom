@@ -73,9 +73,10 @@ const router = createRouter({
   ],
 });
 
-router.beforeEach((to) => {
+// Security: role is verified server-side via /auth/me endpoint.
+// localStorage is never used for role storage.
+router.beforeEach(async (to) => {
   const token = localStorage.getItem('token');
-  const role = localStorage.getItem('role');
 
   // Public routes
   if (to.path === '/login' || to.path === '/register' || to.path === '/setup') {
@@ -88,10 +89,25 @@ router.beforeEach((to) => {
     return;
   }
 
-  // Admin routes require admin role
-  if (to.path.startsWith('/admin') && role !== 'admin') {
-    router.push('/');
-    return;
+  // Admin routes: verify role via API, not localStorage
+  if (to.path.startsWith('/admin')) {
+    try {
+      const res = await fetch('/api/v1/auth/me', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        router.push('/login');
+        return;
+      }
+      const data = await res.json();
+      if (data.data?.role !== 'admin') {
+        router.push('/');
+        return;
+      }
+    } catch {
+      router.push('/login');
+      return;
+    }
   }
 });
 

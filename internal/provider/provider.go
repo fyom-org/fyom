@@ -29,7 +29,7 @@ type Provider interface {
 	// Examples: "local", "s3", "remote_fyom"
 	Type() string
 
-	// SupportsRedirect reports whether StreamURL/PosterURL/BackdropURL return
+	// SupportsRedirect reports whether StreamURL/PosterURL/BackdropURL/LogoURL return
 	// URLs suitable for an HTTP 302 Location header rather than inline JSON.
 	//
 	//   LocalProvider       → false  (URLs served by this process)
@@ -51,6 +51,10 @@ type Provider interface {
 	// BackdropURL returns a time-limited URL for the backdrop image.
 	// Returns ("", nil) if the item has no backdrop path.
 	BackdropURL(ctx context.Context, item *model.MediaItem) (string, error)
+
+	// LogoURL returns a time-limited URL for the logo image.
+	// Returns ("", nil) if the item has no logo path.
+	LogoURL(ctx context.Context, item *model.MediaItem) (string, error)
 }
 
 // Registry manages all registered providers.

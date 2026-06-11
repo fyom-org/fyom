@@ -47,3 +47,10 @@ func (p *LocalProvider) BackdropURL(_ context.Context, item *model.MediaItem) (s
 	}
 	return p.signer.Generate(fmt.Sprintf("/api/v1/media/%s/backdrop", item.ID)), nil
 }
+
+func (p *LocalProvider) LogoURL(_ context.Context, item *model.MediaItem) (string, error) {
+	if item.LogoPath == "" {
+		return "", nil
+	}
+	return p.signer.Generate(fmt.Sprintf("/api/v1/media/%s/logo", item.ID)), nil
+}

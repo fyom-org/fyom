@@ -140,6 +140,7 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 		r.Get("/{id}/poster", mediaHandler.Poster)
 		r.Get("/{id}/backdrop", mediaHandler.ServeBackdrop)
 		r.Get("/{id}/stream", mediaHandler.Stream)
+		r.Get("/{id}/logo", mediaHandler.ServeLogo)
 	})
 
 	// Static files

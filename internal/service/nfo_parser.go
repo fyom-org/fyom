@@ -166,3 +166,19 @@ func FindEpisodeThumbnailPath(dir, baseName, nfoThumb string) string {
 	}
 	return ""
 }
+
+// FindLogoPath looks for logo.png in the given directory.
+func FindLogoPath(dir string) string {
+	candidates := []string{
+		"logo.png",
+		"logo.jpg",
+		"clearlogo.png",
+	}
+	for _, name := range candidates {
+		candidate := filepath.Join(dir, name)
+		if fileExists(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}

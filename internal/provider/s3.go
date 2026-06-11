@@ -102,6 +102,13 @@ func (p *S3Provider) BackdropURL(ctx context.Context, item *model.MediaItem) (st
 	return p.presignKey(ctx, item.BackdropPath, assetURLTTL)
 }
 
+func (p *S3Provider) LogoURL(ctx context.Context, item *model.MediaItem) (string, error) {
+	if item.LogoPath == "" {
+		return "", nil
+	}
+	return p.presignKey(ctx, item.LogoPath, assetURLTTL)
+}
+
 // presignKey generates a presigned GET URL for the given S3 object key.
 // If CDNBaseURL is configured, the scheme+host of the URL is replaced
 // with the CDN origin. The signature query string is preserved unchanged.

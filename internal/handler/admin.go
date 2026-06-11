@@ -166,7 +166,7 @@ func (h *AdminHandler) ListMedia(w http.ResponseWriter, r *http.Request) {
 	}
 
 	offset := (page - 1) * limit
-	dataQuery := "SELECT id, type, title, sort_title, year, overview, rating, duration, file_path, poster_path, backdrop_path, parent_id, season, episode, metadata_source, provider_id, library_id, status, created_at, updated_at, mpaa, genres, studios, actors, unique_ids, premiered, outline, tagline, countries, directors, credits, tags, set_name, video_codec, video_width, video_height, video_duration_seconds, audio_codec, audio_channels, subtitle_languages, aired FROM media_items" + where + " ORDER BY " + orderBy + " LIMIT ? OFFSET ?"
+	dataQuery := "SELECT id, type, title, sort_title, year, overview, rating, duration, file_path, poster_path, backdrop_path, parent_id, season, episode, metadata_source, provider_id, library_id, status, created_at, updated_at, mpaa, genres, studios, actors, unique_ids, premiered, outline, tagline, countries, directors, credits, tags, set_name, video_codec, video_width, video_height, video_duration_seconds, audio_codec, audio_channels, subtitle_languages, aired, logo_path FROM media_items" + where + " ORDER BY " + orderBy + " LIMIT ? OFFSET ?"
 	dataArgs := append(whereArgs, limit, offset)
 
 	rows, err := h.db.QueryContext(r.Context(), dataQuery, dataArgs...)

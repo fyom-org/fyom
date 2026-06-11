@@ -473,6 +473,11 @@ func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, exi
 	}
 	applyShowNFOFields(showItem, showNFO)
 
+	// Find logo.png
+	if logoPath := FindLogoPath(showDirPath); logoPath != "" {
+		showItem.LogoPath = logoPath
+	}
+
 	if err := imp.mediaRepo.Create(ctx, showItem); err != nil {
 		return 0, err
 	}
@@ -580,6 +585,7 @@ func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, show
 			Duration:       epRuntime * 60,
 			FilePath:       videoPath,
 			PosterPath:     thumbPath,
+			BackdropPath:   thumbPath,
 			ParentID:       showID,
 			Season:         repository.IntPtr(season),
 			Episode:        repository.IntPtr(episode),
@@ -671,6 +677,10 @@ func (imp *Importer) processMovieDir(ctx context.Context, dirPath, nfoPath strin
 		UpdatedAt:      now,
 	}
 	applyMovieNFOFields(movieItem, movieNFO)
+	// Find logo.png
+	if logoPath := FindLogoPath(dirPath); logoPath != "" {
+		movieItem.LogoPath = logoPath
+	}
 
 	if err := imp.mediaRepo.Create(ctx, movieItem); err != nil {
 		return 0, err
