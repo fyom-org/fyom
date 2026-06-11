@@ -8,35 +8,38 @@
           'sidebar-hidden': !sidebarOpen,
         }"
       >
-        <button class="sidebar-toggle" @click="toggleSidebar">☰</button>
-        <router-link to="/" exact-active-class="router-link-active">Home</router-link>
-        <router-link to="/library">Library</router-link>
-        <!-- Library switcher — only shows when 2+ libraries exist -->
-        <div class="library-section" v-if="libraries.length >= 2">
-          <div class="section-label">Libraries</div>
+        <div class="sidebar-content">
+          <router-link to="/" exact-active-class="router-link-active">Home</router-link>
+          <router-link to="/library">Library</router-link>
+          <!-- Library switcher — only shows when 2+ libraries exist -->
+          <div class="library-section" v-if="libraries.length >= 2">
+            <div class="section-label">Libraries</div>
+            <router-link
+              v-for="lib in libraries"
+              :key="lib.id"
+              :to="`/library/${lib.id}`"
+              class="nav-link library-link"
+              @click="sidebarOpen = false"
+            >
+              <span class="library-icon">
+                {{ lib.type === 'movie' ? '🎬' : lib.type === 'show' ? '📺' : '📁' }}
+              </span>
+              {{ lib.name }}
+            </router-link>
+          </div>
           <router-link
-            v-for="lib in libraries"
-            :key="lib.id"
-            :to="`/library/${lib.id}`"
-            class="nav-link library-link"
+            v-if="isAdmin"
+            to="/admin"
+            class="nav-link admin-link"
             @click="sidebarOpen = false"
+            >⚙ Admin</router-link
           >
-            <span class="library-icon">
-              {{ lib.type === 'movie' ? '🎬' : lib.type === 'show' ? '📺' : '📁' }}
-            </span>
-            {{ lib.name }}
-          </router-link>
         </div>
-        <router-link
-          v-if="isAdmin"
-          to="/admin"
-          class="nav-link admin-link"
-          @click="sidebarOpen = false"
-          >⚙ Admin</router-link
-        >
-        <div class="sidebar-spacer"></div>
-        <router-link to="/profile" @click="sidebarOpen = false">Profile</router-link>
-        <button class="btn-logout" @click="handleLogout">Logout</button>
+        <div class="sidebar-footer">
+          <router-link to="/profile" @click="sidebarOpen = false">Profile</router-link>
+          <button class="btn-logout" @click="handleLogout">Logout</button>
+          <button class="sidebar-toggle" @click="toggleSidebar">☰</button>
+        </div>
       </aside>
       <div
         class="sidebar-overlay"
@@ -149,8 +152,7 @@ function handleLogout() {
 .floating-sidebar-toggle {
   position: fixed;
   left: 0;
-  top: 50%;
-  transform: translateY(-50%);
+  bottom: 10%;
   width: 40px;
   height: 40px;
   background: rgba(26, 26, 46, 0.8);
@@ -199,11 +201,24 @@ function handleLogout() {
   background: #1a1a2e;
   border-right: 1px solid var(--color-border);
   flex-shrink: 0;
-  padding-top: var(--spacing-lg);
   display: flex;
   flex-direction: column;
   transition: transform 0.3s ease;
   z-index: 100;
+}
+
+.sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-lg) var(--spacing-md) 0;
+}
+
+.sidebar-footer {
+  padding: var(--spacing-md);
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
 }
 
 /* Desktop: Collapse via width */
@@ -263,10 +278,6 @@ function handleLogout() {
   background: #14142a;
   border-left: 2px solid rgba(108, 99, 255, 0.4);
   padding-left: calc(var(--spacing-md) - 2px);
-}
-
-.sidebar-spacer {
-  flex: 1;
 }
 
 .admin-link {
