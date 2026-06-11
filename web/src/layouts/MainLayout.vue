@@ -29,9 +29,6 @@
             </router-link>
           </div>
         </div>
-        <div class="sidebar-footer">
-          <!-- 仅保留 Profile 和 Logout，移除 sidebar-toggle 按钮 -->
-        </div>
       </aside>
       <div
         class="sidebar-overlay"
@@ -168,15 +165,7 @@ function handleLogout() {
 .sidebar-content {
   flex: 1;
   overflow-y: auto;
-  padding: var(--spacing-sm) var(--spacing-sm) 0;
-}
-
-.sidebar-footer {
-  padding: var(--spacing-sm);
-  border-top: 1px solid var(--color-border);
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-sm);
 }
 
 /* Desktop: Collapse via width */
