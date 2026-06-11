@@ -41,6 +41,10 @@
             >
             <span v-if="item.duration">{{ formatDuration(item.duration) }}</span>
             <span class="type-badge">{{ item.type }}</span>
+            <h2 class="episode-detail-number">
+              <span v-if="item.season"> S{{ String(item.season).padStart(2, '0') }} </span>
+              <span v-if="item.episode"> E{{ String(item.episode).padStart(2, '0') }} </span>
+            </h2>
           </div>
 
           <!-- Movie metadata row -->
@@ -151,10 +155,6 @@
           <router-link v-if="item.show_id" :to="`/media/${item.show_id}`" class="back-to-show">
             ← Back to Show
           </router-link>
-          <h2 class="episode-detail-number">
-            <span v-if="item.season">S{{ String(item.season).padStart(2, '0') }}</span
-            ><span v-if="item.episode">E{{ String(item.episode).padStart(2, '0') }}</span>
-          </h2>
         </div>
         <div class="episode-detail-meta">
           <span v-if="item.aired" class="episode-aired">Aired: {{ item.aired }}</span>
@@ -609,7 +609,9 @@ function formatDuration(sec: number) {
 }
 
 .episode-detail-number {
-  font-size: 20px;
+  font-size: 18px;
+  padding: 2px 8px;
+  border-radius: 6px;
   color: #e0e0e0;
   margin: 0;
   font-weight: 600;
