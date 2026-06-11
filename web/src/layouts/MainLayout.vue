@@ -30,7 +30,6 @@
           </div>
         </div>
         <div class="sidebar-footer">
-          <router-link to="/profile" @click="sidebarOpen = false">Profile</router-link>
           <button class="sidebar-toggle" @click="toggleSidebar">☰</button>
         </div>
       </aside>
