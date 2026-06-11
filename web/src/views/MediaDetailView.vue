@@ -88,7 +88,7 @@
               :class="['status-btn', { active: userStatus === 'want_to_watch' }]"
               @click="setStatus('want_to_watch')"
             >
-              🔖 Want
+              ✦ Want
             </button>
             <button
               :class="['status-btn', { active: userStatus === 'watching' }]"
