@@ -24,23 +24,31 @@ func NewMediaRepository(db *DB) *MediaRepository {
 	return &MediaRepository{db: db}
 }
 
-const mediaColumns = `id, type, title, sort_title, year, overview, rating, duration,
+// MediaColumns is the canonical column list for media_items SELECT queries.
+// Exported so handlers can build dynamic queries without hardcoding column names.
+const MediaColumns = `id, type, title, sort_title, year, overview, rating, duration,
 		file_path, poster_path, backdrop_path, parent_id, season, episode,
 		metadata_source, provider_id, library_id, status, created_at, updated_at,
 		mpaa, genres, studios, actors, unique_ids, premiered, outline, tagline,
-		countries, directors, credits, tags, set_name, video_codec, video_width,
-		video_height, video_duration_seconds, audio_codec, audio_channels,
-		subtitle_languages, aired, logo_path`
+		countries, directors, credits, tags, set_name, set_overview, video_codec,
+		video_width, video_height, video_duration_seconds, audio_codec, audio_channels,
+		subtitle_languages, aired, logo_path, language, country_code, custom_rating,
+		collection_number, end_date, release_date, display_order, original_title,
+		user_rating, date_added, last_played, playcount`
+
+const mediaColumns = MediaColumns
 
 const mediaInsertColumns = `(id, type, title, sort_title, year, overview, rating, duration,
 		file_path, poster_path, backdrop_path, parent_id, season, episode,
 		metadata_source, provider_id, library_id, status, created_at, updated_at,
 		mpaa, genres, studios, actors, unique_ids, premiered, outline, tagline,
-		countries, directors, credits, tags, set_name, video_codec, video_width,
-		video_height, video_duration_seconds, audio_codec, audio_channels,
-		subtitle_languages, aired, logo_path)`
+		countries, directors, credits, tags, set_name, set_overview, video_codec,
+		video_width, video_height, video_duration_seconds, audio_codec, audio_channels,
+		subtitle_languages, aired, logo_path, language, country_code, custom_rating,
+		collection_number, end_date, release_date, display_order, original_title,
+		user_rating, date_added, last_played, playcount)`
 
-const mediaInsertPlaceholders = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+const mediaInsertPlaceholders = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 func scanMediaItem(rows *sql.Rows, m *model.MediaItem) error {
 	var season, episode int
@@ -50,8 +58,11 @@ func scanMediaItem(rows *sql.Rows, m *model.MediaItem) error {
 		&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.Status, &m.CreatedAt, &m.UpdatedAt,
 		&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
 		&m.Outline, &m.Tagline, &m.Countries, &m.Directors, &m.Credits, &m.Tags,
-		&m.SetName, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
-		&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages, &m.Aired, &m.LogoPath); err != nil {
+		&m.SetName, &m.SetOverview, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
+		&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages, &m.Aired, &m.LogoPath,
+		&m.Language, &m.CountryCode, &m.CustomRating, &m.CollectionNumber,
+		&m.EndDate, &m.ReleaseDate, &m.DisplayOrder, &m.OriginalTitle,
+		&m.UserRating, &m.DateAdded, &m.LastPlayed, &m.Playcount); err != nil {
 		return err
 	}
 	m.Season = IntPtr(season)
@@ -67,8 +78,11 @@ func scanMediaRow(row *sql.Row, m *model.MediaItem) error {
 		&m.Status, &m.CreatedAt, &m.UpdatedAt,
 		&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
 		&m.Outline, &m.Tagline, &m.Countries, &m.Directors, &m.Credits, &m.Tags,
-		&m.SetName, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
-		&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages, &m.Aired, &m.LogoPath)
+		&m.SetName, &m.SetOverview, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
+		&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages, &m.Aired, &m.LogoPath,
+		&m.Language, &m.CountryCode, &m.CustomRating, &m.CollectionNumber,
+		&m.EndDate, &m.ReleaseDate, &m.DisplayOrder, &m.OriginalTitle,
+		&m.UserRating, &m.DateAdded, &m.LastPlayed, &m.Playcount)
 	m.Season = IntPtr(season)
 	m.Episode = IntPtr(episode)
 	return err
@@ -145,8 +159,16 @@ func (r *MediaRepository) Create(ctx context.Context, m *model.MediaItem) error 
 		m.CreatedAt, m.UpdatedAt,
 		m.MPAA, m.Genres, m.Studios, m.Actors, m.UniqueIDs, m.Premiered,
 		m.Outline, m.Tagline, m.Countries, m.Directors, m.Credits, m.Tags,
+<<<<<<< HEAD
 		m.SetName, m.VideoCodec, m.VideoWidth, m.VideoHeight, m.VideoDurationSeconds,
 					m.AudioCodec, m.AudioChannels, m.SubtitleLanguages, m.Aired, m.LogoPath)
+=======
+		m.SetName, m.SetOverview, m.VideoCodec, m.VideoWidth, m.VideoHeight, m.VideoDurationSeconds,
+		m.AudioCodec, m.AudioChannels, m.SubtitleLanguages, m.Aired, m.LogoPath,
+		m.Language, m.CountryCode, m.CustomRating, m.CollectionNumber,
+		m.EndDate, m.ReleaseDate, m.DisplayOrder, m.OriginalTitle,
+		m.UserRating, m.DateAdded, m.LastPlayed, m.Playcount)
+>>>>>>> f05aa46299e7153ad8b48fea327f882bc5da1e8d
 	return err
 }
 

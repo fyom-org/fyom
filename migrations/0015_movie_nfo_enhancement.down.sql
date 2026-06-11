@@ -1,0 +1,13 @@
+ALTER TABLE media_items DROP COLUMN playcount;
+ALTER TABLE media_items DROP COLUMN last_played;
+ALTER TABLE media_items DROP COLUMN date_added;
+ALTER TABLE media_items DROP COLUMN user_rating;
+ALTER TABLE media_items DROP COLUMN original_title;
+ALTER TABLE media_items DROP COLUMN display_order;
+ALTER TABLE media_items DROP COLUMN release_date;
+ALTER TABLE media_items DROP COLUMN end_date;
+ALTER TABLE media_items DROP COLUMN collection_number;
+ALTER TABLE media_items DROP COLUMN custom_rating;
+ALTER TABLE media_items DROP COLUMN country_code;
+ALTER TABLE media_items DROP COLUMN language;
+ALTER TABLE media_items DROP COLUMN set_overview;

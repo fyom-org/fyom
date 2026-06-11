@@ -46,6 +46,7 @@ type MediaItem struct {
 	Credits             string  `json:"credits,omitempty" db:"credits"`
 	Tags                string  `json:"tags,omitempty" db:"tags"`
 	SetName             string  `json:"set_name,omitempty" db:"set_name"`
+	SetOverview         string  `json:"set_overview,omitempty" db:"set_overview"`
 	VideoCodec          string  `json:"video_codec,omitempty" db:"video_codec"`
 	VideoWidth          int     `json:"video_width,omitempty" db:"video_width"`
 	VideoHeight         int     `json:"video_height,omitempty" db:"video_height"`
@@ -55,6 +56,18 @@ type MediaItem struct {
 	SubtitleLanguages   string  `json:"subtitle_languages,omitempty" db:"subtitle_languages"`
 	Aired               string  `json:"aired,omitempty" db:"aired"`
 	LogoPath            string  `json:"logo_path,omitempty" db:"logo_path"`
+	Language            string  `json:"language,omitempty" db:"language"`
+	CountryCode         string  `json:"country_code,omitempty" db:"country_code"`
+	CustomRating        string  `json:"custom_rating,omitempty" db:"custom_rating"`
+	CollectionNumber    string  `json:"collection_number,omitempty" db:"collection_number"`
+	EndDate             string  `json:"end_date,omitempty" db:"end_date"`
+	ReleaseDate         string  `json:"release_date,omitempty" db:"release_date"`
+	DisplayOrder        string  `json:"display_order,omitempty" db:"display_order"`
+	OriginalTitle       string  `json:"original_title,omitempty" db:"original_title"`
+	UserRating          float64 `json:"user_rating,omitempty" db:"user_rating"`
+	DateAdded           string  `json:"date_added,omitempty" db:"date_added"`
+	LastPlayed          string  `json:"last_played,omitempty" db:"last_played"`
+	Playcount           int     `json:"playcount,omitempty" db:"playcount"`
 }
 
 // ImportJob tracks an import operation.

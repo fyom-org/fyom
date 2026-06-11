@@ -36,24 +36,24 @@ type NFOThumb struct {
 
 // NFOFanart contains multiple background images.
 type NFOFanart struct {
-	Thumbs []NFOThumb `xml:"thumb"`
+    Thumbs []NFOThumb `xml:"thumb"`
 }
 
 // NFORatingValue represents a single rating from a named source.
 // Kodi format:
 //
-//	<rating name="imdb" max="10" default="true">
-//	  <value>7.100000</value>
-//	  <votes>111025</votes>
-	//	</rating>
+//  <rating name="imdb" max="10" default="true">
+//    <value>7.100000</value>
+//    <votes>111025</votes>
+//  </rating>
 //
 // NOTE: value and votes are CHILD ELEMENTS, not attributes!
 type NFORatingValue struct {
-	Name    string  `xml:"name,attr"`
-	Max     float64 `xml:"max,attr"`
-	Default string  `xml:"default,attr"`
-	Value   float64 `xml:"value"`
-	Votes   int     `xml:"votes"`
+    Name    string  `xml:"name,attr"`
+    Max     float64 `xml:"max,attr"`
+    Default string  `xml:"default,attr"`
+    Value   float64 `xml:"value"`
+    Votes   int     `xml:"votes"`
 }
 
 // NFORatings wraps multiple named ratings.
@@ -105,40 +105,66 @@ type NFOFileInfo struct {
 
 // NFOMovie represents the movie metadata mapped from tinyMediaManager / Kodi NFO files.
 type NFOMovie struct {
-	XMLName       xml.Name      `xml:"movie"`
-	Title         string        `xml:"title"`
-	OriginalTitle string        `xml:"originaltitle"`
-	SortTitle     string        `xml:"sorttitle,omitempty"`
-	Year          int           `xml:"year,omitempty"`
-	Premiered     string        `xml:"premiered,omitempty"`
-	Plot          string        `xml:"plot,omitempty"`
-	Outline       string        `xml:"outline,omitempty"`
-	Tagline       string        `xml:"tagline,omitempty"`
-	Rating        float64       `xml:"rating,omitempty"`
-	Ratings       NFORatings    `xml:"ratings"`
-	UserRating    float64       `xml:"userrating,omitempty"`
-	Runtime       int           `xml:"runtime,omitempty"` // minutes
-	MPAA          string        `xml:"mpaa,omitempty"`
-	Playcount     int           `xml:"playcount,omitempty"`
-	LastPlayed    string        `xml:"lastplayed,omitempty"`
-	Genres        []string      `xml:"genre"`
-	Countries     []string      `xml:"country"`
-	Studios       []string      `xml:"studio"`
-	Tags          []string      `xml:"tag"`
-	Credits       []string      `xml:"credits"`
-	Directors     []string      `xml:"director"`
-	Actors        []NFOActor    `xml:"actor"`
-	Set           *NFOSet       `xml:"set"`
-	Thumbs        []NFOThumb    `xml:"thumb"`
-	Fanart        *NFOFanart    `xml:"fanart,omitempty"`
-	UniqueIDs     []NFOUniqueID `xml:"uniqueid"`
-	ImdbID        string        `xml:"imdb_id"`  // old: <imdb_id>tt0816692</imdb_id>
-	TmdbID        string        `xml:"tmdbid"`   // old: <tmdbid>157336</tmdbid>
-	TvdbID        string        `xml:"tvdbid"`   // old: <tvdbid>...</tvdbid>
-	LegacyID      string        `xml:"id"`       // very old: <id>...</id> (usually numeric)
-	FileInfo      NFOFileInfo   `xml:"fileinfo"`
-	Trailer       string        `xml:"trailer,omitempty"`
-	FileName      string        `xml:"-"`
+    XMLName          xml.Name      `xml:"movie"`
+    Title            string        `xml:"title"`
+    OriginalTitle    string        `xml:"originaltitle"`
+    SortTitle        string        `xml:"sorttitle,omitempty"`
+    SortName         string        `xml:"sortname,omitempty"` // Jellyfin extension
+
+    Year             int           `xml:"year,omitempty"`
+    Premiered        string        `xml:"premiered,omitempty"`
+    ReleaseDate      string        `xml:"releasedate,omitempty"`
+    EndDate          string        `xml:"enddate,omitempty"`
+
+    Plot             string        `xml:"plot,omitempty"`
+    Outline          string        `xml:"outline,omitempty"`
+    Tagline          string        `xml:"tagline,omitempty"`
+
+    Rating           float64       `xml:"rating,omitempty"`
+    CustomRating     string        `xml:"customrating,omitempty"`
+    Ratings          NFORatings    `xml:"ratings"`
+    UserRating       float64       `xml:"userrating,omitempty"`
+
+    Runtime          int           `xml:"runtime,omitempty"` // minutes
+    MPAA             string        `xml:"mpaa,omitempty"`
+
+    Playcount        int           `xml:"playcount,omitempty"`
+    LastPlayed       string        `xml:"lastplayed,omitempty"`
+    DateAdded        string        `xml:"dateadded,omitempty"`
+
+    Genres           []string      `xml:"genre"`
+    Countries        []string      `xml:"country"`
+    CountryCode      string        `xml:"countrycode,omitempty"`
+
+    Studios          []string      `xml:"studio"`
+    Tags             []string      `xml:"tag"`
+
+    Credits          []string      `xml:"credits"`
+    Directors        []string      `xml:"director"`
+    Actors           []NFOActor    `xml:"actor"`
+
+    Set              *NFOSet       `xml:"set"`
+    CollectionNumber string        `xml:"collectionnumber,omitempty"`
+
+    Thumbs           []NFOThumb    `xml:"thumb"`
+    Fanart           *NFOFanart    `xml:"fanart,omitempty"`
+
+    UniqueIDs        []NFOUniqueID `xml:"uniqueid"`
+
+    ImdbID           string        `xml:"imdb_id"`
+    TmdbID           string        `xml:"tmdbid"`
+    TvdbID           string        `xml:"tvdbid"`
+    LegacyID         string        `xml:"id"`
+
+    Language         string        `xml:"language,omitempty"`
+    DisplayOrder     string        `xml:"displayorder,omitempty"`
+    LockedFields     string        `xml:"lockedfields,omitempty"`
+    LockData         string        `xml:"lockdata,omitempty"`
+
+    FileInfo         NFOFileInfo   `xml:"fileinfo"`
+    Trailer          string        `xml:"trailer,omitempty"`
+
+    FileName         string        `xml:"-"`
 }
 
 // NFOTVShow represents the parent metadata record for a TV series.

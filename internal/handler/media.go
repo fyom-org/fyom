@@ -74,6 +74,22 @@ type MediaItemResponse struct {
 	SubtitleLanguages []string          `json:"subtitle_languages,omitempty"`
 	LogoURL           *string           `json:"logo_url,omitempty"`
 	Aired             string            `json:"aired,omitempty"`
+<<<<<<< HEAD
+=======
+	Language          string            `json:"language,omitempty"`
+	CountryCode       string            `json:"country_code,omitempty"`
+	CustomRating      string            `json:"custom_rating,omitempty"`
+	CollectionNumber  string            `json:"collection_number,omitempty"`
+	EndDate           string            `json:"end_date,omitempty"`
+	ReleaseDate       string            `json:"release_date,omitempty"`
+	DisplayOrder      string            `json:"display_order,omitempty"`
+	OriginalTitle     string            `json:"original_title,omitempty"`
+	UserRating        *float64          `json:"user_rating,omitempty"`
+	DateAdded         string            `json:"date_added,omitempty"`
+	LastPlayed        string            `json:"last_played,omitempty"`
+	Playcount         int               `json:"playcount,omitempty"`
+	SetOverview       string            `json:"set_overview,omitempty"`
+>>>>>>> f05aa46299e7153ad8b48fea327f882bc5da1e8d
 }
 // MediaHandler handles media-related HTTP endpoints.
 type MediaHandler struct {
@@ -123,6 +139,21 @@ func mediaItemToResponse(item *model.MediaItem) MediaItemResponse {
 		AudioChannels:  item.AudioChannels,
 		ShowID:         item.ParentID, // for episodes, parent_id is the show
 		Aired:          item.Aired,
+<<<<<<< HEAD
+=======
+		Language:       item.Language,
+		CountryCode:    item.CountryCode,
+		CustomRating:   item.CustomRating,
+		CollectionNumber: item.CollectionNumber,
+		EndDate:        item.EndDate,
+		ReleaseDate:    item.ReleaseDate,
+		DisplayOrder:   item.DisplayOrder,
+		OriginalTitle:  item.OriginalTitle,
+		DateAdded:      item.DateAdded,
+		LastPlayed:     item.LastPlayed,
+		Playcount:      item.Playcount,
+		SetOverview:    item.SetOverview,
+>>>>>>> f05aa46299e7153ad8b48fea327f882bc5da1e8d
 	}
 
 	if item.Year != 0 {
@@ -133,6 +164,9 @@ func mediaItemToResponse(item *model.MediaItem) MediaItemResponse {
 	}
 	if item.Duration != 0 {
 		resp.Duration = &item.Duration
+	}
+	if item.UserRating != 0 {
+		resp.UserRating = &item.UserRating
 	}
 	if item.Season != nil {
 		resp.Season = item.Season

@@ -254,6 +254,7 @@ func subtitlesToJSON(subs []model.NFOSubtitle) string {
 }
 
 // applyMovieNFOFields populates enhanced fields from parsed NFO onto a MediaItem.
+// Aligned with Jellyfin NFO spec for full movie metadata support.
 func applyMovieNFOFields(item *model.MediaItem, nfo *model.NFOMovie) {
 	if nfo.Title != "" {
 		item.Title = nfo.Title
@@ -281,17 +282,57 @@ func applyMovieNFOFields(item *model.MediaItem, nfo *model.NFOMovie) {
 		ids = append(ids, model.NFOUniqueID{Type: "tvdb", Value: nfo.LegacyID})
 	}
 	item.UniqueIDs = uniqueIDsToJSON(ids)
+	// Title metadata
+	if nfo.OriginalTitle != "" {
+		item.OriginalTitle = nfo.OriginalTitle
+	}
+	if nfo.SortTitle != "" {
+		item.SortTitle = nfo.SortTitle
+	} else if nfo.SortName != "" {
+		item.SortTitle = nfo.SortName
+	}
 
+	// Release dates
 	item.Premiered = nfo.Premiered
+	item.ReleaseDate = nfo.ReleaseDate
+	item.EndDate = nfo.EndDate
+
+	// Plot and tagline
 	item.Outline = nfo.Outline
 	item.Tagline = nfo.Tagline
+
+	// Country and language
 	item.Countries = stringsToJSON(nfo.Countries)
+	item.CountryCode = nfo.CountryCode
+	item.Language = nfo.Language
+
+	// Crew
 	item.Directors = stringsToJSON(nfo.Directors)
 	item.Credits = stringsToJSON(nfo.Credits)
 	item.Tags = stringsToJSON(nfo.Tags)
+
+	// Collection / set
 	if nfo.Set != nil {
 		item.SetName = nfo.Set.Name
+		item.SetOverview = nfo.Set.Overview
 	}
+	item.CollectionNumber = nfo.CollectionNumber
+
+	// Ratings
+	item.CustomRating = nfo.CustomRating
+	item.UserRating = nfo.UserRating
+
+	// Playback state
+	item.LastPlayed = nfo.LastPlayed
+	item.Playcount = nfo.Playcount
+
+	// Date added
+	item.DateAdded = nfo.DateAdded
+
+	// Display order
+	item.DisplayOrder = nfo.DisplayOrder
+
+	// Stream details
 	item.VideoCodec = nfo.FileInfo.StreamDetails.Video.Codec
 	item.VideoWidth = nfo.FileInfo.StreamDetails.Video.Width
 	item.VideoHeight = nfo.FileInfo.StreamDetails.Video.Height
