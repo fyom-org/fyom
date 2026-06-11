@@ -1,6 +1,42 @@
 <template>
   <div class="layout">
     <div class="body">
+      <aside
+        class="sidebar"
+        :class="{
+          'sidebar-mobile': isMobile,
+          'sidebar-hidden': !sidebarOpen,
+        }"
+      >
+        <button class="sidebar-toggle" @click="toggleSidebar">☰</button>
+        <router-link to="/" exact-active-class="router-link-active">Home</router-link>
+        <router-link to="/library">Library</router-link>
+        <!-- Library switcher — only shows when 2+ libraries exist -->
+        <div class="library-section" v-if="libraries.length >= 2">
+          <div class="section-label">Libraries</div>
+          <router-link
+            v-for="lib in libraries"
+            :key="lib.id"
+            :to="`/library/${lib.id}`"
+            class="nav-link library-link"
+            @click="sidebarOpen = false"
+          >
+            <span class="library-icon">
+              {{ lib.type === 'movie' ? '🎬' : lib.type === 'show' ? '📺' : '📁' }}
+            </span>
+            {{ lib.name }}
+          </router-link>
+        </div>
+        <router-link
+          v-if="isAdmin"
+          to="/admin"
+          class="nav-link admin-link"
+          @click="sidebarOpen = false"
+          >⚙ Admin</router-link
+        >
+        <div class="sidebar-spacer"></div>
+        <router-link to="/profile" @click="sidebarOpen = false">Profile</router-link>
+        <button class="btn-logout" @click="handleLogout">Logout</button>
       </aside>
       <div
         class="sidebar-overlay"
