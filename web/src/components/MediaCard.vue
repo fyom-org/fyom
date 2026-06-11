@@ -11,8 +11,12 @@
       <div class="poster-wrap">
         <img v-if="item.poster_url" :src="item.poster_url" :alt="item.title" loading="lazy" />
         <div v-else class="poster-fallback">{{ item.title?.[0] ?? '?' }}</div>
-        <div class="status-icon" v-if="item.user_status && item.user_status !== 'none'"
-             :class="item.user_status" @click.stop="cycleStatus">
+        <div
+          class="status-icon"
+          v-if="item.user_status && item.user_status !== 'none'"
+          :class="item.user_status"
+          @click.stop="cycleStatus"
+        >
           {{ statusEmoji }}
         </div>
         <span class="library-tag" v-if="libraryName">{{ libraryName }}</span>
@@ -20,7 +24,10 @@
           <button class="play-icon" @click.stop="play">▶</button>
         </div>
         <div v-if="item.position && item.duration && item.position > 0" class="progress-bar">
-          <div class="progress-fill" :style="{ transform: `scaleX(${progressPercent / 100})` }"></div>
+          <div
+            class="progress-fill"
+            :style="{ transform: `scaleX(${progressPercent / 100})` }"
+          ></div>
         </div>
       </div>
       <div class="info">
@@ -37,7 +44,14 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { setMediaStatus, STATUS_NONE, STATUS_WANT, STATUS_WATCHING, STATUS_WATCHED, STATUS_DROPPED } from '@/api/library';
+import {
+  setMediaStatus,
+  STATUS_NONE,
+  STATUS_WANT,
+  STATUS_WATCHING,
+  STATUS_WATCHED,
+  STATUS_DROPPED,
+} from '@/api/library';
 
 const props = defineProps<{
   item: {
@@ -74,11 +88,16 @@ const progressPercent = computed(() => {
 
 const statusEmoji = computed(() => {
   switch (props.item.user_status) {
-    case STATUS_WANT: return '🔖';
-    case STATUS_WATCHING: return '▶';
-    case STATUS_WATCHED: return '✓';
-    case STATUS_DROPPED: return '✕';
-    default: return '';
+    case STATUS_WANT:
+      return '🔖';
+    case STATUS_WATCHING:
+      return '▶';
+    case STATUS_WATCHED:
+      return '✓';
+    case STATUS_DROPPED:
+      return '✕';
+    default:
+      return '';
   }
 });
 
@@ -104,6 +123,13 @@ async function cycleStatus() {
   transition: transform 0.2s ease;
   transform-origin: center;
 }
+
+@media (hover: none) {
+  .media-card:hover {
+    transform: none;
+  }
+}
+
 .poster-wrap {
   aspect-ratio: 2 / 3;
   border-radius: 8px;
@@ -111,66 +137,76 @@ async function cycleStatus() {
   background: #2a2a3e;
   position: relative;
 }
+
 .poster-wrap img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
 }
+
 .poster-fallback {
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 48px;
+  font-size: 3rem;
   color: #555577;
 }
+
 .status-icon {
   position: absolute;
-  top: 8px;
-  left: 8px;
-  width: 28px;
-  height: 28px;
+  top: var(--spacing-sm);
+  left: var(--spacing-sm);
+  width: var(--touch-target);
+  height: var(--touch-target);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   z-index: 2;
   cursor: pointer;
   transition: all 0.15s;
-  background: rgba(0,0,0,0.6);
+  background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(4px);
 }
+
 .status-icon.want_to_watch {
-  background: rgba(33,150,243,0.7);
+  background: rgba(33, 150, 243, 0.7);
 }
+
 .status-icon.watching {
-  background: rgba(108,99,255,0.7);
+  background: rgba(108, 99, 255, 0.7);
 }
+
 .status-icon.watched {
-  background: rgba(76,175,80,0.7);
+  background: rgba(76, 175, 80, 0.7);
 }
+
 .status-icon.dropped {
-  background: rgba(255,107,107,0.7);
+  background: rgba(255, 107, 107, 0.7);
 }
+
 .status-icon:hover {
   transform: scale(1.15);
 }
+
 .library-tag {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  background: rgba(0,0,0,0.7);
+  top: var(--spacing-sm);
+  right: var(--spacing-sm);
+  background: rgba(0, 0, 0, 0.7);
   color: #8888aa;
-  font-size: 10px;
+  font-size: var(--font-size-sm);
   padding: 2px 6px;
   border-radius: 3px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   z-index: 2;
 }
+
 .hover-overlay {
   position: absolute;
   inset: 0;
@@ -182,26 +218,31 @@ async function cycleStatus() {
   transition: opacity 0.2s;
   border-radius: 8px;
 }
-.media-card:hover .hover-overlay {
-  opacity: 1;
+
+@media (hover: hover) {
+  .media-card:hover .hover-overlay {
+    opacity: 1;
+  }
+  .media-card:hover {
+    transform: scale(1.08);
+    z-index: 10;
+  }
 }
-.media-card:hover {
-  transform: scale(1.08);
-  z-index: 10;
-}
+
 .play-icon {
-  width: 48px;
-  height: 48px;
+  width: var(--touch-target);
+  height: var(--touch-target);
   border-radius: 50%;
   background: rgba(108, 99, 255, 0.9);
   color: #fff;
   border: none;
-  font-size: 20px;
+  font-size: 1.5rem;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
 }
+
 .progress-bar {
   position: absolute;
   bottom: 0;
@@ -211,36 +252,42 @@ async function cycleStatus() {
   background: rgba(255, 255, 255, 0.2);
   border-radius: 0 0 8px 8px;
 }
+
 .progress-fill {
   height: 100%;
-  background: #6c63ff;
+  background: var(--color-primary);
   transition: transform 0.3s;
   transform-origin: left;
   width: 100%;
 }
+
 .info {
-  margin-top: 8px;
+  margin-top: var(--spacing-sm);
 }
+
 .title {
-  font-size: 13px;
-  color: #d0d0d0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
   display: block;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .meta-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 4px;
+  gap: var(--spacing-sm);
+  margin-top: 2px;
 }
+
 .year {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: #777799;
 }
+
 .type-badge {
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   background: #2a2a3e;
   padding: 1px 6px;
   border-radius: 3px;

@@ -17,6 +17,11 @@
           @input="onSearchInput"
         />
       </div>
+      <select v-model="activeType" class="mobile-filter-select" v-if="!activeStatus">
+        <option value="movie,show">All</option>
+        <option value="movie">Movies</option>
+        <option value="show">Shows</option>
+      </select>
       <div class="filter-group">
         <button
           :class="['filter-btn', { active: activeType === TYPE_ALL }]"
@@ -41,16 +46,33 @@
         </button>
       </div>
       <div class="filter-group">
-        <button :class="['filter-btn', { active: activeStatus === '' }]"
-                @click="setStatus('')">All</button>
-        <button :class="['filter-btn status-watching', { active: activeStatus === 'watching' }]"
-                @click="setStatus('watching')">▶ Watching</button>
-        <button :class="['filter-btn status-want', { active: activeStatus === 'want_to_watch' }]"
-                @click="setStatus('want_to_watch')">🔖 Want</button>
-        <button :class="['filter-btn status-watched', { active: activeStatus === 'watched' }]"
-                @click="setStatus('watched')">✓ Watched</button>
-        <button :class="['filter-btn status-dropped', { active: activeStatus === 'dropped' }]"
-                @click="setStatus('dropped')">✕ Dropped</button>
+        <button :class="['filter-btn', { active: activeStatus === '' }]" @click="setStatus('')">
+          All
+        </button>
+        <button
+          :class="['filter-btn status-watching', { active: activeStatus === 'watching' }]"
+          @click="setStatus('watching')"
+        >
+          ▶ Watching
+        </button>
+        <button
+          :class="['filter-btn status-want', { active: activeStatus === 'want_to_watch' }]"
+          @click="setStatus('want_to_watch')"
+        >
+          🔖 Want
+        </button>
+        <button
+          :class="['filter-btn status-watched', { active: activeStatus === 'watched' }]"
+          @click="setStatus('watched')"
+        >
+          ✓ Watched
+        </button>
+        <button
+          :class="['filter-btn status-dropped', { active: activeStatus === 'dropped' }]"
+          @click="setStatus('dropped')"
+        >
+          ✕ Dropped
+        </button>
       </div>
       <select v-model="activeSort" class="sort-select" @change="resetAndFetch" v-if="!activeStatus">
         <option value="title_asc">Title A–Z</option>
@@ -64,10 +86,15 @@
 
     <!-- Genre filter -->
     <div class="genre-filter" v-if="availableGenres.length > 1 && !activeStatus">
-      <button :class="['genre-tag-btn', { active: !selectedGenre }]"
-              @click="filterByGenre('')">All</button>
-      <button :class="['genre-tag-btn', { active: selectedGenre === g }]"
-              v-for="g in availableGenres" :key="g" @click="filterByGenre(g)">
+      <button :class="['genre-tag-btn', { active: !selectedGenre }]" @click="filterByGenre('')">
+        All
+      </button>
+      <button
+        :class="['genre-tag-btn', { active: selectedGenre === g }]"
+        v-for="g in availableGenres"
+        :key="g"
+        @click="filterByGenre(g)"
+      >
         {{ g }}
       </button>
     </div>
@@ -124,7 +151,9 @@ const TYPE_SHOW = 'show';
 const route = useRoute();
 
 // Read library_id from route param (library/:libraryId) or query param (backward compat)
-const currentLibraryId = computed(() => (route.params.libraryId as string) || (route.query.library_id as string) || '');
+const currentLibraryId = computed(
+  () => (route.params.libraryId as string) || (route.query.library_id as string) || ''
+);
 
 // ── Libraries map for name resolution ─────────────────────────────────────
 const libraryNameMap = ref<Record<string, string>>({});
@@ -262,15 +291,15 @@ async function fetchPage() {
       error.value = 'Failed to load library. Please try again.';
     }
   } finally {
-      if (gen === fetchGen) {
-        loading.value = false;
-        hasFetched.value = true;
-      }
+    if (gen === fetchGen) {
+      loading.value = false;
+      hasFetched.value = true;
     }
   }
+}
 
-  function onStatusChanged(id: string, newStatus: string) {
-  const item = items.value.find(m => m.id === id);
+function onStatusChanged(id: string, newStatus: string) {
+  const item = items.value.find((m) => m.id === id);
   if (item) {
     item.user_status = newStatus;
   }
@@ -279,17 +308,17 @@ async function fetchPage() {
 
 <style scoped>
 .page-title {
-  font-size: 22px;
-  color: #e0e0e0;
-  margin-bottom: 20px;
+  font-size: clamp(1.25rem, 3vw, 1.5rem);
+  color: var(--color-text);
+  margin-bottom: var(--spacing-md);
 }
 
 .back-link {
   color: #555577;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   text-decoration: none;
   display: inline-block;
-  margin-bottom: 12px;
+  margin-bottom: var(--spacing-sm);
 }
 
 .back-link:hover {
@@ -299,31 +328,31 @@ async function fetchPage() {
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 20px;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
   flex-wrap: wrap;
 }
 
 .search-wrap {
   flex: 1;
-  min-width: 200px;
+  min-width: 150px;
 }
 
 .search-input {
   width: 100%;
-  padding: 10px 14px;
+  padding: var(--spacing-sm) var(--spacing-md);
   background: #0f0f1a;
-  border: 1px solid #2a2a3e;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  color: #e0e0e0;
-  font-size: 14px;
+  color: var(--color-text);
+  font-size: var(--font-size-md);
   outline: none;
   box-sizing: border-box;
   transition: border-color 0.15s;
 }
 
 .search-input:focus {
-  border-color: #6c63ff;
+  border-color: var(--color-primary);
 }
 
 .search-input::placeholder {
@@ -336,14 +365,15 @@ async function fetchPage() {
 }
 
 .filter-btn {
-  padding: 8px 16px;
+  padding: var(--spacing-sm) var(--spacing-md);
   background: #1a1a2e;
-  border: 1px solid #2a2a3e;
+  border: 1px solid var(--color-border);
   color: #8888aa;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   transition: all 0.15s;
+  min-width: var(--touch-target);
 }
 
 .filter-btn:hover {
@@ -376,26 +406,27 @@ async function fetchPage() {
 }
 
 .sort-select {
-  padding: 8px 12px;
+  padding: var(--spacing-sm) var(--spacing-md);
   background: #1a1a2e;
-  border: 1px solid #2a2a3e;
+  border: 1px solid var(--color-border);
   color: #aaaacc;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   outline: none;
   cursor: pointer;
+  min-width: 120px;
 }
 
 .sort-select option {
   background: #1a1a2e;
-  color: #e0e0e0;
+  color: var(--color-text);
 }
 
 .genre-filter {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: 16px;
+  margin-bottom: var(--spacing-sm);
 }
 
 .genre-tag-btn {
@@ -403,8 +434,8 @@ async function fetchPage() {
   color: #8888aa;
   padding: 3px 10px;
   border-radius: 4px;
-  font-size: 12px;
-  border: 1px solid #2a2a3e;
+  font-size: var(--font-size-sm);
+  border: 1px solid var(--color-border);
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -415,22 +446,22 @@ async function fetchPage() {
 }
 
 .genre-tag-btn.active {
-  background: #6c63ff;
+  background: var(--color-primary);
   color: #fff;
-  border-color: #6c63ff;
+  border-color: var(--color-primary);
 }
 
 .result-info {
   color: #555577;
-  font-size: 13px;
-  margin-bottom: 16px;
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--spacing-sm);
 }
 
 .error-banner {
   color: #ff6b6b;
-  font-size: 13px;
-  margin-bottom: 16px;
-  padding: 10px 14px;
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
   background: #2a1a1a;
   border: 1px solid #5a2a2a;
   border-radius: 6px;
@@ -438,30 +469,38 @@ async function fetchPage() {
 
 .empty-state {
   text-align: center;
-  padding: 80px 20px;
+  padding: 5rem 1rem;
   color: #555577;
-  font-size: 15px;
+  font-size: var(--font-size-md);
 }
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(min(120px, 100%), 1fr));
+  gap: var(--spacing-md);
+}
+
+@media (max-width: 600px) {
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: var(--spacing-sm);
+  }
 }
 
 .load-more-wrap {
   text-align: center;
-  padding: 40px 0;
+  padding: 2.5rem 0;
 }
 
 .load-more-btn {
   background: #2a2a3e;
   color: #aaaacc;
-  border: 1px solid #3a3a5e;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
-  padding: 10px 28px;
+  padding: var(--spacing-sm) var(--spacing-lg);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--font-size-md);
+  min-width: var(--touch-target);
 }
 
 .load-more-btn:hover:not(:disabled) {
@@ -471,5 +510,26 @@ async function fetchPage() {
 .load-more-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.mobile-filter-select {
+  display: none;
+  width: 100%;
+  margin-bottom: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: #1a1a2e;
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  border-radius: 6px;
+  font-size: var(--font-size-md);
+}
+
+@media (max-width: 600px) {
+  .mobile-filter-select {
+    display: block;
+  }
+  .filter-group {
+    display: none;
+  }
 }
 </style>
