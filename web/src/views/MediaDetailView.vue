@@ -8,7 +8,10 @@
       />
       <div class="backdrop-overlay"></div>
       <div class="backdrop-progress" v-if="hasProgress">
-        <div class="backdrop-progress-fill" :style="{ transform: `scaleX(${progressPercent / 100})` }"></div>
+        <div
+          class="backdrop-progress-fill"
+          :style="{ transform: `scaleX(${progressPercent / 100})` }"
+        ></div>
       </div>
     </div>
 
@@ -19,15 +22,54 @@
         <img v-if="item.poster_url" class="poster" :src="item.poster_url" />
 
         <div class="meta">
-          <img v-if="item.logo_url && !logoFailed" class="logo-image" :src="item.logo_url" @error="logoFailed = true" />
-          <h1 class="title" :class="{ 'with-logo': item.logo_url && !logoFailed }">{{ item.title }}</h1>
+          <img
+            v-if="item.logo_url && !logoFailed"
+            class="logo-image"
+            :src="item.logo_url"
+            @error="logoFailed = true"
+          />
+          <h1 class="title" :class="{ 'with-logo': item.logo_url && !logoFailed }">
+            {{ item.title }}
+          </h1>
           <p class="tagline" v-if="item.tagline">{{ item.tagline }}</p>
           <div class="facts">
             <span v-if="item.year">{{ item.year }}</span>
             <span class="mpaa-badge" v-if="item.mpaa">{{ item.mpaa }}</span>
             <span v-if="item.rating">&#9733; {{ item.rating.toFixed(1) }}</span>
+            <span v-if="item.user_rating" class="user-rating" :title="'User Rating'"
+              >&#9734; {{ item.user_rating.toFixed(1) }}</span
+            >
             <span v-if="item.duration">{{ formatDuration(item.duration) }}</span>
             <span class="type-badge">{{ item.type }}</span>
+          </div>
+
+          <!-- Movie metadata row -->
+          <div class="movie-meta-row">
+            <span v-if="item.original_title" class="meta-chip" :title="'Original Title'">{{
+              item.original_title
+            }}</span>
+            <span v-if="item.language" class="meta-chip" :title="'Language'">{{
+              item.language
+            }}</span>
+            <span v-if="item.country_code" class="meta-chip" :title="'Country Code'">{{
+              item.country_code
+            }}</span>
+            <span v-if="item.custom_rating" class="meta-chip" :title="'Custom Rating'">{{
+              item.custom_rating
+            }}</span>
+            <span v-if="item.mpaa && !item.custom_rating" class="meta-chip mpaa-chip">{{
+              item.mpaa
+            }}</span>
+          </div>
+
+          <!-- Dates and additional info -->
+          <div class="movie-dates">
+            <span v-if="item.release_date" class="date-chip"
+              >Released: {{ item.release_date }}</span
+            >
+            <span v-if="item.end_date" class="date-chip">End: {{ item.end_date }}</span>
+            <span v-if="item.date_added" class="date-chip">Added: {{ item.date_added }}</span>
+            <span v-if="item.playcount > 0" class="date-chip">Played: {{ item.playcount }}x</span>
           </div>
           <div class="genres" v-if="item.genres?.length">
             <span class="genre-tag" v-for="g in item.genres" :key="g">{{ g }}</span>
@@ -43,16 +85,37 @@
 
           <div class="status-row">
             <span class="status-label">Mark as:</span>
-            <button :class="['status-btn', { active: userStatus === 'want_to_watch' }]"
-                    @click="setStatus('want_to_watch')">🔖 Want</button>
-            <button :class="['status-btn', { active: userStatus === 'watching' }]"
-                    @click="setStatus('watching')">▶ Watching</button>
-            <button :class="['status-btn', { active: userStatus === 'watched' }]"
-                    @click="setStatus('watched')">✓ Watched</button>
-            <button :class="['status-btn', { active: userStatus === 'dropped' }]"
-                    @click="setStatus('dropped')">✕ Dropped</button>
-            <button class="status-btn clear-btn" v-if="userStatus !== 'none'"
-                    @click="setStatus('none')">✕ Clear</button>
+            <button
+              :class="['status-btn', { active: userStatus === 'want_to_watch' }]"
+              @click="setStatus('want_to_watch')"
+            >
+              🔖 Want
+            </button>
+            <button
+              :class="['status-btn', { active: userStatus === 'watching' }]"
+              @click="setStatus('watching')"
+            >
+              ▶ Watching
+            </button>
+            <button
+              :class="['status-btn', { active: userStatus === 'watched' }]"
+              @click="setStatus('watched')"
+            >
+              ✓ Watched
+            </button>
+            <button
+              :class="['status-btn', { active: userStatus === 'dropped' }]"
+              @click="setStatus('dropped')"
+            >
+              ✕ Dropped
+            </button>
+            <button
+              class="status-btn clear-btn"
+              v-if="userStatus !== 'none'"
+              @click="setStatus('none')"
+            >
+              ✕ Clear
+            </button>
           </div>
         </div>
       </div>
@@ -90,12 +153,15 @@
             ← Back to Show
           </router-link>
           <h2 class="episode-detail-number">
-            <span v-if="item.season">S{{ String(item.season).padStart(2, '0') }}</span><span v-if="item.episode">E{{ String(item.episode).padStart(2, '0') }}</span>
+            <span v-if="item.season">S{{ String(item.season).padStart(2, '0') }}</span
+            ><span v-if="item.episode">E{{ String(item.episode).padStart(2, '0') }}</span>
           </h2>
         </div>
         <div class="episode-detail-meta">
           <span v-if="item.aired" class="episode-aired">Aired: {{ item.aired }}</span>
-          <span v-if="item.rating" class="episode-rating">&#9733; {{ item.rating.toFixed(1) }}</span>
+          <span v-if="item.rating" class="episode-rating"
+            >&#9733; {{ item.rating.toFixed(1) }}</span
+          >
         </div>
         <p class="episode-plot" v-if="item.overview">{{ item.overview }}</p>
       </div>
@@ -110,7 +176,20 @@
           </div>
         </div>
       </section>
-
+      <!-- Collection / Set info -->
+      <section
+        class="collection-section"
+        v-if="item.set_name || item.collection_number || item.set_overview"
+      >
+        <h3 class="section-subtitle">Collection</h3>
+        <div class="collection-info">
+          <span class="collection-name" v-if="item.set_name">{{ item.set_name }}</span>
+          <span class="collection-number" v-if="item.collection_number"
+            >TMDb Collection ID: {{ item.collection_number }}</span
+          >
+        </div>
+        <p class="collection-overview" v-if="item.set_overview">{{ item.set_overview }}</p>
+      </section>
       <EpisodeList v-if="item.type === 'show'" :show-id="item.id" />
     </div>
   </div>
@@ -137,14 +216,18 @@ const userStatus = ref('none');
 const overviewExpanded = ref(false);
 const overviewNeedsExpand = ref(false);
 
-watch(item, (val) => {
-  if (val?.overview && val.overview.length > 200) {
-    overviewNeedsExpand.value = true;
-  } else {
-    overviewNeedsExpand.value = false;
-  }
-  if (val) userStatus.value = val.user_status || 'none';
-}, { immediate: true });
+watch(
+  item,
+  (val) => {
+    if (val?.overview && val.overview.length > 200) {
+      overviewNeedsExpand.value = true;
+    } else {
+      overviewNeedsExpand.value = false;
+    }
+    if (val) userStatus.value = val.user_status || 'none';
+  },
+  { immediate: true }
+);
 
 async function fetchMediaDetail(id: string) {
   loading.value = true;
@@ -165,8 +248,8 @@ async function fetchMediaDetail(id: string) {
   }
 }
 
-const hasProgress = computed(() =>
-  progress.value && progress.value.position > 0 && !progress.value.finished
+const hasProgress = computed(
+  () => progress.value && progress.value.position > 0 && !progress.value.finished
 );
 
 const resumeLabel = computed(() => {
@@ -198,13 +281,16 @@ async function setStatus(status: string) {
 }
 
 // Watch for same-component navigation (e.g., show -> episode detail)
-watch(() => route.params.id, (newId) => {
-  if (newId) {
-    item.value = null;
-    window.scrollTo(0, 0);
-    fetchMediaDetail(newId as string);
+watch(
+  () => route.params.id,
+  (newId) => {
+    if (newId) {
+      item.value = null;
+      window.scrollTo(0, 0);
+      fetchMediaDetail(newId as string);
+    }
   }
-});
+);
 
 onMounted(async () => {
   await fetchMediaDetail(route.params.id as string);
@@ -245,7 +331,12 @@ function formatDuration(sec: number) {
 .backdrop-overlay {
   position: absolute;
   inset: 0;
-  background: linear-gradient(to bottom, rgba(15, 15, 26, 0.1) 0%, rgba(15, 15, 26, 0.85) 60%, #0f0f1a 100%);
+  background: linear-gradient(
+    to bottom,
+    rgba(15, 15, 26, 0.1) 0%,
+    rgba(15, 15, 26, 0.85) 60%,
+    #0f0f1a 100%
+  );
 }
 
 .backdrop-progress {
@@ -371,9 +462,80 @@ function formatDuration(sec: number) {
 }
 
 .genre-tag:hover {
+  border-color: #3a3a3e;
+}
+
+.movie-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.meta-chip {
+  background: #1a1a2e;
+  color: #9999bb;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  border: 1px solid #2a2a3e;
+}
+
+.meta-chip.mpaa-chip {
+  color: #8888aa;
+  font-weight: 600;
   border-color: #3a3a5e;
 }
 
+.movie-dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.date-chip {
+  color: #666688;
+  font-size: 12px;
+  padding: 2px 8px;
+  background: rgba(26, 26, 46, 0.5);
+  border-radius: 3px;
+}
+
+.user-rating {
+  color: #ffaa00;
+  font-size: 14px;
+}
+
+.collection-section {
+  margin-top: 24px;
+}
+
+.collection-info {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.collection-name {
+  color: #ccccee;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.collection-number {
+  color: #666688;
+  font-size: 12px;
+}
+
+.collection-overview {
+  color: #9999bb;
+  font-size: 14px;
+  line-height: 1.7;
+  margin: 0;
+  max-width: 640px;
+}
 .section-subtitle {
   font-size: 14px;
   color: #8888aa;
@@ -570,10 +732,22 @@ function formatDuration(sec: number) {
   color: #fff;
 }
 
-.status-btn.active:first-of-type { background: #1565c0; border-color: #2196f3; }
-.status-btn.active:nth-of-type(2) { background: #5a52e0; border-color: #6c63ff; }
-.status-btn.active:nth-of-type(3) { background: #2e7d32; border-color: #4caf50; }
-.status-btn.active:nth-of-type(4) { background: #c62828; border-color: #ff6b6b; }
+.status-btn.active:first-of-type {
+  background: #1565c0;
+  border-color: #2196f3;
+}
+.status-btn.active:nth-of-type(2) {
+  background: #5a52e0;
+  border-color: #6c63ff;
+}
+.status-btn.active:nth-of-type(3) {
+  background: #2e7d32;
+  border-color: #4caf50;
+}
+.status-btn.active:nth-of-type(4) {
+  background: #c62828;
+  border-color: #ff6b6b;
+}
 
 .clear-btn {
   margin-left: 4px;
