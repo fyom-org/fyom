@@ -38,14 +38,8 @@
         v-if="isMobile && sidebarOpen"
         @click="sidebarOpen = false"
       ></div>
-      <!-- Floating sidebar toggle button -->
-      <button
-        class="floating-sidebar-toggle"
-        @click="toggleSidebar"
-        v-if="isMobile || !sidebarOpen"
-      >
-        ☰
-      </button>
+      <!-- Floating sidebar toggle button (mobile only) -->
+      <button class="floating-sidebar-toggle" @click="toggleSidebar" v-if="isMobile">☰</button>
       <main class="content">
         <router-view />
       </main>
