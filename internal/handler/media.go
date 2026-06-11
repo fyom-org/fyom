@@ -74,8 +74,6 @@ type MediaItemResponse struct {
 	SubtitleLanguages []string          `json:"subtitle_languages,omitempty"`
 	LogoURL           *string           `json:"logo_url,omitempty"`
 	Aired             string            `json:"aired,omitempty"`
-<<<<<<< HEAD
-=======
 	Language          string            `json:"language,omitempty"`
 	CountryCode       string            `json:"country_code,omitempty"`
 	CustomRating      string            `json:"custom_rating,omitempty"`
@@ -89,7 +87,6 @@ type MediaItemResponse struct {
 	LastPlayed        string            `json:"last_played,omitempty"`
 	Playcount         int               `json:"playcount,omitempty"`
 	SetOverview       string            `json:"set_overview,omitempty"`
->>>>>>> f05aa46299e7153ad8b48fea327f882bc5da1e8d
 }
 // MediaHandler handles media-related HTTP endpoints.
 type MediaHandler struct {
@@ -139,8 +136,6 @@ func mediaItemToResponse(item *model.MediaItem) MediaItemResponse {
 		AudioChannels:  item.AudioChannels,
 		ShowID:         item.ParentID, // for episodes, parent_id is the show
 		Aired:          item.Aired,
-<<<<<<< HEAD
-=======
 		Language:       item.Language,
 		CountryCode:    item.CountryCode,
 		CustomRating:   item.CustomRating,
@@ -153,7 +148,6 @@ func mediaItemToResponse(item *model.MediaItem) MediaItemResponse {
 		LastPlayed:     item.LastPlayed,
 		Playcount:      item.Playcount,
 		SetOverview:    item.SetOverview,
->>>>>>> f05aa46299e7153ad8b48fea327f882bc5da1e8d
 	}
 
 	if item.Year != 0 {

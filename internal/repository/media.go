@@ -159,16 +159,11 @@ func (r *MediaRepository) Create(ctx context.Context, m *model.MediaItem) error 
 		m.CreatedAt, m.UpdatedAt,
 		m.MPAA, m.Genres, m.Studios, m.Actors, m.UniqueIDs, m.Premiered,
 		m.Outline, m.Tagline, m.Countries, m.Directors, m.Credits, m.Tags,
-<<<<<<< HEAD
-		m.SetName, m.VideoCodec, m.VideoWidth, m.VideoHeight, m.VideoDurationSeconds,
-					m.AudioCodec, m.AudioChannels, m.SubtitleLanguages, m.Aired, m.LogoPath)
-=======
 		m.SetName, m.SetOverview, m.VideoCodec, m.VideoWidth, m.VideoHeight, m.VideoDurationSeconds,
 		m.AudioCodec, m.AudioChannels, m.SubtitleLanguages, m.Aired, m.LogoPath,
 		m.Language, m.CountryCode, m.CustomRating, m.CollectionNumber,
 		m.EndDate, m.ReleaseDate, m.DisplayOrder, m.OriginalTitle,
 		m.UserRating, m.DateAdded, m.LastPlayed, m.Playcount)
->>>>>>> f05aa46299e7153ad8b48fea327f882bc5da1e8d
 	return err
 }
 
