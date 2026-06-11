@@ -38,8 +38,8 @@
         v-if="isMobile && sidebarOpen"
         @click="sidebarOpen = false"
       ></div>
-      <!-- Floating sidebar toggle button (mobile only) -->
-      <button class="floating-sidebar-toggle" @click="toggleSidebar" v-if="isMobile">☰</button>
+      <!-- Floating sidebar toggle button (always visible) -->
+      <button class="floating-sidebar-toggle" @click="toggleSidebar" v-if="true">☰</button>
       <main class="content">
         <router-view />
       </main>
@@ -67,10 +67,8 @@ const toggleSidebar = () => {
 
 const handleResize = () => {
   isMobile.value = window.innerWidth <= 768;
-  // On desktop, always keep sidebar open
-  if (!isMobile.value) {
-    sidebarOpen.value = true;
-  }
+  // Reset sidebar state on resize
+  sidebarOpen.value = !isMobile.value;
 };
 
 onMounted(async () => {
