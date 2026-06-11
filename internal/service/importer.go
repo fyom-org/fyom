@@ -402,6 +402,9 @@ func applyEpisodeNFOFields(item *model.MediaItem, nfoEp *model.NFOEpisode) {
 	}
 	item.SubtitleLanguages = subtitlesToJSON(nfoEp.FileInfo.StreamDetails.Subtitles)
 	item.Aired = nfoEp.Aired
+	if nfoEp.Plot != "" {
+		item.Overview = nfoEp.Plot
+	}
 
 	if item.Rating == 0 && len(nfoEp.Ratings.Rating) > 0 {
 		for _, r := range nfoEp.Ratings.Rating {

@@ -144,6 +144,24 @@ watch(item, (val) => {
   if (val) userStatus.value = val.user_status || 'none';
 }, { immediate: true });
 
+async function fetchMediaDetail(id: string) {
+  loading.value = true;
+  backdropFailed.value = false;
+  progress.value = null;
+  userStatus.value = 'none';
+  try {
+    item.value = await getMediaDetail(id);
+    try {
+      const progressRes: any = await request.get(`/media/${id}/progress`);
+      progress.value = progressRes.data;
+    } catch {
+      progress.value = null;
+    }
+  } finally {
+    loading.value = false;
+  }
+}
+
 const hasProgress = computed(() =>
   progress.value && progress.value.position > 0 && !progress.value.finished
 );
@@ -176,18 +194,17 @@ async function setStatus(status: string) {
   }
 }
 
-onMounted(async () => {
-  try {
-    item.value = await getMediaDetail(route.params.id as string);
-    try {
-      const progressRes: any = await request.get(`/media/${route.params.id}/progress`);
-      progress.value = progressRes.data;
-    } catch {
-      progress.value = null;
-    }
-  } finally {
-    loading.value = false;
+// Watch for same-component navigation (e.g., show -> episode detail)
+watch(() => route.params.id, (newId) => {
+  if (newId) {
+    item.value = null;
+    window.scrollTo(0, 0);
+    fetchMediaDetail(newId as string);
   }
+});
+
+onMounted(async () => {
+  await fetchMediaDetail(route.params.id as string);
 });
 
 function formatDuration(sec: number) {
