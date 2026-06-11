@@ -790,16 +790,42 @@ func (imp *Importer) processDirAsMovie(ctx context.Context, dirPath string, exis
 }
 
 // findMovieNFO looks for a .nfo file in dir that contains a <movie> root element.
+// It prefers "movie.nfo" (the Kodi/Jellyfin standard name), and only falls back to
+// other .nfo files if movie.nfo does not exist or fails to parse.
 func (imp *Importer) findMovieNFO(ctx context.Context, dir string) string {
 	entries, err := imp.fs.ReadDir(ctx, dir)
 	if err != nil {
 		return ""
 	}
+
+	// First pass: look for the standard "movie.nfo"
 	for _, entry := range entries {
 		if entry.IsDir {
 			continue
 		}
 		name := entry.Name
+		if strings.EqualFold(name, "movie.nfo") {
+			path := imp.fs.Join(dir, name)
+			if nf, err := imp.fs.Open(ctx, path); err == nil {
+				var movie model.NFOMovie
+				err = xml.NewDecoder(nf).Decode(&movie)
+				nf.Close()
+				if err == nil && movie.Title != "" {
+					return path
+				}
+			}
+		}
+	}
+
+	// Second pass: fall back to any other .nfo with a valid <movie> root
+	for _, entry := range entries {
+		if entry.IsDir {
+			continue
+		}
+		name := entry.Name
+		if strings.EqualFold(name, "movie.nfo") {
+			continue // already tried
+		}
 		var ext string
 		if idx := strings.LastIndex(name, "."); idx >= 0 {
 			ext = strings.ToLower(name[idx:])
@@ -807,7 +833,7 @@ func (imp *Importer) findMovieNFO(ctx context.Context, dir string) string {
 		if ext != ".nfo" {
 			continue
 		}
-		path := imp.fs.Join(dir, entry.Name)
+		path := imp.fs.Join(dir, name)
 		f, err := imp.fs.Open(ctx, path)
 		if err != nil {
 			continue

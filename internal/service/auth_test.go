@@ -18,7 +18,8 @@ func setupAuthTest(t *testing.T) (*AuthService, func()) {
 	require.NoError(t, err)
 
 	userRepo := repository.NewUserRepository(db)
-	svc := NewAuthService(userRepo, "test-secret-key", 24)
+	libPermRepo := repository.NewLibraryPermissionRepository(db)
+	svc := NewAuthService(userRepo, libPermRepo, "test-secret-key", 24)
 
 	cleanup := func() { _ = db.Close() }
 	return svc, cleanup
