@@ -81,16 +81,23 @@ const store = useUserStore();
 const libraries = ref<any[]>([]);
 const isMobile = ref(window.innerWidth <= 768);
 const sidebarOpen = ref(!isMobile.value); // Desktop: default open, Mobile: default closed
+const isMediaDetailPage = computed(() => router.currentRoute.value.path.startsWith('/media/'));
 
 const isAdmin = computed(() => store.isAdmin);
 
 const toggleSidebar = () => {
-  sidebarOpen.value = !sidebarOpen.value;
+  // Only allow toggling on mobile, or if not on media detail page
+  if (isMobile.value || !isMediaDetailPage.value) {
+    sidebarOpen.value = !sidebarOpen.value;
+  }
 };
 
 const handleResize = () => {
   isMobile.value = window.innerWidth <= 768;
-  sidebarOpen.value = !isMobile.value; // Desktop: open, Mobile: closed
+  // On desktop, always keep sidebar open (unless on media detail page)
+  if (!isMobile.value) {
+    sidebarOpen.value = !isMediaDetailPage.value;
+  }
 };
 
 onMounted(async () => {
@@ -201,13 +208,20 @@ function handleLogout() {
   z-index: 100;
 }
 
-/* Desktop: Collapse via width */
+/* Desktop: Collapse via width (except on media detail page) */
 @media (min-width: 769px) {
   .sidebar.sidebar-hidden {
     width: 0;
     min-width: 0;
     overflow: hidden;
     border-right: none;
+  }
+
+  /* Force sidebar open on media detail page */
+  .layout:has(.content .media-detail) .sidebar.sidebar-hidden {
+    width: 200px;
+    min-width: 180px;
+    border-right: 1px solid var(--color-border);
   }
 }
 

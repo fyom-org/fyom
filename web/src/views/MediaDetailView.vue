@@ -1,5 +1,5 @@
 <template>
-  <div v-if="item" class="detail-view">
+  <div v-if="item" class="detail-view media-detail">
     <div class="backdrop">
       <img
         v-if="!backdropFailed && item.backdrop_url"
