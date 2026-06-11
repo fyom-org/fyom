@@ -82,6 +82,34 @@
         </div>
       </div>
 
+      <!-- Episode-specific section -->
+      <div class="episode-detail-section" v-if="item.type === 'episode'">
+        <div class="episode-detail-header">
+          <router-link v-if="item.show_id" :to="`/media/${item.show_id}`" class="back-to-show">
+            ← Back to Show
+          </router-link>
+          <h2 class="episode-detail-number">
+            <span v-if="item.season">S{{ String(item.season).padStart(2, '0') }}</span><span v-if="item.episode">E{{ String(item.episode).padStart(2, '0') }}</span>
+          </h2>
+        </div>
+        <div class="episode-detail-meta">
+          <span v-if="item.aired" class="episode-aired">Aired: {{ item.aired }}</span>
+          <span v-if="item.rating" class="episode-rating">&#9733; {{ item.rating.toFixed(1) }}</span>
+        </div>
+        <p class="episode-plot" v-if="item.overview">{{ item.overview }}</p>
+      </div>
+
+      <section class="guest-stars" v-if="item.guest_stars?.length">
+        <h3 class="section-subtitle">Guest Stars</h3>
+        <div class="cast-grid">
+          <div class="cast-card" v-for="g in item.guest_stars" :key="g.name">
+            <div class="cast-avatar">{{ g.name?.[0] || '?' }}</div>
+            <div class="cast-name">{{ g.name }}</div>
+            <div class="cast-role" v-if="g.role">{{ g.role }}</div>
+          </div>
+        </div>
+      </section>
+
       <EpisodeList v-if="item.type === 'show'" :show-id="item.id" />
     </div>
   </div>
@@ -360,6 +388,76 @@ function formatDuration(sec: number) {
 .cast-role {
   color: #555577;
   font-size: 11px;
+}
+
+.episode-detail-section {
+  margin-top: 24px;
+}
+
+.episode-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.back-to-show {
+  color: #6c63ff;
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.back-to-show:hover {
+  color: #8b83ff;
+}
+
+.episode-detail-number {
+  font-size: 20px;
+  color: #e0e0e0;
+  margin: 0;
+  font-weight: 600;
+}
+
+.episode-detail-meta {
+  display: flex;
+  gap: 16px;
+  color: #8888aa;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.episode-aired {
+  color: #666688;
+}
+
+.episode-rating {
+  color: #ffaa00;
+}
+
+.episode-plot {
+  color: #9999bb;
+  font-size: 14px;
+  line-height: 1.7;
+  margin: 0;
+  max-width: 640px;
+}
+
+.guest-stars {
+  margin-top: 24px;
+}
+
+.cast-grid {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.cast-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 80px;
 }
 
 .action-row {

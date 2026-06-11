@@ -192,23 +192,36 @@ func stringsToJSON(ss []string) string {
 	return string(b)
 }
 
-// actorsToJSON serializes NFOActor slice to a compact JSON array of {name, role}.
+// actorsToJSON serializes NFOActor slice to a JSON array with type, sortorder, and thumb.
 func actorsToJSON(actors []model.NFOActor) string {
 	if len(actors) == 0 {
 		return ""
 	}
 	type actorJSON struct {
-		Name string `json:"name"`
-		Role string `json:"role"`
+		Name      string `json:"name"`
+		Role      string `json:"role"`
+		Type      string `json:"type"`
+		SortOrder int    `json:"sort_order"`
+		Thumb     string `json:"thumb,omitempty"`
 	}
 	out := make([]actorJSON, 0, len(actors))
 	for _, a := range actors {
 		if a.Name != "" {
-			out = append(out, actorJSON{Name: a.Name, Role: a.Role})
+			out = append(out, actorJSON{Name: a.Name, Role: a.Role, Type: a.Type, SortOrder: a.SortOrder, Thumb: a.Thumb})
 		}
 	}
 	b, _ := json.Marshal(out)
 	return string(b)
+}
+
+// hasUniqueID checks if a NFOUniqueID slice already contains the given type.
+func hasUniqueID(ids []model.NFOUniqueID, idType string) bool {
+	for _, id := range ids {
+		if id.Type == idType {
+			return true
+		}
+	}
+	return false
 }
 
 // uniqueIDsToJSON serializes NFOUniqueID slice to a map.
@@ -242,11 +255,33 @@ func subtitlesToJSON(subs []model.NFOSubtitle) string {
 
 // applyMovieNFOFields populates enhanced fields from parsed NFO onto a MediaItem.
 func applyMovieNFOFields(item *model.MediaItem, nfo *model.NFOMovie) {
+	if nfo.Title != "" {
+		item.Title = nfo.Title
+	}
 	item.MPAA = nfo.MPAA
 	item.Genres = stringsToJSON(nfo.Genres)
 	item.Studios = stringsToJSON(nfo.Studios)
 	item.Actors = actorsToJSON(nfo.Actors)
-	item.UniqueIDs = uniqueIDsToJSON(nfo.UniqueIDs)
+
+	// Build uniqueIDs from new-format <uniqueid> elements
+	ids := make([]model.NFOUniqueID, len(nfo.UniqueIDs))
+	copy(ids, nfo.UniqueIDs)
+
+	// Merge old-format ID fields if not already present
+	if nfo.ImdbID != "" && !hasUniqueID(ids, "imdb") {
+		ids = append(ids, model.NFOUniqueID{Type: "imdb", Value: nfo.ImdbID})
+	}
+	if nfo.TmdbID != "" && !hasUniqueID(ids, "tmdb") {
+		ids = append(ids, model.NFOUniqueID{Type: "tmdb", Value: nfo.TmdbID})
+	}
+	if nfo.TvdbID != "" && !hasUniqueID(ids, "tvdb") {
+		ids = append(ids, model.NFOUniqueID{Type: "tvdb", Value: nfo.TvdbID})
+	}
+	if nfo.LegacyID != "" && !hasUniqueID(ids, "tvdb") {
+		ids = append(ids, model.NFOUniqueID{Type: "tvdb", Value: nfo.LegacyID})
+	}
+	item.UniqueIDs = uniqueIDsToJSON(ids)
+
 	item.Premiered = nfo.Premiered
 	item.Outline = nfo.Outline
 	item.Tagline = nfo.Tagline
@@ -292,10 +327,32 @@ func applyMovieNFOFields(item *model.MediaItem, nfo *model.NFOMovie) {
 
 // applyShowNFOFields populates enhanced fields from parsed NFO onto a MediaItem (show).
 func applyShowNFOFields(item *model.MediaItem, nfo *model.NFOTVShow) {
+	if nfo.Title != "" {
+		item.Title = nfo.Title
+	}
 	item.Genres = stringsToJSON(nfo.Genres)
 	item.Studios = stringsToJSON(nfo.Studios)
 	item.Actors = actorsToJSON(nfo.Actors)
-	item.UniqueIDs = uniqueIDsToJSON(nfo.UniqueIDs)
+
+	// Build uniqueIDs from new-format <uniqueid> elements
+	ids := make([]model.NFOUniqueID, len(nfo.UniqueIDs))
+	copy(ids, nfo.UniqueIDs)
+
+	// Merge old-format ID fields if not already present
+	if nfo.ImdbID != "" && !hasUniqueID(ids, "imdb") {
+		ids = append(ids, model.NFOUniqueID{Type: "imdb", Value: nfo.ImdbID})
+	}
+	if nfo.TmdbID != "" && !hasUniqueID(ids, "tmdb") {
+		ids = append(ids, model.NFOUniqueID{Type: "tmdb", Value: nfo.TmdbID})
+	}
+	if nfo.TvdbID != "" && !hasUniqueID(ids, "tvdb") {
+		ids = append(ids, model.NFOUniqueID{Type: "tvdb", Value: nfo.TvdbID})
+	}
+	if nfo.LegacyID != "" && !hasUniqueID(ids, "tvdb") {
+		ids = append(ids, model.NFOUniqueID{Type: "tvdb", Value: nfo.LegacyID})
+	}
+	item.UniqueIDs = uniqueIDsToJSON(ids)
+
 	item.Premiered = nfo.Premiered
 	item.Outline = nfo.Outline
 	item.Tags = stringsToJSON(nfo.Tags)
@@ -324,6 +381,9 @@ func applyShowNFOFields(item *model.MediaItem, nfo *model.NFOTVShow) {
 
 // applyEpisodeNFOFields populates enhanced fields from parsed NFO onto a MediaItem (episode).
 func applyEpisodeNFOFields(item *model.MediaItem, nfoEp *model.NFOEpisode) {
+	if nfoEp.Title != "" {
+		item.Title = nfoEp.Title
+	}
 	item.MPAA = nfoEp.MPAA
 	item.Genres = stringsToJSON(nfoEp.Genres)
 	item.Studios = stringsToJSON(nfoEp.Studios)
@@ -341,6 +401,7 @@ func applyEpisodeNFOFields(item *model.MediaItem, nfoEp *model.NFOEpisode) {
 		item.AudioChannels = nfoEp.FileInfo.StreamDetails.Audios[0].Channels
 	}
 	item.SubtitleLanguages = subtitlesToJSON(nfoEp.FileInfo.StreamDetails.Subtitles)
+	item.Aired = nfoEp.Aired
 
 	if item.Rating == 0 && len(nfoEp.Ratings.Rating) > 0 {
 		for _, r := range nfoEp.Ratings.Rating {

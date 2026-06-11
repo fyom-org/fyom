@@ -62,7 +62,7 @@ func (r *UserMediaStatusRepository) GetItemsByStatus(ctx context.Context, userID
 		m.mpaa, m.genres, m.studios, m.actors, m.unique_ids, m.premiered, m.outline, m.tagline,
 		m.countries, m.directors, m.credits, m.tags, m.set_name, m.video_codec, m.video_width,
 		m.video_height, m.video_duration_seconds, m.audio_codec, m.audio_channels,
-		m.subtitle_languages
+		m.subtitle_languages, m.aired
 		FROM media_items m
 		JOIN user_media_status s ON s.media_item_id = m.id
 		WHERE s.user_id = ? AND s.status = ? AND m.status = 'available'
@@ -85,7 +85,7 @@ func (r *UserMediaStatusRepository) GetItemsByStatus(ctx context.Context, userID
 			&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
 			&m.Outline, &m.Tagline, &m.Countries, &m.Directors, &m.Credits, &m.Tags,
 			&m.SetName, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
-			&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages); err != nil {
+			&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages, &m.Aired); err != nil {
 			return nil, err
 		}
 		m.Season = IntPtr(season)

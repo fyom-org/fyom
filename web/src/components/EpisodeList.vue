@@ -15,8 +15,8 @@
           :key="ep.id"
           class="episode-row"
         >
-          <span class="ep-label">{{ epLabel(ep) }}</span>
-          <span class="ep-title">{{ ep.title }}</span>
+          <router-link :to="`/media/${ep.id}`" class="ep-label">{{ epLabel(ep) }}</router-link>
+          <router-link :to="`/media/${ep.id}`" class="ep-title-link">{{ ep.title }}</router-link>
           <span v-if="ep.duration" class="ep-duration">{{ formatDuration(ep.duration) }}</span>
           <router-link :to="`/play/${ep.id}`" class="ep-play" @click.stop>&#9654;</router-link>
         </div>
@@ -165,13 +165,24 @@ function formatDuration(sec: number) {
   font-weight: 600;
   min-width: 48px;
   font-size: 13px;
+  text-decoration: none;
 }
 
-.ep-title {
+.ep-label:hover {
+  color: #8b83ff;
+}
+
+.ep-title-link {
   flex: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: #9999bb;
+  text-decoration: none;
+}
+
+.ep-title-link:hover {
+  color: #e0e0e0;
 }
 
 .ep-duration {

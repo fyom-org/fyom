@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -24,8 +25,11 @@ import (
 // Filesystem paths are never exposed; resource URLs are generated dynamically
 // via the Provider registry.
 type ActorResponse struct {
-	Name string `json:"name"`
-	Role string `json:"role"`
+	Name      string `json:"name"`
+	Role      string `json:"role"`
+	Type      string `json:"type"`
+	SortOrder int    `json:"sort_order"`
+	Thumb     string `json:"thumb,omitempty"`
 }
 
 type MediaItemResponse struct {
@@ -51,7 +55,9 @@ type MediaItemResponse struct {
 	Genres            []string          `json:"genres,omitempty"`
 	Studios           []string          `json:"studios,omitempty"`
 	Actors            []ActorResponse   `json:"actors,omitempty"`
+	GuestStars        []ActorResponse   `json:"guest_stars,omitempty"`
 	UniqueIDs         map[string]string `json:"unique_ids,omitempty"`
+	ShowID            string            `json:"show_id,omitempty"`
 	Premiered         string            `json:"premiered,omitempty"`
 	Outline           string            `json:"outline,omitempty"`
 	Tagline           string            `json:"tagline,omitempty"`
@@ -66,6 +72,7 @@ type MediaItemResponse struct {
 	AudioCodec        string            `json:"audio_codec,omitempty"`
 	AudioChannels     int               `json:"audio_channels,omitempty"`
 	SubtitleLanguages []string          `json:"subtitle_languages,omitempty"`
+	Aired             string            `json:"aired,omitempty"`
 }
 // MediaHandler handles media-related HTTP endpoints.
 type MediaHandler struct {
@@ -102,7 +109,6 @@ func mediaItemToResponse(item *model.MediaItem) MediaItemResponse {
 		SortTitle:      item.SortTitle,
 		Overview:       item.Overview,
 		MetadataSource: item.MetadataSource,
-		ParentID:       item.ParentID,
 		Status:         item.Status,
 		MPAA:           item.MPAA,
 		Premiered:      item.Premiered,
@@ -114,6 +120,8 @@ func mediaItemToResponse(item *model.MediaItem) MediaItemResponse {
 		VideoHeight:    item.VideoHeight,
 		AudioCodec:     item.AudioCodec,
 		AudioChannels:  item.AudioChannels,
+		ShowID:         item.ParentID, // for episodes, parent_id is the show
+		Aired:          item.Aired,
 	}
 
 	if item.Year != 0 {
@@ -135,6 +143,7 @@ func mediaItemToResponse(item *model.MediaItem) MediaItemResponse {
 	resp.Genres = decodeStrings(item.Genres)
 	resp.Studios = decodeStrings(item.Studios)
 	resp.Actors = decodeActors(item.Actors)
+	resp.GuestStars = decodeGuestStars(item.Actors)
 	resp.UniqueIDs = decodeUniqueIDs(item.UniqueIDs)
 	resp.Countries = decodeStrings(item.Countries)
 	resp.Directors = decodeStrings(item.Directors)
@@ -158,9 +167,49 @@ func decodeActors(s string) []ActorResponse {
 	if s == "" {
 		return nil
 	}
-	var r []ActorResponse
-	json.Unmarshal([]byte(s), &r)
-	return r
+	var all []ActorResponse
+	json.Unmarshal([]byte(s), &all)
+	// Sort by SortOrder ascending
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].SortOrder < all[j].SortOrder
+	})
+	// Filter: only Actor or GuestStar types
+	var mainCast []ActorResponse
+	for _, a := range all {
+		switch a.Type {
+		case "Actor", "":
+			mainCast = append(mainCast, a)
+		}
+	}
+	// Limit to top 6
+	if len(mainCast) > 6 {
+		mainCast = mainCast[:6]
+	}
+	return mainCast
+}
+
+func decodeGuestStars(s string) []ActorResponse {
+	if s == "" {
+		return nil
+	}
+	var all []ActorResponse
+	json.Unmarshal([]byte(s), &all)
+	// Sort by SortOrder ascending
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].SortOrder < all[j].SortOrder
+	})
+	// Filter: only GuestStar type
+	var guests []ActorResponse
+	for _, a := range all {
+		if a.Type == "GuestStar" {
+			guests = append(guests, a)
+		}
+	}
+	// Limit to top 12
+	if len(guests) > 12 {
+		guests = guests[:12]
+	}
+	return guests
 }
 
 func decodeUniqueIDs(s string) map[string]string {

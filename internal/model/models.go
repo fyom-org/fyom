@@ -53,6 +53,7 @@ type MediaItem struct {
 	AudioCodec          string  `json:"audio_codec,omitempty" db:"audio_codec"`
 	AudioChannels       int     `json:"audio_channels,omitempty" db:"audio_channels"`
 	SubtitleLanguages   string  `json:"subtitle_languages,omitempty" db:"subtitle_languages"`
+	Aired               string  `json:"aired,omitempty" db:"aired"`
 }
 
 // ImportJob tracks an import operation.

@@ -30,7 +30,7 @@ const mediaColumns = `id, type, title, sort_title, year, overview, rating, durat
 		mpaa, genres, studios, actors, unique_ids, premiered, outline, tagline,
 		countries, directors, credits, tags, set_name, video_codec, video_width,
 		video_height, video_duration_seconds, audio_codec, audio_channels,
-		subtitle_languages`
+		subtitle_languages, aired`
 
 const mediaInsertColumns = `(id, type, title, sort_title, year, overview, rating, duration,
 		file_path, poster_path, backdrop_path, parent_id, season, episode,
@@ -38,9 +38,9 @@ const mediaInsertColumns = `(id, type, title, sort_title, year, overview, rating
 		mpaa, genres, studios, actors, unique_ids, premiered, outline, tagline,
 		countries, directors, credits, tags, set_name, video_codec, video_width,
 		video_height, video_duration_seconds, audio_codec, audio_channels,
-		subtitle_languages)`
+		subtitle_languages, aired)`
 
-const mediaInsertPlaceholders = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+const mediaInsertPlaceholders = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 func scanMediaItem(rows *sql.Rows, m *model.MediaItem) error {
 	var season, episode int
@@ -51,7 +51,7 @@ func scanMediaItem(rows *sql.Rows, m *model.MediaItem) error {
 		&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
 		&m.Outline, &m.Tagline, &m.Countries, &m.Directors, &m.Credits, &m.Tags,
 		&m.SetName, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
-		&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages); err != nil {
+		&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages, &m.Aired); err != nil {
 		return err
 	}
 	m.Season = IntPtr(season)
@@ -68,7 +68,7 @@ func scanMediaRow(row *sql.Row, m *model.MediaItem) error {
 		&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
 		&m.Outline, &m.Tagline, &m.Countries, &m.Directors, &m.Credits, &m.Tags,
 		&m.SetName, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
-		&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages)
+		&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages, &m.Aired)
 	m.Season = IntPtr(season)
 	m.Episode = IntPtr(episode)
 	return err
@@ -146,7 +146,7 @@ func (r *MediaRepository) Create(ctx context.Context, m *model.MediaItem) error 
 		m.MPAA, m.Genres, m.Studios, m.Actors, m.UniqueIDs, m.Premiered,
 		m.Outline, m.Tagline, m.Countries, m.Directors, m.Credits, m.Tags,
 		m.SetName, m.VideoCodec, m.VideoWidth, m.VideoHeight, m.VideoDurationSeconds,
-		m.AudioCodec, m.AudioChannels, m.SubtitleLanguages)
+		m.AudioCodec, m.AudioChannels, m.SubtitleLanguages, m.Aired)
 	return err
 }
 

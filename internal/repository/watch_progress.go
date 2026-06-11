@@ -67,7 +67,7 @@ func (r *MediaRepository) GetContinueWatching(ctx context.Context, userID string
 		m.mpaa, m.genres, m.studios, m.actors, m.unique_ids, m.premiered, m.outline, m.tagline,
 		m.countries, m.directors, m.credits, m.tags, m.set_name, m.video_codec, m.video_width,
 		m.video_height, m.video_duration_seconds, m.audio_codec, m.audio_channels,
-		m.subtitle_languages,
+		m.subtitle_languages, m.aired,
 		w.position, w.duration, w.finished
 		FROM watch_progress w
 		JOIN media_items m ON m.id = w.media_item_id
@@ -106,7 +106,7 @@ func (r *MediaRepository) GetContinueWatching(ctx context.Context, userID string
 			&item.Premiered, &item.Outline, &item.Tagline, &item.Countries, &item.Directors,
 			&item.Credits, &item.Tags, &item.SetName, &item.VideoCodec, &item.VideoWidth,
 			&item.VideoHeight, &item.VideoDurationSeconds, &item.AudioCodec, &item.AudioChannels,
-			&item.SubtitleLanguages,
+			&item.SubtitleLanguages, &item.Aired,
 			&item.Position, &item.Duration, &item.Finished,
 		); err != nil {
 			return nil, err

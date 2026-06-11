@@ -11,12 +11,13 @@ type NFOUniqueID struct {
 }
 
 // NFOActor represents a cast member.
-// Kodi format: <actor><name>...</name><role>...</role><order>1</order><thumb>...</thumb></actor>
+// Kodi format: <actor><name>...</name><role>...</role><type>Actor</type><sortorder>1</sortorder><thumb>...</thumb></actor>
 type NFOActor struct {
-	Name  string `xml:"name"`
-	Role  string `xml:"role"`
-	Order int    `xml:"order"`
-	Thumb string `xml:"thumb"`
+	Name      string `xml:"name"`
+	Role      string `xml:"role"`
+	Type      string `xml:"type"`      // Actor | GuestStar | Producer | Director | Writer
+	SortOrder int    `xml:"sortorder"` // Kodi uses <sortorder>, not <order>
+	Thumb     string `xml:"thumb"`
 }
 
 // NFOThumb represents a thumb element with aspect attribute.
@@ -131,7 +132,10 @@ type NFOMovie struct {
 	Thumbs        []NFOThumb    `xml:"thumb"`
 	Fanart        *NFOFanart    `xml:"fanart,omitempty"`
 	UniqueIDs     []NFOUniqueID `xml:"uniqueid"`
-	ID            string        `xml:"id,omitempty"`
+	ImdbID        string        `xml:"imdb_id"`  // old: <imdb_id>tt0816692</imdb_id>
+	TmdbID        string        `xml:"tmdbid"`   // old: <tmdbid>157336</tmdbid>
+	TvdbID        string        `xml:"tvdbid"`   // old: <tvdbid>...</tvdbid>
+	LegacyID      string        `xml:"id"`       // very old: <id>...</id> (usually numeric)
 	FileInfo      NFOFileInfo   `xml:"fileinfo"`
 	Trailer       string        `xml:"trailer,omitempty"`
 	FileName      string        `xml:"-"`
@@ -161,7 +165,10 @@ type NFOTVShow struct {
 	Thumbs        []NFOThumb    `xml:"thumb"`
 	Fanart        *NFOFanart    `xml:"fanart,omitempty"`
 	UniqueIDs     []NFOUniqueID `xml:"uniqueid"`
-	ID            string        `xml:"id,omitempty"`
+	ImdbID        string        `xml:"imdb_id"`  // old: <imdb_id>tt17158756</imdb_id>
+	TmdbID        string        `xml:"tmdbid"`   // old: <tmdbid>119100</tmdbid>
+	TvdbID        string        `xml:"tvdbid"`   // old: <tvdbid>413522</tvdbid>
+	LegacyID      string        `xml:"id"`       // very old: <id>413522</id> (usually TVDb)
 	FileName      string        `xml:"-"`
 }
 
@@ -190,7 +197,10 @@ type NFOEpisode struct {
 	Actors         []NFOActor    `xml:"actor"`
 	Thumbs         []NFOThumb    `xml:"thumb"`
 	UniqueIDs      []NFOUniqueID `xml:"uniqueid"`
-	ID             string        `xml:"id,omitempty"`
+	ImdbID         string        `xml:"imdb_id"` // old: <imdb_id>tt1234567</imdb_id>
+	TmdbID         string        `xml:"tmdbid"`  // old: <tmdbid>12345</tmdbid>
+	TvdbID         string        `xml:"tvdbid"`  // old: <tvdbid>12345</tvdbid>
+	LegacyID       string        `xml:"id"`      // very old: <id>12345</id>
 	FileInfo       NFOFileInfo   `xml:"fileinfo"`
 	FileName       string        `xml:"-"`
 }
