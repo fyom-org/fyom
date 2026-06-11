@@ -3,15 +3,18 @@ import { ref, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { getMediaList, getMediaByStatus } from '@/api/library';
 import request from '@/api/request';
+import { useUserStore } from '@/stores/user';
 import MediaRow from '@/components/MediaRow.vue';
 
 const router = useRouter();
+const store = useUserStore();
 const continueWatching = ref<unknown[]>([]);
 const wantToWatch = ref<unknown[]>([]);
 const recentlyAdded = ref<unknown[]>([]);
 const libraries = ref<any[]>([]);
 const loading = ref(true);
-const isAdmin = computed(() => localStorage.getItem('role') === 'admin');
+
+const isAdmin = computed(() => store.isAdmin);
 
 interface MediaItem {
   id: string;

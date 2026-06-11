@@ -47,9 +47,16 @@ const router = useRouter();
 const store = useUserStore();
 const libraries = ref<any[]>([]);
 
-const isAdmin = computed(() => localStorage.getItem('role') === 'admin');
+const isAdmin = computed(() => store.isAdmin);
 
 onMounted(async () => {
+  try {
+    if (store.isLoggedIn && !store.user) {
+      await store.fetchMe();
+    }
+  } catch {
+    // ignore
+  }
   try {
     const res: any = await request.get('/libraries');
     libraries.value = res.data || [];
@@ -60,7 +67,6 @@ onMounted(async () => {
 
 function handleLogout() {
   store.logout();
-  localStorage.removeItem('role');
   router.push({ name: 'login' });
 }
 </script>

@@ -97,7 +97,6 @@ async function submit() {
       password: password.value,
     });
     localStorage.setItem('token', loginRes.data.access_token);
-    localStorage.setItem('role', loginRes.data.role || 'admin');
 
     // Step 3: Create first library (if enabled)
     if (createLibrary.value && librarySourcePath.value) {

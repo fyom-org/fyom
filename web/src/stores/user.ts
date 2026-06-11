@@ -10,6 +10,7 @@ export const useUserStore = defineStore('user', () => {
   const user = ref<MeData | null>(null);
 
   const isLoggedIn = computed(() => token.value.length > 0);
+  const isAdmin = computed(() => user.value?.role === 'admin');
 
   async function doLogin(username: string, password: string): Promise<void> {
     const res = await login({ username, password });
@@ -31,5 +32,5 @@ export const useUserStore = defineStore('user', () => {
     localStorage.removeItem('token');
   }
 
-  return { token, user, isLoggedIn, doLogin, fetchMe, logout };
+  return { token, user, isLoggedIn, isAdmin, doLogin, fetchMe, logout };
 });
