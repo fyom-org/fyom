@@ -78,7 +78,7 @@ type NFOStreamDetails struct {
 // NFOVideo contains video stream metadata.
 type NFOVideo struct {
 	Codec             string  `xml:"codec"`
-	Aspect            float64 `xml:"aspect"`
+	Aspect            string  `xml:"aspect"`      // Kodi format: "16:9", "4:3", etc.
 	Width             int     `xml:"width"`
 	Height            int     `xml:"height"`
 	DurationInSeconds int     `xml:"durationinseconds"`
