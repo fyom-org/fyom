@@ -43,6 +43,14 @@
         v-if="isMobile && sidebarOpen"
         @click="sidebarOpen = false"
       ></div>
+      <!-- Floating sidebar toggle button -->
+      <button
+        class="floating-sidebar-toggle"
+        @click="toggleSidebar"
+        v-if="isMobile || !sidebarOpen"
+      >
+        ☰
+      </button>
       <main class="content">
         <router-view />
       </main>
@@ -136,6 +144,30 @@ function handleLogout() {
   margin-bottom: var(--spacing-md);
   width: 100%;
   text-align: left;
+}
+
+.floating-sidebar-toggle {
+  position: fixed;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  background: rgba(26, 26, 46, 0.8);
+  color: var(--color-text);
+  border: none;
+  border-radius: 0 4px 4px 0;
+  cursor: pointer;
+  font-size: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 101;
+  box-shadow: 2px 0 5px rgba(0, 0, 0, 0.2);
+}
+
+.floating-sidebar-toggle:hover {
+  background: rgba(108, 99, 255, 0.8);
 }
 
 .btn-logout {
