@@ -1,12 +1,11 @@
 import { createRouter, createWebHistory } from 'vue-router';
-import LoginView from '@/views/LoginView.vue';
 import MainLayout from '@/layouts/MainLayout.vue';
 import AdminLayout from '@/layouts/AdminLayout.vue';
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/login', name: 'login', component: LoginView },
+    { path: '/login', name: 'login', component: () => import('@/views/LoginView.vue') },
     { path: '/register', name: 'Register', component: () => import('@/views/RegisterView.vue') },
     { path: '/setup', name: 'Setup', component: () => import('@/views/SetupView.vue') },
     { path: '/home', redirect: '/' },
@@ -17,8 +16,16 @@ const router = createRouter({
       children: [
         { path: '', name: 'Home', component: () => import('@/views/DashboardView.vue') },
         { path: 'library', name: 'Library', component: () => import('@/views/LibraryView.vue') },
-        { path: 'library/:libraryId', name: 'LibraryFiltered', component: () => import('@/views/LibraryView.vue') },
-        { path: 'media/:id', name: 'MediaDetail', component: () => import('@/views/MediaDetailView.vue') },
+        {
+          path: 'library/:libraryId',
+          name: 'LibraryFiltered',
+          component: () => import('@/views/LibraryView.vue'),
+        },
+        {
+          path: 'media/:id',
+          name: 'MediaDetail',
+          component: () => import('@/views/MediaDetailView.vue'),
+        },
         { path: 'play/:id', name: 'Player', component: () => import('@/views/PlayerView.vue') },
         { path: 'profile', name: 'Profile', component: () => import('@/views/ProfileView.vue') },
       ],

@@ -1,4 +1,4 @@
-version: '3'
+version: "3"
 
 vars:
   BINARY_NAME: fyom
@@ -49,7 +49,8 @@ tasks:
     desc: "Build frontend for production"
     dir: web
     cmds:
-      - npm run build
+      - npm run build:full
+      - find dist -name "*.map" -delete
 
   build:
     desc: "Build single binary (embedded frontend)"

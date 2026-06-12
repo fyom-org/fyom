@@ -143,29 +143,11 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 		r.Get("/{id}/logo", mediaHandler.ServeLogo)
 	})
 
-	// Static files
-	staticFS, err := fs.Sub(web.Dist, "dist")
-	if err != nil {
-		logger.Error("failed to open embedded static FS", "error", err)
-		staticFS = os.DirFS("/dev/null")
-	}
-	fileServer := http.FileServer(http.FS(staticFS))
-
-	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-		f, err := staticFS.Open(strings.TrimPrefix(path, "/"))
-		if err != nil {
-			serveIndexHTML(w, r, staticFS)
-			return
-		}
-		stat, err := f.Stat()
-		_ = f.Close()
-		if err != nil || stat.IsDir() {
-			serveIndexHTML(w, r, staticFS)
-			return
-		}
-		fileServer.ServeHTTP(w, r)
-	})
+	// Static files — go:embed dist embeds the dist/ directory at root.
+	// So the FS root already IS dist/. No fs.Sub needed.
+	// To open "assets/foo.js" we must use "dist/assets/foo.js".
+	r.Get("/*", staticFileHandler(logger))
+	r.Head("/*", staticFileHandler(logger))
 
 	httpServer := &http.Server{
 		Addr:         cfg.Server.Address(),
@@ -187,15 +169,158 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	}
 }
 
-func serveIndexHTML(w http.ResponseWriter, _ *http.Request, staticFS fs.FS) {
-	data, err := fs.ReadFile(staticFS, "index.html")
+// staticFileHandler returns an http.Handler that serves embedded static files.
+// It handles brotli/gzip pre-compression, HEAD requests, and SPA index fallback.
+func staticFileHandler(logger *slog.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if name == "" || name == "/" {
+			name = "index.html"
+		}
+
+		logger.Info("STATIC REQUEST", "raw", r.URL.Path, "cleaned", name, "method", r.Method, "accept_encoding", r.Header.Get("Accept-Encoding"))
+
+		// Try brotli first
+		acceptEncoding := r.Header.Get("Accept-Encoding")
+		if strings.Contains(acceptEncoding, "br") {
+			brName := "dist/" + name + ".br"
+			logger.Info("OPEN TRY", "file", brName)
+			if data, err := fs.ReadFile(web.Dist, brName); err == nil {
+				logger.Info("OPEN OK", "file", brName, "len", len(data))
+				w.Header().Set("Content-Encoding", "br")
+				w.Header().Set("Content-Type", detectContentType(name))
+				w.Header().Set("Vary", "Accept-Encoding")
+				setCacheHeader(w, name)
+				if r.Method == http.MethodHead {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(data)
+				return
+			} else {
+				logger.Info("OPEN FAIL", "file", brName, "err", err)
+			}
+		}
+
+		// Try gzip
+		if strings.Contains(acceptEncoding, "gzip") {
+			gzName := "dist/" + name + ".gz"
+			logger.Info("OPEN TRY", "file", gzName)
+			if data, err := fs.ReadFile(web.Dist, gzName); err == nil {
+				logger.Info("OPEN OK", "file", gzName, "len", len(data))
+				w.Header().Set("Content-Encoding", "gzip")
+				w.Header().Set("Content-Type", detectContentType(name))
+				w.Header().Set("Vary", "Accept-Encoding")
+				setCacheHeader(w, name)
+				if r.Method == http.MethodHead {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(data)
+				return
+			} else {
+				logger.Info("OPEN FAIL", "file", gzName, "err", err)
+			}
+		}
+
+		// Serve uncompressed — read from embed FS and serve directly
+		realName := "dist/" + name
+		logger.Info("OPEN TRY", "file", realName)
+		data, err := fs.ReadFile(web.Dist, realName)
+		if err != nil {
+			logger.Info("OPEN FAIL", "file", realName, "err", err)
+			// For known static file extensions under assets/, return 404
+			// instead of SPA fallback. This prevents CSS preload failures.
+			if isImmutableAsset(name) {
+				w.Header().Set("Cache-Control", "no-store")
+				http.NotFound(w, r)
+				return
+			}
+			serveIndexHTML(w, r)
+			return
+		}
+		logger.Info("OPEN OK", "file", realName, "len", len(data))
+
+		w.Header().Set("Content-Type", detectContentType(name))
+		setCacheHeader(w, name)
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}
+}
+
+func setCacheHeader(w http.ResponseWriter, name string) {
+	if isImmutableAsset(name) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "no-cache")
+	}
+}
+
+func serveIndexHTML(w http.ResponseWriter, _ *http.Request) {
+	data, err := fs.ReadFile(web.Dist, "dist/index.html")
 	if err != nil {
 		http.Error(w, "index.html not found", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+// detectContentType returns the MIME type based on the original file name.
+// Important: use the original name (e.g. "assets/foo.css"), NOT the
+// compressed path (e.g. "assets/foo.css.br") which would give wrong MIME.
+func detectContentType(name string) string {
+	ext := ""
+	if idx := strings.LastIndex(name, "."); idx >= 0 {
+		ext = strings.ToLower(name[idx:])
+	}
+	switch ext {
+	case ".js", ".mjs":
+		return "text/javascript; charset=utf-8"
+	case ".css":
+		return "text/css; charset=utf-8"
+	case ".json":
+		return "application/json; charset=utf-8"
+	case ".html", ".htm":
+		return "text/html; charset=utf-8"
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".svg":
+		return "image/svg+xml"
+	case ".woff2":
+		return "font/woff2"
+	case ".woff":
+		return "font/woff"
+	case ".ttf":
+		return "font/ttf"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+// isImmutableAsset returns true only for versioned assets under assets/.
+// index.html, favicon.ico, robots.txt, etc. must NOT be immutable.
+func isImmutableAsset(name string) bool {
+	if !strings.HasPrefix(name, "assets/") {
+		return false
+	}
+	// Double check: never immutable for these names
+	if name == "index.html" || strings.HasSuffix(name, "/index.html") {
+		return false
+	}
+	return true
 }
 
 func (s *Server) Run() error {
@@ -215,7 +340,7 @@ func (s *Server) Run() error {
 	<-quit
 	s.logger.Info("server shutting down...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15 * time.Second)
 	defer cancel()
 
 	if err := s.httpServer.Shutdown(ctx); err != nil {
@@ -243,7 +368,6 @@ func (s *Server) runLibraryRefreshScheduler(ctx context.Context) {
 
 // checkAndRefreshLibraries reads refresh schedules from settings and triggers overdue refreshes.
 func (s *Server) checkAndRefreshLibraries(ctx context.Context) {
-	// List all libraries
 	libraries, err := s.libRepo.List(ctx)
 	if err != nil {
 		s.logger.Error("scheduler: failed to list libraries", "error", err)
@@ -256,7 +380,6 @@ func (s *Server) checkAndRefreshLibraries(ctx context.Context) {
 
 		intervalStr, err := s.settingRepo.GetSetting(ctx, intervalKey)
 		if err != nil {
-			// No schedule configured for this library
 			continue
 		}
 
@@ -270,7 +393,7 @@ func (s *Server) checkAndRefreshLibraries(ctx context.Context) {
 
 		now := time.Now().Unix()
 		if now-lastRefreshUnix < int64(interval) {
-			continue // Not yet due
+			continue
 		}
 
 		s.logger.Info("scheduler: triggering library refresh",
@@ -279,7 +402,6 @@ func (s *Server) checkAndRefreshLibraries(ctx context.Context) {
 			"interval_seconds", interval,
 		)
 
-		// Trigger import
 		imp := service.NewImporter(
 			service.NewLocalImportFS(),
 			"local",
@@ -293,7 +415,6 @@ func (s *Server) checkAndRefreshLibraries(ctx context.Context) {
 			continue
 		}
 
-		// Record last refresh time
 		_ = s.settingRepo.SetSetting(ctx, lastKey, strconv.FormatInt(now, 10))
 	}
 }
