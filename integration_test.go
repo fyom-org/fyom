@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +24,33 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// mockRefreshCoordinator implements handler.RefreshCoordinator for testing.
+type mockRefreshCoordinator struct {
+	running map[string]bool
+	mu      sync.Mutex
+}
+
+func (m *mockRefreshCoordinator) TryStart(libraryID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.running == nil {
+		m.running = make(map[string]bool)
+	}
+	if m.running[libraryID] {
+		return false
+	}
+	m.running[libraryID] = true
+	return true
+}
+
+func (m *mockRefreshCoordinator) Finish(libraryID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.running != nil {
+		delete(m.running, libraryID)
+	}
+}
 
 func setupIntegrationRouter(t *testing.T) (http.Handler, *repository.DB, func()) {
 	t.Helper()
@@ -60,7 +88,8 @@ func setupIntegrationRouter(t *testing.T) (http.Handler, *repository.DB, func())
 
 	reg := provider.NewRegistry()
 	reg.Register(provider.NewLocalProvider(signer))
-	mediaHandler := handler.NewMediaHandler(reg, db, mediaRepo, jobRepo, providerRepo, libRepo, statusRepo, slog.Default())
+	mockCoordinator := &mockRefreshCoordinator{}
+	mediaHandler := handler.NewMediaHandler(reg, db, mediaRepo, jobRepo, providerRepo, libRepo, statusRepo, slog.Default(), mockCoordinator)
 
 	authHandler := handler.NewAuthHandler(userRepo, libPermRepo, settingRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
 
