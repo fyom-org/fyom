@@ -2,10 +2,13 @@
 name = "fyom"
 version = "0.0.0"
 description = "fyom desktop app"
-license = "MIT"
-edition = "2026"
+license = "GPL-3.0-only"
+edition = "2024"
 
 [lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "fyom_lib"
 crate-type = ["cdylib", "lib"]
 
@@ -13,19 +16,32 @@ crate-type = ["cdylib", "lib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["macos-private-api"] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
-tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["io-util", "net", "rt-multi-thread", "time", "sync"] }
+tokio = { version = "1", features = [
+  "io-util",
+  "net",
+  "rt-multi-thread",
+  "time",
+  "sync",
+  "process",
+  "macros"
+] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-anyhow = "1.0"
-thiserror = "1.0"
+anyhow = "1"
+thiserror = "1"
+cookie = { version = "0.18.1", features = ["secure"] }
+time = "0.3.47"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-updater = "2"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-process = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

@@ -7,11 +7,11 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
-use crate::{SIDECAR_ERROR_EVENT, SIDECAR_STARTUP_TIMEOUT_SECS};
+use crate::{SIDECAR_ERROR_EVENT, SIDECAR_READY_EVENT, SIDECAR_STARTUP_TIMEOUT_SECS};
 
 /// The expected readiness token emitted by the Go sidecar on stdout.
 const READY_TOKEN: &str = "FYOM_READY";
@@ -75,19 +75,14 @@ fn find_sidecar_binary() -> Result<PathBuf> {
         }
     }
 
-    anyhow::bail!(
-        "fyom sidecar binary not found. Build it with: task sidecar (or set FYOM_BIN)"
-    )
+    anyhow::bail!("fyom sidecar binary not found. Build it with: task sidecar (or set FYOM_BIN)")
 }
 
 /// Bootstrap the Go sidecar process.
 ///
 /// Spawns the sidecar, waits for the FYOM_READY signal, then confirms /readyz.
 /// The main window should remain hidden until this succeeds.
-pub async fn bootstrap_sidecar(
-    app: &AppHandle,
-    state: &crate::AppState,
-) -> Result<()> {
+pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Result<()> {
     let sidecar_state = &state.sidecar_state;
     sidecar_state.set_starting();
 
@@ -207,10 +202,8 @@ pub async fn bootstrap_sidecar(
                             }
                             Err(e) => {
                                 tracing::error!("Sidecar wait error: {}", e);
-                                let _ = app_handle.emit(
-                                    SIDECAR_ERROR_EVENT,
-                                    format!("Sidecar error: {}", e),
-                                );
+                                let _ = app_handle
+                                    .emit(SIDECAR_ERROR_EVENT, format!("Sidecar error: {}", e));
                             }
                             _ => tracing::info!("Sidecar exited normally"),
                         }
@@ -253,7 +246,7 @@ async fn confirm_readyz(api_url: &str) -> Result<()> {
         .build()?;
 
     let url = format!("{}/readyz", api_url);
-    let resp = client.get(&url).await?;
+    let resp = client.get(&url).send().await?;
 
     if resp.status().is_success() {
         tracing::info!("/readyz confirmed OK");
@@ -266,7 +259,12 @@ async fn confirm_readyz(api_url: &str) -> Result<()> {
 /// Determine the data directory for the sidecar.
 fn determine_sidecar_data_dir(app: &AppHandle) -> String {
     // Use a platform-appropriate data directory
-    if let Some(data_dir) = app.path().app_data_dir().ok().and_then(|d| d.to_str().map(String::from)) {
+    if let Some(data_dir) = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .and_then(|d| d.to_str().map(String::from))
+    {
         let _ = std::fs::create_dir_all(&data_dir);
         return data_dir;
     }
@@ -276,10 +274,7 @@ fn determine_sidecar_data_dir(app: &AppHandle) -> String {
 }
 
 /// Shutdown the sidecar process cleanly.
-pub async fn shutdown_sidecar(
-    _app: &AppHandle,
-    state: &crate::AppState,
-) -> Result<()> {
+pub async fn shutdown_sidecar(_app: &AppHandle, state: &crate::AppState) -> Result<()> {
     let sidecar_state = &state.sidecar_state;
     tracing::info!("Shutting down sidecar");
     sidecar_state.set_error("Shutting down".to_string());

@@ -39,3 +39,13 @@ tmp/
 
 # Tauri
 src-tauri/target/
+
+# Nix
+.nix-chicken/
+flake.lock
+
+# Direnv
+.direnv/
+
+# Nix develop profile
+result/

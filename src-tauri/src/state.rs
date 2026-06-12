@@ -1,28 +1,12 @@
 //! Sidecar state management
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use serde::Serialize;
-use tauri::{AppHandle, Emitter};
 
-use crate::{MAIN_WINDOW_LABEL, SIDECAR_READY_EVENT, SIDECAR_ERROR_EVENT, SIDECAR_STARTUP_TIMEOUT_SECS};
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "status", content = "data")]
-pub enum SidecarStatus {
-    Starting,
-    Ready { api_base_url: String },
-    Error { message: String },
-}
-
-impl Default for SidecarStatus {
-    fn default() -> Self {
-        SidecarStatus::Starting
-    }
-}
+use crate::{SIDECAR_STARTUP_TIMEOUT_SECS, SidecarStatus};
 
 #[derive(Default)]
 pub struct SidecarState {
@@ -51,7 +35,9 @@ impl SidecarState {
         *self.status.lock().unwrap() = SidecarStatus::Starting;
         self.ready_received.store(false, Ordering::SeqCst);
         self.startup_timeout.store(
-            (Instant::now() + Duration::from_secs(SIDECAR_STARTUP_TIMEOUT_SECS)).elapsed().as_millis() as u64,
+            (Instant::now() + Duration::from_secs(SIDECAR_STARTUP_TIMEOUT_SECS))
+                .elapsed()
+                .as_millis() as u64,
             Ordering::SeqCst,
         );
     }

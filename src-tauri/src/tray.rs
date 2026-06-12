@@ -2,9 +2,9 @@
 
 use anyhow::Result;
 use tauri::{
+    AppHandle, Manager, Runtime,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, Runtime,
 };
 
 use crate::MAIN_WINDOW_LABEL;
@@ -59,6 +59,7 @@ pub fn show_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
 }
 
 /// Hide the main window to tray.
+#[allow(dead_code)]
 pub fn hide_to_tray<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
         window.hide()?;

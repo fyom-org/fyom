@@ -6,11 +6,11 @@ mod state;
 mod tray;
 mod window;
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use sidecar::SidecarState;
-use tauri::{Emitter, Manager, Runtime};
+use crate::state::SidecarState;
+use tauri::Emitter;
 
 pub const MAIN_WINDOW_LABEL: &str = "main";
 pub const SIDECAR_READY_EVENT: &str = "fyom-sidecar-ready";
@@ -59,7 +59,7 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = sidecar::bootstrap_sidecar(&app_handle, &state).await {
                     tracing::error!("Sidecar bootstrap failed: {}", e);
-                    let _ = app_handle.emit(SIDECAR_ERROR_EVENT, e);
+                    let _ = app_handle.emit(SIDECAR_ERROR_EVENT, e.to_string());
                 }
             });
 
@@ -77,8 +77,8 @@ pub fn run() {
             commands::show_window,
             commands::hide_window,
             commands::quit_app,
-            commands::get_api_base_url,
             commands::get_sidecar_status,
+            commands::playback::get_api_base_url,
             commands::playback::get_playback_backend_info,
         ])
         .build(tauri::generate_context!())
@@ -89,53 +89,23 @@ pub fn run() {
         if let tauri::RunEvent::ExitRequested { api, .. } = event {
             // Prevent default exit behavior, we handle quit via tray
             api.prevent_exit();
-            let _ = commands::quit_app(app_handle.clone());
+            let app_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = commands::request_quit(app_handle).await;
+            });
         }
     });
 }
 
-pub mod commands {
-    use super::*;
-    use tauri::{AppHandle, State};
-
-    #[tauri::command]
-    pub async fn show_window(app: AppHandle) -> Result<(), String> {
-        window::show_main_window(&app)
-    }
-
-    #[tauri::command]
-    pub async fn hide_window(app: AppHandle) -> Result<(), String> {
-        window::hide_to_tray(&app)
-    }
-
-    #[tauri::command]
-    pub async fn quit_app(app: AppHandle) -> Result<(), String> {
-        let state: State<'_, AppState> = app.state();
-        state.mark_shutdown();
-
-        // Shutdown sidecar
-        sidecar::shutdown_sidecar(&app, &state).await?;
-
-        // Exit the app
-        app.exit(0);
-        Ok(())
-    }
-
-    #[tauri::command]
-    pub async fn get_api_base_url(state: State<'_, AppState>) -> Result<String, String> {
-        state.sidecar_state.get_api_base_url()
-    }
-
-    #[tauri::command]
-    pub async fn get_sidecar_status(state: State<'_, AppState>) -> Result<SidecarStatus, String> {
-        Ok(state.sidecar_state.get_status())
-    }
-}
-
-#[derive(serde::Serialize, Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug, Default)]
 #[serde(tag = "status", content = "data")]
 pub enum SidecarStatus {
+    #[default]
     Starting,
-    Ready { api_base_url: String },
-    Error { message: String },
+    Ready {
+        api_base_url: String,
+    },
+    Error {
+        message: String,
+    },
 }

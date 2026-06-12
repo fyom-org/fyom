@@ -6,7 +6,7 @@ use tauri::{AppHandle, Manager, Runtime};
 use crate::MAIN_WINDOW_LABEL;
 
 /// Setup the main window with close-to-tray behavior.
-pub fn setup_main_window<R: Runtime>(app: &tauri::App<R>) -> Result<()> {
+pub fn setup_main_window<R: Runtime>(_app: &tauri::App<R>) -> Result<()> {
     // Window is configured as invisible in tauri.conf.json.
     // We show it only when the sidecar is ready.
     Ok(())
@@ -14,6 +14,7 @@ pub fn setup_main_window<R: Runtime>(app: &tauri::App<R>) -> Result<()> {
 
 /// Configure the window to hide to tray instead of closing.
 /// This is called from the window event handler.
+#[allow(dead_code)]
 pub fn on_window_close_requested<R: Runtime>(
     app: &AppHandle<R>,
     // The tauri Window is obtained from the AppHandle using MAIN_WINDOW_LABEL

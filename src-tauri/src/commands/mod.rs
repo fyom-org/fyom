@@ -5,5 +5,55 @@
 
 pub mod playback;
 
-/// Re-export commands for easier access
-pub use playback::*;
+use tauri::{AppHandle, Manager, State};
+
+use crate::AppState;
+use crate::sidecar;
+
+/// Show the main window
+#[tauri::command]
+pub async fn show_window(app: AppHandle) -> Result<(), String> {
+    crate::window::show_main_window(&app).map_err(|e| e.to_string())
+}
+
+/// Hide the main window to tray
+#[tauri::command]
+pub async fn hide_window(app: AppHandle) -> Result<(), String> {
+    crate::window::hide_to_tray(&app).map_err(|e| e.to_string())
+}
+
+/// Request quit the application (async-safe version for spawning)
+pub async fn request_quit(app: AppHandle) -> Result<(), String> {
+    let state: State<'_, AppState> = app.state();
+    state.mark_shutdown();
+
+    // Shutdown sidecar
+    sidecar::shutdown_sidecar(&app, &state)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Exit the app
+    app.exit(0);
+    Ok(())
+}
+
+/// Quit the application
+#[tauri::command]
+pub async fn quit_app(app: AppHandle) -> Result<(), String> {
+    request_quit(app).await
+}
+
+/// Get the sidecar status
+#[tauri::command]
+pub async fn get_sidecar_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let status = state.sidecar_state.get_status();
+    match status {
+        crate::SidecarStatus::Starting => Ok(serde_json::json!({"status": "starting"})),
+        crate::SidecarStatus::Ready { api_base_url } => {
+            Ok(serde_json::json!({"status": "ready", "api_base_url": api_base_url}))
+        }
+        crate::SidecarStatus::Error { message } => {
+            Ok(serde_json::json!({"status": "error", "message": message}))
+        }
+    }
+}
