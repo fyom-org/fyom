@@ -338,13 +338,13 @@ Current client-side genre filtering is unaffected.
 
 ### 9.1 Static Asset & Build Reliability
 
-- [ ] Add regression tests for embedded static asset serving
+- [x] Add regression tests for embedded static asset serving
       (`index.html`, JS, CSS, `.br`, `.gz`, missing assets)
 
-- [ ] Verify `HEAD` and `GET` behavior for all static asset types
+- [x] Verify `HEAD` and `GET` behavior for all static asset types
       (`.js`, `.css`, `.html`, `.svg`, `.json`, `.ico`)
 
-- [ ] Add smoke test script for production bundle:
+- [x] Add smoke test script for production bundle:
       - `/`
       - `/assets/index-*.js`
       - `/assets/*.css`
@@ -353,22 +353,28 @@ Current client-side genre filtering is unaffected.
       - missing asset 404
       - SPA route fallback
 
-- [ ] Ensure `index.html` always uses `Cache-Control: no-cache`
+- [x] Ensure `index.html` always uses `Cache-Control: no-cache`
 
-- [ ] Ensure hashed `assets/*` always use
+- [x] Ensure hashed `assets/*` always use
       `Cache-Control: public, max-age=31536000, immutable`
 
-- [ ] Ensure missing static files return `404` with `Cache-Control: no-store`
+- [x] Ensure missing static files return `404` with `Cache-Control: no-store`
 
-- [ ] Add build artifact verification:
+- [x] Add build artifact verification:
       - no `.map` files in production bundle
       - `.br` and `.gz` exist for compressible assets
       - `index.html` references files that exist in `dist/assets`
 
-- [ ] Document embed FS serving rules:
+- [x] Document embed FS serving rules:
       - never use `http.ServeFile` for embed FS
       - MIME type based on original filename
       - compression path separate from logical request path
+
+- [x] **BUG FIX: static asset MIME type for `.webmanifest`**
+      `detectContentType` did not recognize `.webmanifest` and returned
+      `application/octet-stream` instead of `application/json`.
+      Fixed by treating `.webmanifest` as JSON in the static asset
+      content type switch in `internal/server/server.go`.
 
 ### 9.2 Importer Robustness & Idempotency
 
