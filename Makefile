@@ -1,52 +1,56 @@
-# Thin compatibility layer — all real logic lives in Taskfile.yml
-# Usage: make test  (equivalent to: task test)
+# Thin compatibility layer — all real logic lives in justfile
+# Usage: make test  (equivalent to: just test)
+#
+# just is the PRIMARY entry point — shorter commands, better UX.
+# This Makefile is a convenience alias for make users.
+# Taskfile.yml is also kept in sync for `task` users and CI portability.
 
-.PHONY: dev dev-web build test test-go test-race coverage lint lint-go lint-web smoke verify ci clean sidecar
+.PHONY: dev dev-web build build-web test test-go test-race coverage lint lint-go lint-web smoke verify ci sidecar clean
 
 dev:
-	task dev
+	just dev
 
 dev-web:
-	task dev:web
+	just dev-web
 
 build:
-	task build
+	just build
 
 build-web:
-	task build:web
+	just build-web
 
 test:
-	task test
+	just test
 
 test-go:
-	task test:go
+	just test-go
 
 test-race:
-	task test:race
+	just test-race
 
 coverage:
-	task coverage
+	just coverage
 
 lint:
-	task lint
+	just lint
 
 lint-go:
-	task lint:go
+	just lint-go
 
 lint-web:
-	task lint:web
+	just lint-web
 
 smoke:
-	task smoke
+	just smoke
 
 verify:
-	task verify
+	just verify
 
 ci:
-	task ci
+	just ci
 
 sidecar:
-	task sidecar
+	just sidecar
 
 clean:
-	task clean
+	just clean
