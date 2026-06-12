@@ -27,16 +27,16 @@ tasks:
       - npm run dev -- --host
 
   # ================================================
-  # Preview Developmet (Allow any host)
+  # Preview
   # ================================================
 
   preview:
-    desc: "Run Go backend with Air hot-reload (backend pane)"
+    desc: "Run Go backend preview"
     cmds:
       - CGO_ENABLED=0 FYOM_SERVER_HOST=127.0.0.1 go run cmd/fyom/main.go -c
 
   preview:web:
-    desc: "Run Vite dev server (frontend pane)"
+    desc: "Run Vite preview server"
     dir: web
     cmds:
       - npm run preview
@@ -59,23 +59,75 @@ tasks:
       - mkdir -p {{.BUILD_DIR}}
       - CGO_ENABLED=0 go build -ldflags "-s -w" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} {{.CMD_PATH}}
 
+  sidecar:
+    desc: "Build sidecar binary (no embed, for Tauri sidecar mode)"
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - CGO_ENABLED=0 go build -ldflags "-s -w" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} {{.CMD_PATH}}
+
   # ================================================
-  # Quality
+  # Test
   # ================================================
 
   test:
+    desc: "Run all tests"
+    deps: [test:go]
+
+  test:go:
     desc: "Run all Go tests"
     cmds:
-      - go test -v -count=1 ./...
-    env:
-      CGO_ENABLED: "0"
+      - CGO_ENABLED=0 go test -v -count=1 ./...
+
+  test:race:
+    desc: "Run Go tests with race detector"
+    cmds:
+      - CGO_ENABLED=1 go test -race -count=1 ./...
+
+  coverage:
+    desc: "Run Go coverage report"
+    cmds:
+      - CGO_ENABLED=0 go test -coverprofile=coverage.out ./...
+      - go tool cover -func=coverage.out
+      - go tool cover -html=coverage.out -o coverage.html
+
+  smoke:
+    desc: "Run production smoke test (build + curl)"
+    cmds:
+      - bash scripts/smoke_test.sh
+
+  verify:
+    desc: "Verify build artifacts (no .map, .gz coverage, refs)"
+    cmds:
+      - bash scripts/verify_bundle.sh
+
+  # ================================================
+  # Lint
+  # ================================================
 
   lint:
+    desc: "Run all linters"
+    deps: [lint:go]
+
+  lint:go:
     desc: "Run golangci-lint"
     cmds:
-      - golangci-lint run ./...
-    env:
-      CGO_ENABLED: "0"
+      - CGO_ENABLED=0 golangci-lint run ./...
+
+  lint:web:
+    desc: "Run frontend lint"
+    dir: web
+    cmds:
+      - npm run lint
+    status:
+      - test -f web/package.json
+
+  # ================================================
+  # CI
+  # ================================================
+
+  ci:
+    desc: "Run full CI verification suite"
+    deps: [lint, test, build, verify]
 
   # ================================================
   # Cleanup
@@ -84,4 +136,4 @@ tasks:
   clean:
     desc: "Remove build artifacts and temp files"
     cmds:
-      - rm -rf {{.BUILD_DIR}} web/dist tmp/ data/ coverage.out
+      - rm -rf {{.BUILD_DIR}} web/dist tmp/ data/ coverage.out coverage.html

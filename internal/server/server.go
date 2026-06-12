@@ -86,6 +86,12 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	r.Post("/api/v1/auth/register", authHandler.Register)
 	r.Post("/api/v1/auth/login", authHandler.Login)
 
+	// Observability endpoints (no auth, no SPA fallback)
+	diagHandler := handler.NewDiagHandler(db, FrontendAssetHash(web.Dist))
+	r.Get("/healthz", diagHandler.Healthz)
+	r.Get("/readyz", diagHandler.Readyz)
+	r.Get("/version", diagHandler.Version)
+
 	// User-facing routes (auth + permissions)
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.AuthMiddleware(cfg.Auth.JWTSecret))

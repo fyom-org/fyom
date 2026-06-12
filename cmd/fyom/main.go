@@ -2,6 +2,8 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"runtime"
@@ -9,17 +11,30 @@ import (
 	"github.com/fyom/fyom/internal/config"
 	"github.com/fyom/fyom/internal/repository"
 	fyomserver "github.com/fyom/fyom/internal/server"
+	"github.com/fyom/fyom/internal/version"
 	"github.com/fyom/fyom/pkg/logger"
 )
 
-// Build-time variables (set via -ldflags).
-var (
-	version   = "dev"
-	gitCommit = "none"
-	buildTime = "unknown"
-)
-
 func main() {
+	logLevel := flag.String("log-level", "info", "log level: debug, info, warn, error")
+	flag.Parse()
+
+	// Initialize slog with the requested level
+	var level slog.Level
+	switch *logLevel {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: level,
+	})))
+
 	// Load configuration
 	cfg, err := config.Load("")
 	if err != nil {
@@ -27,14 +42,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize logger
+	// Initialize the structured logger for startup messages
 	log := logger.New(cfg.Log.Level, cfg.Log.Format)
-	log.Info("fyom starting",
-		"version", version,
-		"commit", gitCommit,
-		"build_time", buildTime,
+
+	slog.Info("fyom starting",
+		"version", version.Version,
+		"commit", version.Commit,
 		"go", runtime.Version(),
 	)
+
+	// Debug: data directory permissions
+	if info, err := os.Stat(cfg.Database.DataDir); err == nil {
+		slog.Debug("data directory", "path", cfg.Database.DataDir, "mode", info.Mode().String())
+	}
 
 	// Open database
 	db, err := repository.Open(
@@ -52,9 +72,13 @@ func main() {
 	log.Info("database connected", "data_dir", cfg.Database.DataDir)
 
 	// Create and run server
-	srv := fyomserver.New(cfg, log, db, version, gitCommit, buildTime, runtime.Version())
+	srv := fyomserver.New(cfg, log, db, version.Version, version.Commit, version.BuildTime, runtime.Version())
+	slog.Info("server listening", "addr", cfg.Server.Address())
+
 	if err := srv.Run(); err != nil {
 		log.Error("server error", "error", err)
 		os.Exit(1)
 	}
+
+	fmt.Fprintln(os.Stderr, "server stopped gracefully")
 }
