@@ -57,13 +57,18 @@ tasks:
     deps: [build:web]
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - CGO_ENABLED=0 go build -ldflags "-s -w" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} {{.CMD_PATH}}
+      - CGO_ENABLED=0 go build -ldflags "-s -w -X github.com/fyom/fyom/internal/version.Version={{.VERSION}} -X github.com/fyom/fyom/internal/version.Commit={{.COMMIT}} -X github.com/fyom/fyom/internal/version.BuildTime={{.BUILD_TIME}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} {{.CMD_PATH}}
 
   sidecar:
     desc: "Build fyom sidecar binary"
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - CGO_ENABLED=0 go build -ldflags "-s -w" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} {{.CMD_PATH}}
+      - CGO_ENABLED=0 go build -ldflags "-s -w -X github.com/fyom/fyom/internal/version.Version={{.VERSION}} -X github.com/fyom/fyom/internal/version.Commit={{.COMMIT}} -X github.com/fyom/fyom/internal/version.BuildTime={{.BUILD_TIME}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} {{.CMD_PATH}}
+
+vars:
+  VERSION: "dev"
+  COMMIT: "unknown"
+  BUILD_TIME: "unknown"
 
   # ================================================
   # Test
