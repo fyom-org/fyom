@@ -22,7 +22,7 @@ trap cleanup EXIT
 
 echo "=== Building frontend ==="
 cd "$PROJECT_ROOT/web"
-npm run build
+npm run build:full
 
 echo "=== Building Go binary ==="
 cd "$PROJECT_ROOT"
