@@ -193,10 +193,11 @@ func TestStatic_MethodNotAllowed(t *testing.T) {
 	r := setupStaticRouter(newTestFS())
 	rec := doRequest(t, r, "POST", "/assets/app-abc123.js", "")
 	assert.Equal(t, 405, rec.Code)
-	// chi may list GET, HEAD, or both in Allow header
 	allow := rec.Header().Get("Allow")
 	assert.NotEmpty(t, allow, "Allow header should be present on 405")
-	assert.Contains(t, allow, "GET", "Allow should contain GET")
+	// chi lists allowed methods; should include at least one of GET or HEAD
+	assert.True(t, strings.Contains(allow, "GET") || strings.Contains(allow, "HEAD"),
+		"Allow should contain GET or HEAD, got %q", allow)
 }
 
 func TestStatic_ContentTypeBasedOnOriginalName(t *testing.T) {
