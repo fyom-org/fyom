@@ -118,7 +118,7 @@ by deep, Kodi-compliant metadata.
 
 - [x] `NFOActor.Type` field — distinguishes Actor/GuestStar/Producer/Director/Writer
 - [x] `NFOActor.SortOrder` xml tag corrected to `xml:"sortorder"`
-- [x] `NFOVideo.Aspect` changed from float64 to string (Kodi format: "16:9")
+- [x] `NFOVideo.Aspect` changed from float64 to string (Kodi format: `"16:9"`)
 - [x] `logo_path` column — logo.png/clearlogo.png discovery during import, presigned URL serving
 
 - [x] **Jellyfin NFO spec compliance** — full movie metadata alignment:
@@ -127,9 +127,10 @@ by deep, Kodi-compliant metadata.
       `<dateadded>`, `<lastplayed>`, `<playcount>`, `<userrating>`,
       `<displayorder>`, `<set><overview>`
 
-- [x] 13 new DB columns (migration 0015): set_overview, language, country_code,
-      custom_rating, collection_number, end_date, release_date, display_order,
-      original_title, user_rating, date_added, last_played, playcount
+- [x] 13 new DB columns (migration 0015): `set_overview`, `language`, `country_code`,
+      `custom_rating`, `collection_number`, `end_date`, `release_date`,
+      `display_order`, `original_title`, `user_rating`, `date_added`,
+      `last_played`, `playcount`
 
 - [x] All new fields mapped in `applyMovieNFOFields()` importer
 - [x] All new fields exposed in `MediaItemResponse` API
@@ -139,11 +140,16 @@ by deep, Kodi-compliant metadata.
 - [x] Frontend: movie detail page shows original title, language, country code,
       custom rating, release/end dates, play count, user rating, collection/set info
 
+---
+
 ### 8.2 Import Pipeline: Normalization ✅
 
-- [x] Title safety: `if nfo.Title != "" { item.Title = nfo.Title }` across all media types
-- [x] ID merge: old-format fields folded into UniqueIDs slice, deduped
+- [x] Title safety: `if nfo.Title != "" { item.Title = nfo.Title }`
+      across all media types
+
+- [x] ID merge: old-format fields folded into `UniqueIDs` slice, deduped
       (precedence: `<uniqueid type="...">` > old-format fields)
+
 - [x] Episode `BackdropPath` set to thumbnail path for backdrop rendering
 - [x] `FindLogoPath()` — discovers logo.png in show/movie directories
 - [x] **NFO file selection fix** — `findMovieNFO()` now prefers `movie.nfo`
@@ -152,74 +158,349 @@ by deep, Kodi-compliant metadata.
       to be set to per-episode filenames when both `movie.nfo` and per-episode
       NFO files coexisted.
 
+- [x] **NFO file selection fix** — `findMovieNFO()` now prefers `movie.nfo`
+      (Kodi/Jellyfin standard) over per-episode NFO files in the same directory.
+      Previously, alphabetically-first `.nfo` was selected, causing movie titles
+      to be set to per-episode filenames when both `movie.nfo` and per-episode
+      NFO files coexisted.
+
+---
+
 ### 8.3 API Response Layer ✅
 
-- [x] `ActorResponse` struct (name, role, type, sort_order, thumb)
-- [x] `decodeActors` — filters to `type=Actor`/`""`, sorts by `sortorder`, limits to 6
-- [x] `decodeGuestStars` — filters to `type=GuestStar`, sorts by `sortorder`, limits to 12
+- [x] `ActorResponse` struct (`name`, `role`, `type`, `sort_order`, `thumb`)
+- [x] `decodeActors` — filters to `type=Actor`/`""`,
+      sorts by `sortorder`, limits to 6
+
+- [x] `decodeGuestStars` — filters to `type=GuestStar`,
+      sorts by `sortorder`, limits to 12
+
 - [x] `GuestStars []ActorResponse` as distinct field in `MediaItemResponse`
 - [x] `LogoURL` on Provider interface; `logo_url` in `MediaItemResponse`
 - [x] All extended metadata fields exposed in `MediaItemResponse`
+
+---
 
 ### 8.4 Frontend Metadata Display ✅
 
 - [x] Genre tag pills, MPAA badge, tagline on detail page
 - [x] Cast section with avatar-initial circles (filtered to Actors only)
 - [x] GuestStars section on episode detail pages
-- [x] Client-side genre filter row in LibraryView
-- [x] Logo image rendering on media detail page (replaces text title when present)
+- [x] Client-side genre filter row in `LibraryView`
+- [x] Logo image rendering on media detail page
+      (replaces text title when present)
+
 - [x] Full-viewport immersive backdrop with deep blur and gradient overlay
+
+---
 
 ### 8.5 Episode Detail UX ✅
 
-- [x] Episode row title in EpisodeList is a router-link → `/media/:episode_id`
-- [x] Detail page renders `type=episode` context: episode plot, S×E label,
-      aired date, individual rating
+- [x] Episode row title in `EpisodeList`
+      is a router-link → `/media/:episode_id`
+
+- [x] Detail page renders `type=episode` context:
+      episode plot, S×E label, aired date, individual rating
+
 - [x] GuestStars section on episode detail
-- [x] "← Back to show" contextual link on episode detail pages
+- [x] `"← Back to show"` contextual link on episode detail pages
 - [x] Episode backdrop rendered from episode thumbnail
+
+---
 
 ### 8.6 Security Hardening ✅
 
-- [x] Role removed from localStorage entirely — all admin checks use Pinia store
-      populated server-side via `/auth/v1/auth/me`
-- [x] Router guard verifies admin role via API call on each admin navigation
-- [x] `isAdmin` computed in Pinia store derived from in-memory user object
-- [x] Login page style unified with register page (dark card layout)
+- [x] Role removed from localStorage entirely —
+      all admin checks use Pinia store populated server-side
+      via `/auth/v1/auth/me`
+
+- [x] Router guard verifies admin role via API call
+      on each admin navigation
+
+- [x] `isAdmin` computed in Pinia store
+      derived from in-memory user object
+
+- [x] Login page style unified with register page
+      (dark card layout)
+
+---
 
 ### 8.7 Admin UX Improvements ✅
 
-- [x] `/admin/import` page removed — functionality fully superseded by
-      Libraries page (create + refresh with live JobStatus progress)
-- [x] Auto-refresh schedule selector per library (manual/hourly/6h/daily/weekly)
-- [x] Server-side scheduler goroutine checks every 60s and triggers overdue refreshes
-- [x] Admin Media view: episodes grouped under parent shows (expandable), movies standalone
-- [x] Settings save fixed (axios 204 No Content response handling)
-- [x] Library page empty-state flash eliminated (loading guard fix)
+- [x] `/admin/import` page removed —
+      functionality fully superseded by Libraries page
+      (create + refresh with live JobStatus progress)
+
+- [x] Auto-refresh schedule selector per library
+      (manual/hourly/6h/daily/weekly)
+
+- [x] Server-side scheduler goroutine checks every 60s
+      and triggers overdue refreshes
+
+- [x] Admin Media view:
+      episodes grouped under parent shows (expandable),
+      movies standalone
+
+- [x] Settings save fixed
+      (axios 204 No Content response handling)
+
+- [x] Library page empty-state flash eliminated
+      (loading guard fix)
 
 ---
 
-**Architecture Note — JSON Storage & the Query Debt**
+### 8.8 Static Asset Serving ✅
+
+- [x] **embed FS serving** —
+      replaced `http.ServeFile`
+      (which internally uses `os.Open` and is unaware of `embed.FS`)
+      with `fs.ReadFile(web.Dist, ...)` + direct response streaming.
+      This was the root cause of static asset 404s.
+
+- [x] **Content-Type detection** —
+      MIME type is now derived from the original asset filename
+      (e.g. `.css`, `.js`) instead of compressed filenames
+      (`.css.br`, `.js.gz`) which previously caused invalid MIME responses.
+
+- [x] **Compression negotiation** —
+      brotli → gzip → raw fallback chain,
+      all served directly from embed FS with correct
+      `Content-Encoding` and `Vary: Accept-Encoding` headers.
+
+- [x] **HEAD support** —
+      added explicit `HEAD` route handling
+      (chi `r.Get()` alone does not handle HEAD),
+      fixing CSS preload failures and browser asset probing.
+
+- [x] **Cache-Control policy** —
+      versioned `assets/*` use immutable long-term caching,
+      HTML uses `no-cache`,
+      404 responses use `no-store`.
+
+- [x] **Strict static asset fallback** —
+      requests under `assets/` never fall back to SPA `index.html`;
+      missing assets now correctly return 404,
+      preventing CSS preload requests from receiving HTML.
+
+- [x] **Strict non-asset file handling** —
+      requests for non-SPA files with extensions
+      (`favicon.ico`, `robots.txt`, `manifest.webmanifest`, etc.)
+      now return proper 404s instead of incorrectly falling back
+      to `index.html`.
+
+- [x] **Immutable cache scope fix** —
+      immutable caching now applies only to hashed files under `assets/`,
+      preventing accidental long-term caching of `index.html`.
+
+- [x] **NFO file selection** —
+      `findMovieNFO()` prefers `movie.nfo`
+      over per-episode NFO files that may coexist
+      in the same directory.
+
+- [x] **auth_test.go build fix** —
+      added missing `libPermRepo` argument
+      to `NewAuthService`.
+
+---
+
+## Architecture Note — JSON Storage & the Query Debt
 
 Genres, actors, and other variable-length fields are stored as JSON strings in
-SQLite (no join tables). This was a deliberate MVP decision: fast delivery,
-zero schema complexity, survives re-import without migration.
+SQLite (no join tables). This was a deliberate MVP decision:
+fast delivery, zero schema complexity, survives re-import without migration.
 
-Known limitation: server-side filtering on these fields requires either
-deserializing rows in application memory or using SQLite's `json_each()`
-operator (available SQLite ≥ 3.38, zero schema change). Current client-side
-genre filtering is unaffected.
+Known limitation:
+server-side filtering on these fields requires either deserializing rows in
+application memory or using SQLite's `json_each()` operator
+(SQLite ≥ 3.38, zero schema change).
 
-Resolution path:
-- **Now through Production Phase 1**: client-side filtering is sufficient;
-  `json_each()` available as a drop-in if a server-side filter endpoint is
-  needed before Phase 3.
-- **Production Phase 3**: FTS5 full-text search covers the primary discovery
-  use case. Genre/actor server-side filtering addressed at that point —
-  either via `json_each()` queries or a targeted `media_genres` join table.
-  Decision deferred until actual query performance becomes the constraint.
+Current client-side genre filtering is unaffected.
+
+### Resolution Path
+
+- **Now through Production Phase 1**
+  client-side filtering is sufficient;
+  `json_each()` can be introduced as a drop-in solution
+  if server-side filtering becomes necessary before Phase 3.
+
+- **Production Phase 3**
+  FTS5 full-text search becomes the primary discovery layer.
+  Genre/actor filtering can then be implemented via:
+  - SQLite `json_each()` queries
+  - or a dedicated `media_genres` join table
+
+  Final approach intentionally deferred until
+  real-world query performance becomes the constraint.
 
 ---
+
+## Phase 9: Stabilization & Release Readiness
+
+### 9.1 Static Asset & Build Reliability
+
+- [ ] Add regression tests for embedded static asset serving
+      (`index.html`, JS, CSS, `.br`, `.gz`, missing assets)
+
+- [ ] Verify `HEAD` and `GET` behavior for all static asset types
+      (`.js`, `.css`, `.html`, `.svg`, `.json`, `.ico`)
+
+- [ ] Add smoke test script for production bundle:
+      - `/`
+      - `/assets/index-*.js`
+      - `/assets/*.css`
+      - brotli response
+      - gzip response
+      - missing asset 404
+      - SPA route fallback
+
+- [ ] Ensure `index.html` always uses `Cache-Control: no-cache`
+
+- [ ] Ensure hashed `assets/*` always use
+      `Cache-Control: public, max-age=31536000, immutable`
+
+- [ ] Ensure missing static files return `404` with `Cache-Control: no-store`
+
+- [ ] Add build artifact verification:
+      - no `.map` files in production bundle
+      - `.br` and `.gz` exist for compressible assets
+      - `index.html` references files that exist in `dist/assets`
+
+- [ ] Document embed FS serving rules:
+      - never use `http.ServeFile` for embed FS
+      - MIME type based on original filename
+      - compression path separate from logical request path
+
+### 9.2 Importer Robustness & Idempotency
+
+- [ ] Re-import idempotency test:
+      repeated library refresh does not duplicate media, actors, unique IDs,
+      genres, or technical metadata
+
+- [ ] NFO fallback behavior tests:
+      - `movie.nfo`
+      - per-file movie NFO
+      - mixed movie + episode NFO files
+      - missing title
+      - old-format IDs
+      - new-format unique IDs
+
+- [ ] Episode import edge cases:
+      - multi-episode NFO
+      - missing season/episode numbers
+      - special episodes
+      - episode thumbnail backdrop fallback
+
+- [ ] Logo discovery tests:
+      - `logo.png`
+      - `clearlogo.png`
+      - movie directory
+      - show directory
+
+- [ ] Import error reporting:
+      failed NFO parse should be visible in job status/logs
+      without aborting entire library import
+
+- [ ] Add import summary:
+      scanned files, imported items, updated items, skipped files,
+      parse warnings, duration
+
+### 9.3 API Contract & Test Cleanup
+
+- [ ] Fix failing integration/auth tests (constructor signature drift)
+
+- [ ] Fix all failing integration/auth tests
+      caused by constructor signature drift
+
+- [ ] Add API response snapshot tests for `MediaItemResponse`
+
+- [ ] Add tests for:
+      - actors filtering
+      - guest stars filtering
+      - logo URL generation
+      - extended metadata fields
+      - admin media grouping
+
+- [ ] Ensure admin and non-admin authorization behavior is covered
+
+- [ ] Add migration test path from empty DB to latest schema
+
+- [ ] Add migration test path from pre-Phase-8 DB to latest schema
+
+- [ ] Ensure `MediaColumns` constant is used consistently
+      for SELECT/Scan safety
+
+### 9.4 Frontend Reliability & UX Polish
+
+- [ ] Add production-mode frontend smoke test:
+      load app, login, open library, open media detail,
+      open episode detail, open settings
+
+- [ ] Verify dynamic route chunks load correctly in fresh/incognito browser
+
+- [ ] Verify CSS preload works for all lazy-loaded views
+
+- [ ] Add empty/error/loading states for:
+      - library detail
+      - media detail
+      - provider unavailable
+      - failed import job
+      - missing poster/backdrop/logo
+
+- [ ] Mobile catalog pass:
+      - library grid
+      - media cards
+      - detail backdrop
+      - episode list
+      - admin library page
+
+- [ ] Normalize frontend API error handling
+      with consistent toast/error display
+
+### 9.5 Observability & Diagnostics
+
+- [ ] Add `/healthz` endpoint
+
+- [ ] Add `/readyz` endpoint for future Tauri sidecar readiness
+
+- [ ] Add `/version` endpoint:
+      version, commit, build time, Go version, frontend asset hash
+
+- [ ] Add structured logs for:
+      - server start
+      - database open/migrate
+      - library scan start/end
+      - import warnings
+      - static asset 404s
+      - auth failures
+
+- [ ] Add debug-safe startup diagnostics:
+      data directory, DB path, web asset mode, listening address
+
+- [ ] Add optional verbose logging flag:
+      `--log-level debug`
+
+### 9.6 Configuration & Data Safety
+
+- [ ] Define production config precedence:
+      CLI flags > env vars > config file > defaults
+
+- [ ] Validate data directory permissions on startup
+
+- [ ] Add DB backup/export command or documented manual backup path
+
+- [ ] Add safe shutdown handling:
+      stop scheduler, finish in-flight import safely, close DB
+
+- [ ] Ensure scheduler does not start duplicate refresh jobs
+      for the same library
+
+- [ ] Add config documentation for:
+      - data directory
+      - server address
+      - auth/session settings
+      - library paths
+      - object storage providers
+
 
 # Production: Scaling & Ecosystem
 
@@ -229,7 +510,7 @@ Resolution path:
 - [ ] Go sidecar: `--sidecar` mode, fixed port 27403, `FYOM_READY` signal
 - [ ] Tauri system tray, window lifecycle, close-to-tray behavior
 - [ ] Frontend API base URL adapts to Tauri vs browser context
-- [ ] Build workflow: `make sidecar`, `make dev`, `make tauri-build`
+- [ ] Build workflow: `make sid ecar`, `make dev`, `make tauri-build`
 - [ ] Local network discovery (find other fyom nodes on LAN via mDNS)
 - [ ] Responsive design improvements (mobile-friendly catalog)
 - [ ] Global search (across local, S3, and federated providers)
@@ -250,7 +531,6 @@ Resolution path:
 - [ ] Server-side genre filtering (query param, not client-side)
 - [ ] Show-level status aggregation
 - [ ] by-status pagination
-- [ ] Fix failing integration/auth tests (constructor signature drift)
 - [ ] Code signing / notarization
 
 ---
