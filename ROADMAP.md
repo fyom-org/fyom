@@ -508,13 +508,10 @@ Current client-side genre filtering is unaffected.
 > and `/version`. The remaining structured logging / diagnostics work
 > can follow after the desktop playback milestone.
 
-- [ ] Add `/healthz` endpoint
-
-- [ ] Add `/readyz` endpoint for future Tauri sidecar readiness
-
-- [ ] Add `/version` endpoint:
+- [x] Add `/healthz` endpoint
+- [x] Add `/readyz` endpoint for future Tauri sidecar readiness
+- [x] Add `/version` endpoint:
       version, commit, build time, Go version, frontend asset hash
-
 - [ ] Add structured logs for:
       - server start
       - database open/migrate
@@ -550,10 +547,10 @@ Current client-side genre filtering is unaffected.
 
 - [ ] Add DB backup/export command or documented manual backup path
 
-- [ ] Add safe shutdown handling:
+- [x] Add safe shutdown handling:
       stop scheduler, finish in-flight import safely, close DB
 
-- [ ] Ensure scheduler does not start duplicate refresh jobs
+- [x] Ensure scheduler does not start duplicate refresh jobs
       for the same library
 
 - [ ] Add config documentation for:
