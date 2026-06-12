@@ -3,7 +3,6 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -11,6 +10,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -26,14 +26,18 @@ import (
 )
 
 type Server struct {
-	httpServer  *http.Server
-	router      *chi.Mux
-	logger      *slog.Logger
-	cfg         *config.Config
-	db          *repository.DB
-	libRepo     *repository.LibraryRepository
-	settingRepo *repository.SystemSettingRepository
-	mediaRepo   *repository.MediaRepository
+	httpServer       *http.Server
+	router           *chi.Mux
+	logger           *slog.Logger
+	cfg              *config.Config
+	db               *repository.DB
+	libRepo          *repository.LibraryRepository
+	settingRepo      *repository.SystemSettingRepository
+	mediaRepo        *repository.MediaRepository
+	refreshCoordinator *RefreshCoordinator
+	importWG         sync.WaitGroup
+	shutdownOnce     sync.Once
+	shutdownCh       chan struct{}
 }
 
 func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gitCommit, buildTime, goVer string) *Server {
@@ -70,8 +74,10 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	libPermRepo := repository.NewLibraryPermissionRepository(db)
 	statusRepo := repository.NewUserMediaStatusRepository(db)
 
+	refreshCoordinator := NewRefreshCoordinator()
+
 	healthHandler := handler.NewHealthHandler(version, gitCommit, buildTime, goVer)
-	mediaHandler := handler.NewMediaHandler(reg, db, mediaRepo, jobRepo, providerRepo, libRepo, statusRepo, logger)
+	mediaHandler := handler.NewMediaHandler(reg, db, mediaRepo, jobRepo, providerRepo, libRepo, statusRepo, logger, refreshCoordinator)
 	authHandler := handler.NewAuthHandler(userRepo, libPermRepo, settingRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
 	systemHandler := handler.NewSystemHandler(settingRepo, authHandler.GetAuthService())
 	adminProviderHandler := handler.NewAdminProviderHandler(providerRepo, logger)
@@ -164,14 +170,16 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	}
 
 	return &Server{
-		httpServer:  httpServer,
-		router:      r,
-		logger:      logger,
-		cfg:         cfg,
-		db:          db,
-		libRepo:     libRepo,
-		settingRepo: settingRepo,
-		mediaRepo:   mediaRepo,
+		httpServer:         httpServer,
+		router:             r,
+		logger:             logger,
+		cfg:                cfg,
+		db:                 db,
+		libRepo:            libRepo,
+		settingRepo:        settingRepo,
+		mediaRepo:          mediaRepo,
+		refreshCoordinator: refreshCoordinator,
+		shutdownCh:         make(chan struct{}),
 	}
 }
 
@@ -349,15 +357,45 @@ func (s *Server) Run() error {
 	<-quit
 	s.logger.Info("server shutting down...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15 * time.Second)
+	// Initiate shutdown sequence (idempotent)
+	s.shutdownOnce.Do(func() {
+		close(s.shutdownCh)
+	})
+
+	// Shutdown HTTP server with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	if err := s.httpServer.Shutdown(ctx); err != nil {
-		return fmt.Errorf("server shutdown: %w", err)
+		s.logger.Error("server shutdown error", "error", err)
+	}
+
+	// Wait for in-flight imports to complete (with timeout)
+	s.waitForImports(10 * time.Second)
+
+	// Close database
+	if err := s.db.Close(); err != nil {
+		s.logger.Error("database close error", "error", err)
 	}
 
 	s.logger.Info("server stopped gracefully")
 	return nil
+}
+
+// waitForImports waits for in-flight imports to complete with a timeout.
+func (s *Server) waitForImports(timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		s.importWG.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		s.logger.Info("all in-flight imports completed")
+	case <-time.After(timeout):
+		s.logger.Warn("timeout waiting for in-flight imports to complete")
+	}
 }
 
 // runLibraryRefreshScheduler periodically checks library schedules and triggers refreshes.
@@ -368,6 +406,9 @@ func (s *Server) runLibraryRefreshScheduler(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-s.shutdownCh:
+			s.logger.Info("scheduler: shutdown signal received, stopping")
 			return
 		case <-ticker.C:
 			s.checkAndRefreshLibraries(ctx)
@@ -405,25 +446,38 @@ func (s *Server) checkAndRefreshLibraries(ctx context.Context) {
 			continue
 		}
 
+		// Try to acquire the refresh lock for this library
+		if !s.refreshCoordinator.TryStart(lib.ID) {
+			s.logger.Info("scheduler: refresh already running for library, skipping", "library_id", lib.ID, "name", lib.Name)
+			continue
+		}
+
 		s.logger.Info("scheduler: triggering library refresh",
 			"library_id", lib.ID,
 			"name", lib.Name,
 			"interval_seconds", interval,
 		)
 
-		imp := service.NewImporter(
-			service.NewLocalImportFS(),
-			"local",
-			s.db,
-			s.mediaRepo,
-			repository.NewImportJobRepository(s.db),
-		)
-		imp.SetLibraryID(lib.ID)
-		if _, err := imp.ImportRequest(ctx, lib.SourcePath); err != nil {
-			s.logger.Error("scheduler: import failed", "library_id", lib.ID, "error", err)
-			continue
-		}
+		// Track this import for shutdown handling
+		s.importWG.Add(1)
+		go func(libraryID, sourcePath string, intervalSec int) {
+			defer s.importWG.Done()
+			defer s.refreshCoordinator.Finish(libraryID)
 
-		_ = s.settingRepo.SetSetting(ctx, lastKey, strconv.FormatInt(now, 10))
+			imp := service.NewImporter(
+				service.NewLocalImportFS(),
+				"local",
+				s.db,
+				s.mediaRepo,
+				repository.NewImportJobRepository(s.db),
+			)
+			imp.SetLibraryID(libraryID)
+			if _, err := imp.ImportRequest(ctx, sourcePath); err != nil {
+				s.logger.Error("scheduler: import failed", "library_id", libraryID, "error", err)
+				return
+			}
+
+			_ = s.settingRepo.SetSetting(ctx, "library_last_refresh_"+libraryID, strconv.FormatInt(time.Now().Unix(), 10))
+		}(lib.ID, lib.SourcePath, interval)
 	}
 }
