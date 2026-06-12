@@ -3,6 +3,7 @@ import axios, {
   type InternalAxiosRequestConfig,
   type AxiosResponse,
 } from 'axios';
+import { resolveApiBaseUrl } from '@/lib/runtime/env';
 
 interface ApiResponse<T = unknown> {
   code: number;
@@ -11,7 +12,7 @@ interface ApiResponse<T = unknown> {
 }
 
 const request: AxiosInstance = axios.create({
-  baseURL: '/api/v1',
+  baseURL: resolveApiBaseUrl(),
   timeout: 10000,
 });
 

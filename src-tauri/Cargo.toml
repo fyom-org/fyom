@@ -1,0 +1,33 @@
+[package]
+name = "fyom"
+version = "0.1.0"
+description = "fyom desktop app"
+license = "MIT"
+edition = "2024"
+
+[lib]
+name = "fyom_lib"
+crate-type = ["cdylib", "lib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-opener = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["io-util", "net", "rt-multi-thread", "time", "sync"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+anyhow = "1.0"
+thiserror = "1.0"
+
+[target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
+tauri-plugin-updater = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSView", "NSApplication", "NSMenu", "NSMenuItem", "NSImage", "NSStatusBar"] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSObject"] }

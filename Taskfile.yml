@@ -65,10 +65,21 @@ tasks:
       - mkdir -p {{.BUILD_DIR}}
       - CGO_ENABLED=0 go build -ldflags "-s -w -X github.com/fyom/fyom/internal/version.Version={{.VERSION}} -X github.com/fyom/fyom/internal/version.Commit={{.COMMIT}} -X github.com/fyom/fyom/internal/version.BuildTime={{.BUILD_TIME}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} {{.CMD_PATH}}
 
-vars:
-  VERSION: "dev"
-  COMMIT: "unknown"
-  BUILD_TIME: "unknown"
+  # ================================================
+  # Desktop
+  # ================================================
+
+  dev:desktop:
+    desc: "Run Tauri desktop dev mode (requires sidecar binary)"
+    cmds:
+      - task sidecar
+      - cd src-tauri && cargo tauri dev
+
+  build:desktop:
+    desc: "Build Tauri desktop app bundle"
+    deps: [build:web, sidecar]
+    cmds:
+      - cd src-tauri && cargo tauri build
 
   # ================================================
   # Test

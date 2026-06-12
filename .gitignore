@@ -36,3 +36,6 @@ configs/fyom.local.yaml
 
 # Air / Taskfile
 tmp/
+
+# Tauri
+src-tauri/target/
