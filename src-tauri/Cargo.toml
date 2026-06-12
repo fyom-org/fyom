@@ -1,9 +1,9 @@
 [package]
 name = "fyom"
-version = "0.1.0"
+version = "0.0.0"
 description = "fyom desktop app"
 license = "MIT"
-edition = "2024"
+edition = "2026"
 
 [lib]
 name = "fyom_lib"
