@@ -413,6 +413,21 @@ Current client-side genre filtering is unaffected.
       Show ID is now stable across re-imports, keeping episode `parent_id`
       foreign keys intact.
 
+> **Phase 9.2 is complete.** Importer robustness objectives met, key
+> re-import duplication bug fixed.
+>
+> **Follow-up notes:**
+> - `ImportSummary` currently returns from synchronous `ImportLibrary`
+>   only. It is not yet propagated through the async import job / API
+>   status surfaces used by the scheduler and admin views. (Tracks
+>   under 9.5 Observability — structured import summary in job
+>   responses.)
+> - `MediaRepository.Update()` excludes `status`. NFO-derived fields
+>   such as `playcount` and `last_played` are refreshed on re-import
+>   by design. Future product decisions may revisit whether these
+>   should be treated as user-state instead. (Not a current-phase
+>   blocker.)
+
 ### 9.3 API Contract & Test Cleanup
 
 - [ ] Fix failing integration/auth tests (constructor signature drift)
@@ -487,6 +502,14 @@ Current client-side genre filtering is unaffected.
 
 - [ ] Add optional verbose logging flag:
       `--log-level debug`
+
+- [ ] **Propagate ImportSummary through async import job / API
+      status responses** (follow-up from Phase 9.2):
+      scheduler/admin views should surface scanned_files,
+      imported_items, parse_warnings, and duration from
+      `ImportSummary`, not just the current done/total counters.
+      This may require adding summary columns to import_jobs
+      or a separate endpoint.
 
 ### 9.6 Configuration & Data Safety
 
