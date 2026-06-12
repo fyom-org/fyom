@@ -565,18 +565,21 @@ Current client-side genre filtering is unaffected.
 
 ## Production Phase 1: Desktop Shell & Tauri
 
-- [ ] Tauri 2 desktop shell (wrapping the Web UI)
-- [ ] Go sidecar: `--sidecar` mode, fixed port 27403, `FYOM_READY` signal
-- [ ] Tauri system tray, window lifecycle, close-to-tray behavior
-- [ ] Frontend API base URL adapts to Tauri vs browser context
-- [ ] Build workflow: `make sid ecar`, `make dev`, `make tauri-build`
+- [x] Tauri 2 desktop shell (wrapping the Web UI)
+- [x] Go sidecar: `--sidecar` mode, fixed port `127.0.0.1:27403`, `FYOM_READY` signal
+- [x] Tauri system tray, window lifecycle, close-to-tray behavior
+- [x] Frontend API base URL adapts to Tauri vs browser context
+- [x] Build workflow: `task sidecar`, `task dev:desktop`, `task build:desktop`
 - [ ] Local network discovery (find other fyom nodes on LAN via mDNS)
 - [ ] Responsive design improvements (mobile-friendly catalog)
-- [ ] Global search (across local, S3, and federated providers)
+
+> Phase 1 desktop runtime foundation is in place.
+> Tauri shell, Go sidecar bootstrap, tray/window lifecycle, and runtime-aware frontend API routing are complete.
+> Cross-platform tray behavior validation and CI/CD build matrix are being handled separately outside this roadmap pass.
 
 ## Production Phase 2: Native Playback with libmpv
 
-- [ ] libmpv integration via Tauri plugin
+- [ ] libmpv integration via Tauri plugin or private fyom native playback module
 - [ ] MPV_EVENT_END_FILE → auto-set status 'watched'
 - [ ] Hardware-accelerated decoding (GPU passthrough)
 - [ ] Subtitle rendering (ASS/SRT with libass)
@@ -609,6 +612,7 @@ Current client-side genre filtering is unaffected.
 - [ ] FTS5 full-text search (SQLite virtual table for sub-second search)
 - [ ] Collection / franchise grouping (from set_name field)
 - [ ] Deduplication detection (same movie in multiple libraries)
+- [ ] Global search across local, object storage, and federated providers
 
 ## Future Plan 3: Multi-User Experience
 
