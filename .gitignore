@@ -45,3 +45,6 @@ src-tauri/target/
 
 # Nix develop profile
 result/
+
+# Cargo gen
+src-tauri/gen/
