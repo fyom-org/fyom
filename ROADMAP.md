@@ -372,11 +372,11 @@ Current client-side genre filtering is unaffected.
 
 ### 9.2 Importer Robustness & Idempotency
 
-- [ ] Re-import idempotency test:
+- [x] Re-import idempotency test:
       repeated library refresh does not duplicate media, actors, unique IDs,
       genres, or technical metadata
 
-- [ ] NFO fallback behavior tests:
+- [x] NFO fallback behavior tests:
       - `movie.nfo`
       - per-file movie NFO
       - mixed movie + episode NFO files
@@ -384,25 +384,34 @@ Current client-side genre filtering is unaffected.
       - old-format IDs
       - new-format unique IDs
 
-- [ ] Episode import edge cases:
+- [x] Episode import edge cases:
       - multi-episode NFO
       - missing season/episode numbers
       - special episodes
       - episode thumbnail backdrop fallback
 
-- [ ] Logo discovery tests:
+- [x] Logo discovery tests:
       - `logo.png`
       - `clearlogo.png`
       - movie directory
       - show directory
 
-- [ ] Import error reporting:
+- [x] Import error reporting:
       failed NFO parse should be visible in job status/logs
       without aborting entire library import
 
-- [ ] Add import summary:
+- [x] Add import summary:
       scanned files, imported items, updated items, skipped files,
       parse warnings, duration
+
+- [x] **BUG FIX: show re-import duplication**
+      `processShowDir` generated a new UUID on every import run, bypassing
+      the `INSERT OR IGNORE` dedup on `file_path`. Fixed by adding
+      `FindExistingItem(library_id, file_path, type)` lookup before INSERT,
+      reusing the existing show ID and calling `Update` instead. Added
+      `MediaRepository.Update()` and `FindExistingItem()` methods.
+      Show ID is now stable across re-imports, keeping episode `parent_id`
+      foreign keys intact.
 
 ### 9.3 API Contract & Test Cleanup
 

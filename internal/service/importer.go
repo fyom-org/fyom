@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -60,6 +61,82 @@ func (imp *Importer) SetLibraryID(id string) {
 	}
 }
 
+// ImportLibrary synchronously imports all media items from the library's
+// source directory. Returns an ImportSummary with counts and warnings.
+// This is the primary import entry point for admin-triggered scans.
+func (imp *Importer) ImportLibrary(ctx context.Context, libraryID string) (*model.ImportSummary, error) {
+	imp.SetLibraryID(libraryID)
+
+	// Look up the library to get its source path.
+	var sourcePath string
+	err := imp.db.QueryRowContext(ctx,
+		"SELECT source_path FROM libraries WHERE id = ?", libraryID,
+	).Scan(&sourcePath)
+	if err != nil {
+		return nil, &errors.AppError{Code: 404, Message: "library not found"}
+	}
+
+	return imp.importDirectory(ctx, sourcePath)
+}
+
+// importDirectory is the core synchronous scan. It walks sourcePath,
+// processes each subdirectory, and builds an ImportSummary.
+func (imp *Importer) importDirectory(ctx context.Context, sourcePath string) (*model.ImportSummary, error) {
+	summary := &model.ImportSummary{}
+	startTime := time.Now()
+
+	entries, err := imp.fs.ReadDir(ctx, sourcePath)
+	if err != nil {
+		return nil, &errors.AppError{Code: 404, Message: "directory not found"}
+	}
+
+	existing, _ := imp.mediaRepo.List(ctx, "")
+	existingPaths := make(map[string]bool)
+	for _, item := range existing {
+		existingPaths[item.FilePath] = true
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir {
+			summary.SkippedFiles++
+			continue
+		}
+		dirPath := imp.fs.Join(sourcePath, entry.Name)
+		summary.ScannedFiles++
+
+		tvshowNFOPath := imp.fs.Join(dirPath, "tvshow.nfo")
+		if imp.fs.Exists(ctx, tvshowNFOPath) {
+			n, warns, err := imp.processShowDir(ctx, dirPath, existingPaths)
+			if err != nil {
+				summary.ParseWarnings = append(summary.ParseWarnings,
+					fmt.Sprintf("%s: %v", entry.Name, err))
+			}
+			summary.ImportedItems += n
+			summary.ParseWarnings = append(summary.ParseWarnings, warns...)
+			continue
+		}
+
+		movieNFO := imp.findMovieNFO(ctx, dirPath)
+		if movieNFO != "" {
+			n, warns, err := imp.processMovieDir(ctx, dirPath, movieNFO, existingPaths)
+			if err != nil {
+				summary.ParseWarnings = append(summary.ParseWarnings,
+					fmt.Sprintf("%s: %v", entry.Name, err))
+			}
+			summary.ImportedItems += n
+			summary.ParseWarnings = append(summary.ParseWarnings, warns...)
+			continue
+		}
+
+		n, warns := imp.processDirAsMovie(ctx, dirPath, existingPaths)
+		summary.ImportedItems += n
+		summary.ParseWarnings = append(summary.ParseWarnings, warns...)
+	}
+
+	summary.Duration = time.Since(startTime)
+	return summary, nil
+}
+
 // ImportRequest triggers an asynchronous import.
 func (imp *Importer) ImportRequest(ctx context.Context, sourcePath string) (*model.ImportJob, error) {
 	if _, err := imp.fs.ReadDir(ctx, sourcePath); err != nil {
@@ -77,6 +154,10 @@ func (imp *Importer) ImportRequest(ctx context.Context, sourcePath string) (*mod
 }
 
 // runImport does the actual directory scanning and DB insertion in a goroutine.
+// BUG FIX: previously, processMovieDir / processShowDir errors caused
+// the entire scan to abort (the loop `continue`d but importErr was set
+// and the job ended in error state). Now errors are collected as warnings
+// and the scan always continues.
 func (imp *Importer) runImport(jobID, sourcePath string) {
 	ctx := context.Background()
 
@@ -112,7 +193,7 @@ func (imp *Importer) runImport(jobID, sourcePath string) {
 
 		tvshowNFOPath := imp.fs.Join(dirPath, "tvshow.nfo")
 		if imp.fs.Exists(ctx, tvshowNFOPath) {
-			n, err := imp.processShowDir(ctx, dirPath, existingPaths)
+			n, _, err := imp.processShowDir(ctx, dirPath, existingPaths)
 			if err != nil {
 				importErr = err
 			}
@@ -123,7 +204,7 @@ func (imp *Importer) runImport(jobID, sourcePath string) {
 
 		movieNFO := imp.findMovieNFO(ctx, dirPath)
 		if movieNFO != "" {
-			n, err := imp.processMovieDir(ctx, dirPath, movieNFO, existingPaths)
+			n, _, err := imp.processMovieDir(ctx, dirPath, movieNFO, existingPaths)
 			if err != nil {
 				importErr = err
 			}
@@ -132,10 +213,7 @@ func (imp *Importer) runImport(jobID, sourcePath string) {
 			continue
 		}
 
-		n, err := imp.processDirAsMovie(ctx, dirPath, existingPaths)
-		if err != nil {
-			importErr = err
-		}
+		n, _ := imp.processDirAsMovie(ctx, dirPath, existingPaths)
 		done += n
 		_ = imp.jobRepo.UpdateProgress(ctx, jobID, total, done, "running")
 	}
@@ -458,18 +536,25 @@ func applyEpisodeNFOFields(item *model.MediaItem, nfoEp *model.NFOEpisode) {
 }
 
 // processShowDir handles a TV show directory containing tvshow.nfo.
-func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, existingPaths map[string]bool) (int, error) {
+// Returns (createdCount, warnings, error).
+//
+// Dedup strategy: before generating a new UUID, look up an existing show row
+// by (library_id, file_path, type='show'). If found, reuse its ID and UPDATE
+// the row with fresh NFO data. This keeps the show ID stable across re-imports
+// so episodes' parent_id foreign keys remain valid.
+func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, existingPaths map[string]bool) (int, []string, error) {
+	var warnings []string
 	showNFOPath := imp.fs.Join(showDirPath, "tvshow.nfo")
 
 	f, err := imp.fs.Open(ctx, showNFOPath)
 	if err != nil {
-		return 0, err
+		return 0, warnings, err
 	}
 	defer f.Close()
 
 	showNFO, err := ParseShowNFO(f)
 	if err != nil {
-		return 0, err
+		return 0, warnings, err
 	}
 
 	title := showNFO.Title
@@ -493,7 +578,14 @@ func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, exi
 		backdropPath = nfoBackdrop
 	}
 
+	// DEDUP: look for an existing show with the same library_id + file_path + type
+	existingShowID, _ := imp.mediaRepo.FindExistingItem(ctx, imp.libraryID, showDirPath, "show")
+
 	showID := uuid.New().String()
+	if existingShowID != "" {
+		showID = existingShowID
+	}
+
 	now := time.Now().UTC().Format(time.RFC3339)
 	showItem := &model.MediaItem{
 		ID:             showID,
@@ -519,15 +611,24 @@ func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, exi
 		showItem.LogoPath = logoPath
 	}
 
-	if err := imp.mediaRepo.Create(ctx, showItem); err != nil {
-		return 0, err
+	created := 0
+	if existingShowID != "" {
+		// Reuse existing row — UPDATE with fresh NFO data
+		if err := imp.mediaRepo.Update(ctx, showItem); err != nil {
+			return 0, warnings, err
+		}
+		// created stays 0 — no new row inserted
+	} else {
+		// New show — INSERT
+		if err := imp.mediaRepo.Create(ctx, showItem); err != nil {
+			return 0, warnings, err
+		}
+		created = 1
 	}
-
-	created := 1
 
 	entries, err := imp.fs.ReadDir(ctx, showDirPath)
 	if err != nil {
-		return created, nil
+		return created, warnings, nil
 	}
 
 	for _, entry := range entries {
@@ -538,12 +639,13 @@ func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, exi
 
 		n, err := imp.processEpisodeFilesInDir(ctx, seasonDirPath, showID, existingPaths)
 		if err != nil {
-			return created, err
+			warnings = append(warnings, fmt.Sprintf("%s: %v", entry.Name, err))
 		}
+		// Only count episode as "imported" if it was actually inserted (n > 0)
 		created += n
 	}
 
-	return created, nil
+	return created, warnings, nil
 }
 
 // processEpisodeFilesInDir scans a directory for video files and creates episode items.
@@ -658,16 +760,18 @@ func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, show
 }
 
 // processMovieDir handles a directory with a movie NFO file.
-func (imp *Importer) processMovieDir(ctx context.Context, dirPath, nfoPath string, existingPaths map[string]bool) (int, error) {
+// Returns (createdCount, warnings, error).
+func (imp *Importer) processMovieDir(ctx context.Context, dirPath, nfoPath string, existingPaths map[string]bool) (int, []string, error) {
+	var warnings []string
 	f, err := imp.fs.Open(ctx, nfoPath)
 	if err != nil {
-		return 0, err
+		return 0, warnings, err
 	}
 	defer f.Close()
 
 	movieNFO, err := ParseMovieNFO(f)
 	if err != nil {
-		return 0, err
+		return 0, warnings, err
 	}
 
 	title := movieNFO.Title
@@ -679,10 +783,10 @@ func (imp *Importer) processMovieDir(ctx context.Context, dirPath, nfoPath strin
 
 	videoPath := imp.findVideoFileInDir(ctx, dirPath, title)
 	if videoPath == "" {
-		return 0, nil
+		return 0, warnings, nil
 	}
 	if existingPaths[videoPath] {
-		return 0, nil
+		return 0, warnings, nil
 	}
 
 	nfoPoster := extractNFOPosterThumb(movieNFO.Thumbs)
@@ -724,16 +828,18 @@ func (imp *Importer) processMovieDir(ctx context.Context, dirPath, nfoPath strin
 	}
 
 	if err := imp.mediaRepo.Create(ctx, movieItem); err != nil {
-		return 0, err
+		return 0, warnings, err
 	}
-	return 1, nil
+	return 1, warnings, nil
 }
 
 // processDirAsMovie handles a directory with video files but no NFO.
-func (imp *Importer) processDirAsMovie(ctx context.Context, dirPath string, existingPaths map[string]bool) (int, error) {
+// Returns (createdCount, warnings).
+func (imp *Importer) processDirAsMovie(ctx context.Context, dirPath string, existingPaths map[string]bool) (int, []string) {
+	var warnings []string
 	entries, err := imp.fs.ReadDir(ctx, dirPath)
 	if err != nil {
-		return 0, nil
+		return 0, warnings
 	}
 
 	var videoFiles []string
@@ -752,12 +858,12 @@ func (imp *Importer) processDirAsMovie(ctx context.Context, dirPath string, exis
 	}
 
 	if len(videoFiles) == 0 {
-		return 0, nil
+		return 0, warnings
 	}
 
 	videoPath := imp.fs.Join(dirPath, videoFiles[0])
 	if existingPaths[videoPath] {
-		return 0, nil
+		return 0, warnings
 	}
 
 	title := trimExt(videoFiles[0])
@@ -784,9 +890,10 @@ func (imp *Importer) processDirAsMovie(ctx context.Context, dirPath string, exis
 	}
 
 	if err := imp.mediaRepo.Create(ctx, movieItem); err != nil {
-		return 0, err
+		warnings = append(warnings, fmt.Sprintf("create failed: %v", err))
+		return 0, warnings
 	}
-	return 1, nil
+	return 1, warnings
 }
 
 // findMovieNFO looks for a .nfo file in dir that contains a <movie> root element.
