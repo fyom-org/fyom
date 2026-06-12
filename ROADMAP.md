@@ -336,6 +336,14 @@ Current client-side genre filtering is unaffected.
 
 ## Phase 9: Stabilization & Release Readiness
 
+> **Execution Strategy:** Phase 9.1 and 9.2 are complete. The next major
+> product milestone is **Tauri shell + sidecar + libmpv** — desktop-native
+> playback is the biggest practical value unlock for fyom. The remainder
+> of Phase 9 is **not a full blocker** for that work. Only a minimal
+> pre-desktop guardrail subset should be completed before desktop
+> development begins; the bulk of 9.3, 9.4, and 9.6 is intentionally
+> deferred until after the desktop playback milestone.
+
 ### 9.1 Static Asset & Build Reliability
 
 - [x] Add regression tests for embedded static asset serving
@@ -436,6 +444,10 @@ Current client-side genre filtering is unaffected.
 
 ### 9.3 API Contract & Test Cleanup
 
+> **Priority:** hygiene-only before desktop. Only fix currently red/failing
+> integration-auth tests and constructor-signature drift issues. The rest
+> of 9.3 is deferred until after the desktop playback milestone.
+
 - [ ] Fix failing integration/auth tests (constructor signature drift)
 
 - [ ] Fix all failing integration/auth tests
@@ -460,6 +472,10 @@ Current client-side genre filtering is unaffected.
       for SELECT/Scan safety
 
 ### 9.4 Frontend Reliability & UX Polish
+
+> **Priority:** most of 9.4 is intentionally deferred until after the
+> desktop playback milestone. Only blocker-level fixes discovered while
+> enabling desktop playback should be done before that milestone.
 
 - [ ] Add production-mode frontend smoke test:
       load app, login, open library, open media detail,
@@ -487,6 +503,10 @@ Current client-side genre filtering is unaffected.
       with consistent toast/error display
 
 ### 9.5 Observability & Diagnostics
+
+> **Priority:** the pre-desktop guardrail subset is `/healthz`, `/readyz`,
+> and `/version`. The remaining structured logging / diagnostics work
+> can follow after the desktop playback milestone.
 
 - [ ] Add `/healthz` endpoint
 
@@ -518,6 +538,10 @@ Current client-side genre filtering is unaffected.
       or a separate endpoint.
 
 ### 9.6 Configuration & Data Safety
+
+> **Priority:** the pre-desktop guardrail subset is basic safe shutdown
+> handling and preventing duplicate refresh jobs for the same library.
+> The rest of 9.6 is deferred until after the desktop playback milestone.
 
 - [ ] Define production config precedence:
       CLI flags > env vars > config file > defaults
