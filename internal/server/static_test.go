@@ -238,3 +238,109 @@ func TestStatic_MediaColumnsConstantDefined(t *testing.T) {
 	assert.Contains(t, cols, "last_played")
 	assert.Contains(t, cols, "playcount")
 }
+
+// ─── Phase 9.1: additional regression tests ───
+
+func TestStatic_HeadRoot(t *testing.T) {
+	r := setupStaticRouter(newTestFS())
+	rec := doRequest(t, r, "HEAD", "/", "")
+	assert.Equal(t, 200, rec.Code)
+	assertHeader(t, rec, "Content-Type", "text/html")
+	assertHeader(t, rec, "Cache-Control", "no-cache")
+	assert.Empty(t, rec.Body.Bytes(), "HEAD / must not write a body")
+}
+
+func TestStatic_HeadMatchesGetHeaders(t *testing.T) {
+	r := setupStaticRouter(newTestFS())
+
+	// GET
+	getRec := doRequest(t, r, "GET", "/assets/app-abc123.js", "")
+	// HEAD
+	headRec := doRequest(t, r, "HEAD", "/assets/app-abc123.js", "")
+
+	assert.Equal(t, getRec.Code, headRec.Code, "status codes must match")
+	assert.Equal(t, getRec.Header().Get("Content-Type"), headRec.Header().Get("Content-Type"),
+		"Content-Type must match")
+	assert.Equal(t, getRec.Header().Get("Cache-Control"), headRec.Header().Get("Cache-Control"),
+		"Cache-Control must match")
+	assert.Empty(t, headRec.Body.Bytes(), "HEAD must not write a body")
+}
+
+func TestStatic_GetSVG(t *testing.T) {
+	fsys := fstest.MapFS{
+		"dist/index.html":    &fstest.MapFile{Data: []byte("<html></html>")},
+		"dist/assets/logo.svg": &fstest.MapFile{Data: []byte("<svg></svg>")},
+	}
+	r := setupStaticRouter(fsys)
+	rec := doRequest(t, r, "GET", "/assets/logo.svg", "")
+	assert.Equal(t, 200, rec.Code)
+	assertHeader(t, rec, "Content-Type", "image/svg+xml")
+	assertHeader(t, rec, "Cache-Control", "immutable")
+}
+
+func TestStatic_GetJSON(t *testing.T) {
+	fsys := fstest.MapFS{
+		"dist/index.html":               &fstest.MapFile{Data: []byte("<html></html>")},
+		"dist/assets/manifest.webmanifest": &fstest.MapFile{Data: []byte(`{"name":"test"}`)},
+	}
+	r := setupStaticRouter(fsys)
+	rec := doRequest(t, r, "GET", "/assets/manifest.webmanifest", "")
+	assert.Equal(t, 200, rec.Code)
+	assertHeader(t, rec, "Content-Type", "application/json")
+}
+
+func TestStatic_MissingAsset_NoStore(t *testing.T) {
+	r := setupStaticRouter(newTestFS())
+	rec := doRequest(t, r, "GET", "/assets/totally-missing.js", "")
+	assert.Equal(t, 404, rec.Code)
+	assertHeader(t, rec, "Cache-Control", "no-store")
+	assert.NotContains(t, rec.Body.String(), "<html>", "404 must not return SPA HTML")
+}
+
+func TestStatic_IndexHTML_NeverImmutable(t *testing.T) {
+	r := setupStaticRouter(newTestFS())
+	rec := doRequest(t, r, "GET", "/index.html", "")
+	assert.Equal(t, 200, rec.Code)
+	assertHeaderNotPresent(t, rec, "immutable")
+	assertHeader(t, rec, "Cache-Control", "no-cache")
+}
+
+func TestStatic_HashedAsset_NeverNoCache(t *testing.T) {
+	r := setupStaticRouter(newTestFS())
+	rec := doRequest(t, r, "GET", "/assets/app-abc123.js", "")
+	assert.Equal(t, 200, rec.Code)
+	assertHeader(t, rec, "Cache-Control", "immutable")
+	// Must never be no-cache
+	assert.NotContains(t, rec.Header().Get("Cache-Control"), "no-cache")
+}
+
+func TestStatic_MissingAsset_Never200(t *testing.T) {
+	r := setupStaticRouter(newTestFS())
+	rec := doRequest(t, r, "GET", "/assets/does-not-exist.css", "")
+	assert.NotEqual(t, 200, rec.Code, "missing asset must not return 200")
+	assert.Equal(t, 404, rec.Code)
+}
+
+func TestStatic_MissingAsset_NeverSPAFallback(t *testing.T) {
+	r := setupStaticRouter(newTestFS())
+	rec := doRequest(t, r, "GET", "/assets/missing.js", "")
+	assert.NotContains(t, rec.Body.String(), "<html>", "missing asset must not return SPA HTML")
+}
+
+func TestStatic_CompressedAsset_MIME_NotEncoding(t *testing.T) {
+	r := setupStaticRouter(newTestFS())
+
+	// When serving brotli, MIME must still be based on .js not .br
+	rec := doRequest(t, r, "GET", "/assets/app-abc123.js", "br")
+	assert.Equal(t, 200, rec.Code)
+	ct := rec.Header().Get("Content-Type")
+	assert.Contains(t, ct, "javascript", "MIME must be javascript, not brotli")
+	assert.NotContains(t, ct, "brotli", "MIME must not mention brotli")
+
+	// When serving gzip, MIME must still be based on .css not .gz
+	rec = doRequest(t, r, "GET", "/assets/style-def456.css", "gzip")
+	assert.Equal(t, 200, rec.Code)
+	ct = rec.Header().Get("Content-Type")
+	assert.Contains(t, ct, "css", "MIME must be text/css, not gzip")
+	assert.NotContains(t, ct, "gzip", "MIME must not mention gzip")
+}

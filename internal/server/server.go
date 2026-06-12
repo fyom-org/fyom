@@ -296,7 +296,7 @@ func detectContentType(name string) string {
 		return "text/javascript; charset=utf-8"
 	case ".css":
 		return "text/css; charset=utf-8"
-	case ".json":
+	case ".json", ".webmanifest":
 		return "application/json; charset=utf-8"
 	case ".html", ".htm":
 		return "text/html; charset=utf-8"
