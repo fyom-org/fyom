@@ -35,7 +35,8 @@ func TestAuthService_Register(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, user.ID)
 	assert.Equal(t, "alice", user.Username)
-	assert.Equal(t, "user", user.Role)
+	// First user is auto-promoted to admin
+	assert.Equal(t, "admin", user.Role)
 	assert.Empty(t, user.Password, "password should not be returned")
 
 	// Duplicate username — should return a conflict error

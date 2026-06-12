@@ -2,6 +2,7 @@ package fyom
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -18,11 +19,12 @@ import (
 	"github.com/fyom/fyom/internal/repository"
 	"github.com/fyom/fyom/pkg/presign"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func setupIntegrationRouter(t *testing.T) (http.Handler, func()) {
+func setupIntegrationRouter(t *testing.T) (http.Handler, *repository.DB, func()) {
 	t.Helper()
 
 	tmpDir := t.TempDir()
@@ -42,15 +44,25 @@ func setupIntegrationRouter(t *testing.T) (http.Handler, func()) {
 	mediaRepo := repository.NewMediaRepository(db)
 	userRepo := repository.NewUserRepository(db)
 	jobRepo := repository.NewImportJobRepository(db)
+	settingRepo := repository.NewSystemSettingRepository(db)
+
+	// Enable public registration for this test
+	_ = settingRepo.SetSetting(context.Background(), "allow_registration", "true")
+
+	providerRepo := repository.NewProviderRepository(db)
+	libRepo := repository.NewLibraryRepository(db)
+	libPermRepo := repository.NewLibraryPermissionRepository(db)
+	statusRepo := repository.NewUserMediaStatusRepository(db)
+
+	signer := presign.NewSigner(cfg.Auth.JWTSecret, 3600)
 
 	healthHandler := handler.NewHealthHandler("test", "abc", "now", "go1.26")
 
-	// Provider registry with LocalProvider.
 	reg := provider.NewRegistry()
-	reg.Register(provider.NewLocalProvider(presign.NewSigner(cfg.Auth.JWTSecret, 3600)))
-	mediaHandler := handler.NewMediaHandler(reg, db, mediaRepo, jobRepo, slog.Default())
+	reg.Register(provider.NewLocalProvider(signer))
+	mediaHandler := handler.NewMediaHandler(reg, db, mediaRepo, jobRepo, providerRepo, libRepo, statusRepo, slog.Default())
 
-	authHandler := handler.NewAuthHandler(userRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
+	authHandler := handler.NewAuthHandler(userRepo, libPermRepo, settingRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
 
 	// Public routes (no auth)
 	r.Get("/api/v1/health", healthHandler.Health)
@@ -73,7 +85,7 @@ func setupIntegrationRouter(t *testing.T) (http.Handler, func()) {
 		r.Get("/{id}/stream", mediaHandler.Stream)
 	})
 
-	return r, func() { _ = db.Close() }
+	return r, db, func() { _ = db.Close() }
 }
 
 func apiCall(t *testing.T, router http.Handler, method, path, token string, body []byte) *httptest.ResponseRecorder {
@@ -99,7 +111,7 @@ func writeFile(t *testing.T, path string, data []byte) {
 }
 
 func TestIntegration_NFOImportFlow(t *testing.T) {
-	router, cleanup := setupIntegrationRouter(t)
+	router, db, cleanup := setupIntegrationRouter(t)
 	defer cleanup()
 
 	// Step 1: Register + Login
@@ -124,7 +136,6 @@ func TestIntegration_NFOImportFlow(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &meResp))
 	meData := meResp["data"].(map[string]interface{})
 	assert.Equal(t, "testuser", meData["username"])
-	assert.Equal(t, "user", meData["role"])
 
 	// Step 3: Create test NFO files
 	tmpMediaDir := t.TempDir()
@@ -164,9 +175,16 @@ func TestIntegration_NFOImportFlow(t *testing.T) {
   <rating>8.7</rating>
 </episodedetails>`))
 
-	// Step 4: Trigger async import
+	// Step 4: Create a library directly in the DB (bypass admin API)
+	libID := uuid.New().String()
+	_, err := db.ExecContext(context.Background(),
+		`INSERT INTO libraries (id, name, source_path, provider_id) VALUES (?, ?, ?, ?)`,
+		libID, "Test Library", tmpMediaDir, "local")
+	require.NoError(t, err)
+
+	// Step 5: Trigger async import
 	w = apiCall(t, router, "POST", "/api/v1/library/import", token,
-		[]byte(`{"source_path":"`+tmpMediaDir+`"}`))
+		[]byte(`{"source_path":"`+tmpMediaDir+`","library_id":"`+libID+`"}`))
 	assert.Equal(t, 200, w.Code)
 	var importResp map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &importResp))
@@ -222,7 +240,7 @@ func TestIntegration_NFOImportFlow(t *testing.T) {
 }
 
 func TestIntegration_UnauthorizedAccess(t *testing.T) {
-	router, cleanup := setupIntegrationRouter(t)
+	router, _, cleanup := setupIntegrationRouter(t)
 	defer cleanup()
 
 	w := apiCall(t, router, "GET", "/api/v1/library", "", nil)
@@ -230,7 +248,7 @@ func TestIntegration_UnauthorizedAccess(t *testing.T) {
 }
 
 func TestIntegration_RegisterDuplicate(t *testing.T) {
-	router, cleanup := setupIntegrationRouter(t)
+	router, _, cleanup := setupIntegrationRouter(t)
 	defer cleanup()
 
 	body := []byte(`{"username":"dupuser","password":"pass123"}`)

@@ -146,8 +146,8 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	// Static files — go:embed dist embeds the dist/ directory at root.
 	// So the FS root already IS dist/. No fs.Sub needed.
 	// To open "assets/foo.js" we must use "dist/assets/foo.js".
-	r.Get("/*", staticFileHandler(logger))
-	r.Head("/*", staticFileHandler(logger))
+	r.Get("/*", staticFileHandler(logger, web.Dist))
+	r.Head("/*", staticFileHandler(logger, web.Dist))
 
 	httpServer := &http.Server{
 		Addr:         cfg.Server.Address(),
@@ -169,9 +169,12 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	}
 }
 
-// staticFileHandler returns an http.Handler that serves embedded static files.
-// It handles brotli/gzip pre-compression, HEAD requests, and SPA index fallback.
-func staticFileHandler(logger *slog.Logger) http.HandlerFunc {
+// staticFileHandler returns an http.Handler that serves static files from
+// the given FS. It handles brotli/gzip pre-compression, HEAD requests, and
+// SPA index fallback. The FS root must be the dist/ directory (i.e., paths
+// are resolved as "dist/assets/foo.js" for request "/assets/foo.js").
+// Pass web.Dist for production use.
+func staticFileHandler(logger *slog.Logger, fsys fs.FS) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(r.URL.Path, "/")
 		if name == "" || name == "/" {
@@ -185,7 +188,7 @@ func staticFileHandler(logger *slog.Logger) http.HandlerFunc {
 		if strings.Contains(acceptEncoding, "br") {
 			brName := "dist/" + name + ".br"
 			logger.Info("OPEN TRY", "file", brName)
-			if data, err := fs.ReadFile(web.Dist, brName); err == nil {
+			if data, err := fs.ReadFile(fsys, brName); err == nil {
 				logger.Info("OPEN OK", "file", brName, "len", len(data))
 				w.Header().Set("Content-Encoding", "br")
 				w.Header().Set("Content-Type", detectContentType(name))
@@ -207,7 +210,7 @@ func staticFileHandler(logger *slog.Logger) http.HandlerFunc {
 		if strings.Contains(acceptEncoding, "gzip") {
 			gzName := "dist/" + name + ".gz"
 			logger.Info("OPEN TRY", "file", gzName)
-			if data, err := fs.ReadFile(web.Dist, gzName); err == nil {
+			if data, err := fs.ReadFile(fsys, gzName); err == nil {
 				logger.Info("OPEN OK", "file", gzName, "len", len(data))
 				w.Header().Set("Content-Encoding", "gzip")
 				w.Header().Set("Content-Type", detectContentType(name))
@@ -225,20 +228,20 @@ func staticFileHandler(logger *slog.Logger) http.HandlerFunc {
 			}
 		}
 
-		// Serve uncompressed — read from embed FS and serve directly
+		// Serve uncompressed — read from FS and serve directly
 		realName := "dist/" + name
 		logger.Info("OPEN TRY", "file", realName)
-		data, err := fs.ReadFile(web.Dist, realName)
+		data, err := fs.ReadFile(fsys, realName)
 		if err != nil {
 			logger.Info("OPEN FAIL", "file", realName, "err", err)
-			// For known static file extensions under assets/, return 404
-			// instead of SPA fallback. This prevents CSS preload failures.
+			// For hashed assets under assets/, return 404 instead of SPA fallback.
+			// This prevents CSS preload failures from receiving HTML.
 			if isImmutableAsset(name) {
 				w.Header().Set("Cache-Control", "no-store")
 				http.NotFound(w, r)
 				return
 			}
-			serveIndexHTML(w, r)
+			serveIndexHTML(w, r, fsys)
 			return
 		}
 		logger.Info("OPEN OK", "file", realName, "len", len(data))
@@ -254,16 +257,8 @@ func staticFileHandler(logger *slog.Logger) http.HandlerFunc {
 	}
 }
 
-func setCacheHeader(w http.ResponseWriter, name string) {
-	if isImmutableAsset(name) {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	} else {
-		w.Header().Set("Cache-Control", "no-cache")
-	}
-}
-
-func serveIndexHTML(w http.ResponseWriter, _ *http.Request) {
-	data, err := fs.ReadFile(web.Dist, "dist/index.html")
+func serveIndexHTML(w http.ResponseWriter, _ *http.Request, fsys fs.FS) {
+	data, err := fs.ReadFile(fsys, "dist/index.html")
 	if err != nil {
 		http.Error(w, "index.html not found", http.StatusInternalServerError)
 		return
@@ -272,6 +267,14 @@ func serveIndexHTML(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+func setCacheHeader(w http.ResponseWriter, name string) {
+	if isImmutableAsset(name) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "no-cache")
+	}
 }
 
 // detectContentType returns the MIME type based on the original file name.

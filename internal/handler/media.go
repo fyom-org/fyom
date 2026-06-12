@@ -573,13 +573,6 @@ func (h *MediaHandler) GetContinueWatching(w http.ResponseWriter, r *http.Reques
 		items = []repository.MediaItemWithProgress{}
 	}
 
-	result := make([]MediaItemResponse, len(items))
-	for i := range items {
-		result[i] = attachPresignedURLs(r.Context(), &items[i].MediaItem, h.registry, h.logger)
-		result[i].PosterURL = result[i].PosterURL // keep URL
-	}
-	_ = result
-
 	// Return items with progress embedded
 	type progressItem struct {
 		MediaItemResponse
