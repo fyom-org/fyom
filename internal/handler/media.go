@@ -90,27 +90,36 @@ type MediaItemResponse struct {
 }
 // MediaHandler handles media-related HTTP endpoints.
 type MediaHandler struct {
-	registry     *provider.Registry
-	repo         *repository.MediaRepository
-	jobRepo      *repository.ImportJobRepository
-	providerRepo *repository.ProviderRepository
-	libRepo      *repository.LibraryRepository
-	statusRepo   *repository.UserMediaStatusRepository
-	db           *repository.DB
-	logger       *slog.Logger
+	registry           *provider.Registry
+	repo               *repository.MediaRepository
+	jobRepo            *repository.ImportJobRepository
+	providerRepo       *repository.ProviderRepository
+	libRepo            *repository.LibraryRepository
+	statusRepo         *repository.UserMediaStatusRepository
+	db                 *repository.DB
+	logger             *slog.Logger
+	refreshCoordinator RefreshCoordinator
+}
+
+// RefreshCoordinator defines the interface for coordinating refresh jobs.
+// Implemented by server.RefreshCoordinator to avoid import cycles.
+type RefreshCoordinator interface {
+	TryStart(libraryID string) bool
+	Finish(libraryID string)
 }
 
 // NewMediaHandler creates a new MediaHandler.
-func NewMediaHandler(registry *provider.Registry, db *repository.DB, mediaRepo *repository.MediaRepository, jobRepo *repository.ImportJobRepository, providerRepo *repository.ProviderRepository, libRepo *repository.LibraryRepository, statusRepo *repository.UserMediaStatusRepository, logger *slog.Logger) *MediaHandler {
+func NewMediaHandler(registry *provider.Registry, db *repository.DB, mediaRepo *repository.MediaRepository, jobRepo *repository.ImportJobRepository, providerRepo *repository.ProviderRepository, libRepo *repository.LibraryRepository, statusRepo *repository.UserMediaStatusRepository, logger *slog.Logger, refreshCoordinator RefreshCoordinator) *MediaHandler {
 	return &MediaHandler{
-		registry:     registry,
-		repo:         mediaRepo,
-		jobRepo:      jobRepo,
-		providerRepo: providerRepo,
-		libRepo:      libRepo,
-		statusRepo:   statusRepo,
-		db:           db,
-		logger:       logger,
+		registry:           registry,
+		repo:               mediaRepo,
+		jobRepo:            jobRepo,
+		providerRepo:       providerRepo,
+		libRepo:            libRepo,
+		statusRepo:         statusRepo,
+		db:                 db,
+		logger:             logger,
+		refreshCoordinator: refreshCoordinator,
 	}
 }
 
@@ -827,9 +836,16 @@ func (h *MediaHandler) Import(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Prevent duplicate refresh for the same library
+	if !h.refreshCoordinator.TryStart(req.LibraryID) {
+		response.Error(w, 409, "refresh already in progress for this library")
+		return
+	}
+
 	// Validate library exists.
 	lib, err := h.libRepo.GetByID(r.Context(), req.LibraryID)
 	if err != nil || lib == nil {
+		h.refreshCoordinator.Finish(req.LibraryID)
 		response.Error(w, 400, "library not found: "+req.LibraryID)
 		return
 	}
@@ -843,21 +859,25 @@ func (h *MediaHandler) Import(w http.ResponseWriter, r *http.Request) {
 	} else {
 		p, ok := h.registry.Get(req.ProviderID)
 		if !ok {
+			h.refreshCoordinator.Finish(req.LibraryID)
 			response.Error(w, 400, "provider not found: "+req.ProviderID)
 			return
 		}
 		if p.Type() != "s3" {
+			h.refreshCoordinator.Finish(req.LibraryID)
 			response.Error(w, 400, "import from provider type '"+p.Type()+"' is not supported yet")
 			return
 		}
 		// Get provider record from DB for S3 config
 		rec, err := h.providerRepo.GetByID(r.Context(), req.ProviderID)
 		if err != nil || rec == nil {
+			h.refreshCoordinator.Finish(req.LibraryID)
 			response.Error(w, 500, "failed to load provider config")
 			return
 		}
 		s3fs, err := service.NewS3ImportFS(r.Context(), rec, req.SourcePath)
 		if err != nil {
+			h.refreshCoordinator.Finish(req.LibraryID)
 			response.Error(w, 500, "failed to create S3 client: "+err.Error())
 			return
 		}
@@ -870,6 +890,7 @@ func (h *MediaHandler) Import(w http.ResponseWriter, r *http.Request) {
 	imp.SetLibraryID(req.LibraryID)
 	job, err := imp.ImportRequest(r.Context(), req.SourcePath)
 	if err != nil {
+		h.refreshCoordinator.Finish(req.LibraryID)
 		if appErr, ok := errors.IsAppError(err); ok {
 			response.Error(w, appErr.Code, appErr.Message)
 			return

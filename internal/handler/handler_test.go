@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,7 +66,11 @@ func setupTestRouter(t *testing.T) http.Handler {
 
 	reg := provider.NewRegistry()
 	reg.Register(provider.NewLocalProvider(presign.NewSigner("test-secret", 3600)))
-	mediaHandler := NewMediaHandler(reg, db, mediaRepo, jobRepo, providerRepo, libRepo, statusRepo, slog.Default())
+	
+	// Mock refresh coordinator for tests
+	mockCoordinator := &mockRefreshCoordinator{}
+	
+	mediaHandler := NewMediaHandler(reg, db, mediaRepo, jobRepo, providerRepo, libRepo, statusRepo, slog.Default(), mockCoordinator)
 
 	authHandler := NewAuthHandler(userRepo, libPermRepo, settingRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
 
@@ -81,6 +86,33 @@ func setupTestRouter(t *testing.T) http.Handler {
 	})
 
 	return r
+}
+
+// mockRefreshCoordinator implements RefreshCoordinator for testing.
+type mockRefreshCoordinator struct {
+	running map[string]bool
+	mu      sync.Mutex
+}
+
+func (m *mockRefreshCoordinator) TryStart(libraryID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.running == nil {
+		m.running = make(map[string]bool)
+	}
+	if m.running[libraryID] {
+		return false
+	}
+	m.running[libraryID] = true
+	return true
+}
+
+func (m *mockRefreshCoordinator) Finish(libraryID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.running != nil {
+		delete(m.running, libraryID)
+	}
 }
 
 func TestHealthHandler_Health(t *testing.T) {
