@@ -3,7 +3,7 @@ import axios, {
   type InternalAxiosRequestConfig,
   type AxiosResponse,
 } from 'axios';
-import { resolveApiBaseUrl } from '@/lib/runtime/env';
+import { getApiBaseUrl } from '@/lib/runtime/tauri';
 
 interface ApiResponse<T = unknown> {
   code: number;
@@ -12,7 +12,7 @@ interface ApiResponse<T = unknown> {
 }
 
 const request: AxiosInstance = axios.create({
-  baseURL: resolveApiBaseUrl(),
+  baseURL: getApiBaseUrl(),
   timeout: 10000,
 });
 
