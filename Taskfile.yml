@@ -23,8 +23,6 @@ tasks:
     desc: "Run Go backend with Air hot-reload"
     cmds:
       - air -c .air.toml
-    env:
-      FYOM_DB_PATH: "{{.BUILD_DIR}}/fyom.db"
 
   dev:web:
     desc: "Run Vite dev server"

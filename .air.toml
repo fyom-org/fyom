@@ -4,11 +4,14 @@ tmp_dir = "tmp"
 [build]
   cmd = "CGO_ENABLED=0 go build -ldflags \"-s -w\" -o tmp/fyom ./cmd/fyom"
   delay = 1500
-  entrypoint = "FYOM_DB_PATH=./tmp/fyom.db ./tmp/fyom"
+  entrypoint = "./tmp/fyom"
   exclude_dir = ["web/src", "web/node_modules", "tmp", "build", "data"]
   include_ext = ["go", "yaml", "sql", "mod", "sum"]
   include_dir = ["web/dist"]
   log = "air-build-errors.log"
+
+[env]
+  FYOM_DB_PATH = "./tmp/fyom.db"
 
 [color]
   main = "magenta"
