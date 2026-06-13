@@ -5,17 +5,17 @@
  */
 
 import { listen } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api';
+import { tauri } from '@tauri-apps/api';
 import type { Event } from '@tauri-apps/api/event';
 import { resolveApiBaseUrl as resolveStaticApiBaseUrl } from './env';
 
-// 存储动态 API URL
+// Store dynamic API URL
 let dynamicApiBaseUrl: string | null = null;
-// 存储监听器的取消函数
+// Store unlisten functions
 // Tauri's listen() returns UnlistenFn which is () => void
 let unlistenReady: (() => void) | null = null;
 let unlistenError: (() => void) | null = null;
-// 标记是否已经初始化过
+// Track if already initialized
 let initialized = false;
 
 /**
@@ -30,7 +30,7 @@ export function isTauriEnvironment(): boolean {
  */
 async function getSidecarStatus(): Promise<{ status: string; api_base_url?: string } | null> {
   try {
-    const result = (await invoke('get_sidecar_status')) as {
+    const result = (await tauri.invoke('get_sidecar_status')) as {
       status: string;
       api_base_url?: string;
     };
