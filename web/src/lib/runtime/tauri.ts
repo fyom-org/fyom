@@ -5,7 +5,6 @@
  */
 
 import { listen } from '@tauri-apps/api/event';
-import { tauri } from '@tauri-apps/api';
 import type { Event } from '@tauri-apps/api/event';
 import { resolveApiBaseUrl as resolveStaticApiBaseUrl } from './env';
 
@@ -17,6 +16,12 @@ let unlistenReady: (() => void) | null = null;
 let unlistenError: (() => void) | null = null;
 // Track if already initialized
 let initialized = false;
+
+// Invoke function from Tauri API
+// In Tauri v2, invoke is available from @tauri-apps/api
+// We use require to avoid TypeScript module resolution issues
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { invoke } = require('@tauri-apps/api');
 
 /**
  * Check if we are running in a Tauri environment.
@@ -30,7 +35,7 @@ export function isTauriEnvironment(): boolean {
  */
 async function getSidecarStatus(): Promise<{ status: string; api_base_url?: string } | null> {
   try {
-    const result = (await tauri.invoke('get_sidecar_status')) as {
+    const result = (await invoke('get_sidecar_status')) as {
       status: string;
       api_base_url?: string;
     };
