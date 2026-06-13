@@ -7,9 +7,12 @@ import { initTauriListeners } from './lib/runtime/tauri';
 
 const app = createApp(App);
 
-// Initialize Tauri event listeners for sidecar communication
-initTauriListeners().catch(console.error);
-
 app.use(createPinia());
 app.use(router);
+
+// Mount the app first
 app.mount('#app');
+
+// Initialize Tauri event listeners after app is mounted
+// This ensures Tauri internals are ready
+initTauriListeners().catch(console.error);
