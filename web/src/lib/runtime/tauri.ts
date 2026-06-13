@@ -4,15 +4,17 @@
  * This module handles communication between the Tauri frontend and the Go sidecar.
  */
 
-import { listen, Event } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/tauri';
+import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api';
+import type { Event } from '@tauri-apps/api/event';
 import { resolveApiBaseUrl as resolveStaticApiBaseUrl } from './env';
 
 // 存储动态 API URL
 let dynamicApiBaseUrl: string | null = null;
 // 存储监听器的取消函数
-let unlistenReady: (() => Promise<void>) | null = null;
-let unlistenError: (() => Promise<void>) | null = null;
+// Tauri's listen() returns UnlistenFn which is () => void
+let unlistenReady: (() => void) | null = null;
+let unlistenError: (() => void) | null = null;
 // 标记是否已经初始化过
 let initialized = false;
 
@@ -98,10 +100,10 @@ export async function initTauriListeners(): Promise<void> {
 /**
  * Cleanup Tauri event listeners.
  */
-export async function cleanupTauriListeners(): Promise<void> {
+export function cleanupTauriListeners(): void {
   if (unlistenReady) {
     try {
-      await unlistenReady();
+      unlistenReady();
     } catch (error) {
       console.error('[Tauri] Error cleaning up ready listener:', error);
     }
@@ -109,7 +111,7 @@ export async function cleanupTauriListeners(): Promise<void> {
   }
   if (unlistenError) {
     try {
-      await unlistenError();
+      unlistenError();
     } catch (error) {
       console.error('[Tauri] Error cleaning up error listener:', error);
     }
