@@ -129,17 +129,36 @@ func (db *DB) migrate() error {
 	return nil
 }
 
-// findMigrationsDir locates the migrations directory relative to the working directory.
+// findMigrationsDir locates the migrations directory.
+// It first tries relative paths, then falls back to searching from the executable's directory.
 func findMigrationsDir() string {
+	// Try relative paths first (for development)
 	candidates := []string{
 		"migrations",
 		"../migrations",
 		"../../migrations",
+		"../../../migrations",
 	}
 	for _, dir := range candidates {
 		if info, err := os.Stat(dir); err == nil && info.IsDir() {
 			return dir
 		}
 	}
+
+	// Try from executable's directory (for production builds)
+	exePath, err := os.Executable()
+	if err == nil {
+		exeDir := filepath.Dir(exePath)
+		migrationsPath := filepath.Join(exeDir, "migrations")
+		if info, err := os.Stat(migrationsPath); err == nil && info.IsDir() {
+			return migrationsPath
+		}
+		// Also try parent directory (in case build/ directory structure)
+		parentMigrations := filepath.Join(exeDir, "..", "migrations")
+		if info, err := os.Stat(parentMigrations); err == nil && info.IsDir() {
+			return parentMigrations
+		}
+	}
+
 	return ""
 }
