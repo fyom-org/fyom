@@ -16,32 +16,61 @@
       system:
       let
         pkgs = import nixpkgs { inherit system; };
+        lib = pkgs.lib;
 
-        # Compatibility fallbacks for different nixpkgs branches
-        webkitgtk = if pkgs ? webkitgtk_4_1 then pkgs.webkitgtk_4_1 else pkgs.webkitgtk;
-        libsoup = if pkgs ? libsoup_3 then pkgs.libsoup_3 else pkgs.libsoup;
         nodejs = if pkgs ? nodejs_22 then pkgs.nodejs_22 else pkgs.nodejs_20;
 
-      in
-      {
-        devShells.default = pkgs.mkShell {
-          packages = [
-            webkitgtk
-            libsoup
-            nodejs
-          ]
-          ++ (with pkgs; [
-            # -- Rust Toolchain --
-            rustc
-            cargo
-            rust-analyzer
-            rustfmt
-            clippy
-            pkg-config
+        vite = if pkgs ? vite then pkgs.vite else pkgs.vitejs;
+
+        webkitgtk = if pkgs ? webkitgtk_4_1 then pkgs.webkitgtk_4_1 else pkgs.webkitgtk;
+
+        libsoup = if pkgs ? libsoup_3 then pkgs.libsoup_3 else pkgs.libsoup;
+
+        commonPackages = with pkgs; [
+          # -- Rust Toolchain --
+          rustc
+          cargo
+          rust-analyzer
+          rustfmt
+          clippy
+          cargo-tauri
+
+          # -- Native build tooling --
+          pkg-config
+          llvmPackages.libclang
+
+          # -- Frontend Tooling --
+          nodejs
+          pnpm
+          typescript
+          vite
+
+          # -- Go Toolchain --
+          go
+          go-task
+          golangci-lint
+          gnumake
+
+          # -- Database --
+          sqlite
+          dbmate
+
+          # -- Utilities --
+          git
+          jq
+          python3
+          cmake
+          ninja
+        ];
+
+        linuxPackages = lib.optionals pkgs.stdenv.isLinux (
+          with pkgs;
+          [
             gcc
 
             # -- Tauri / Linux System Dependencies --
-            cargo-tauri
+            webkitgtk
+            libsoup
             glib
             gtk3
             gdk-pixbuf
@@ -51,50 +80,53 @@
             dbus
             alsa-lib
             fontconfig
-            libsecret # Required for Tauri keyring/api password storage
-            libayatana-appindicator # Required for system tray icons
+            libsecret
+            libayatana-appindicator
 
             # -- NixOS Desktop Runtime Fixes --
-            gsettings-desktop-schemas # Prevents GLib-GIO-ERROR on startup
+            gsettings-desktop-schemas
             adwaita-icon-theme
+          ]
+        );
 
-            # -- Frontend Tooling --
-            pnpm
-            typescript
-            vitejs
+        darwinPackages = lib.optionals pkgs.stdenv.isDarwin (
+          with pkgs;
+          [
+            libiconv
 
-            # -- Go Toolchain --
-            go
-            go-task
-            golangci-lint
-            air
-            gnumake
+            darwin.apple_sdk.frameworks.AppKit
+            darwin.apple_sdk.frameworks.Foundation
+            darwin.apple_sdk.frameworks.Security
+            darwin.apple_sdk.frameworks.WebKit
+            darwin.apple_sdk.frameworks.CoreServices
+            darwin.apple_sdk.frameworks.SystemConfiguration
+          ]
+        );
 
-            # -- Database --
-            sqlite
-            dbmate
+        linuxShellHook = lib.optionalString pkgs.stdenv.isLinux ''
+          # Fix missing GTK/WebKit schemas and themes on NixOS.
+          export XDG_DATA_DIRS=${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.adwaita-icon-theme}/share:$XDG_DATA_DIRS
 
-            # -- Utilities --
-            git
-            gitui
-            onefetch
-            jq
-            just
-            rclone
-            wrangler
-            python3
-            cmake
-            ninja
-          ]);
+          echo "🚀 fyom Linux dev shell loaded."
+          echo "⚙️  Run 'task dev:desktop' for development"
+          echo "⚙️  Run 'task build:desktop' for building"
+        '';
 
-          shellHook = ''
-            # Fix missing GTK/WebKit schemas and themes on NixOS
-            export XDG_DATA_DIRS=${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.adwaita-icon-theme}/share:$XDG_DATA_DIRS
+        darwinShellHook = lib.optionalString pkgs.stdenv.isDarwin ''
+          echo "🚀 fyom macOS dev shell loaded."
+          echo "⚙️  Run 'task build:desktop' for building"
+        '';
 
-            echo "🚀 fyom dev shell loaded."
-            echo "⚙️  Run 'task dev:desktop' for development"
-            echo "⚙️  Run 'task build:desktop' for building"
-          '';
+      in
+      {
+        devShells.default = pkgs.mkShell {
+          packages = commonPackages ++ linuxPackages ++ darwinPackages;
+
+          env = {
+            LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+          };
+
+          shellHook = linuxShellHook + darwinShellHook;
         };
       }
     );
