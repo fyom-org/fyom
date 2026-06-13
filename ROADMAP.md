@@ -152,11 +152,6 @@ by deep, Kodi-compliant metadata.
 
 - [x] Episode `BackdropPath` set to thumbnail path for backdrop rendering
 - [x] `FindLogoPath()` — discovers logo.png in show/movie directories
-- [x] **NFO file selection fix** — `findMovieNFO()` now prefers `movie.nfo`
-      (Kodi/Jellyfin standard) over per-episode NFO files in the same directory.
-      Previously, alphabetically-first `.nfo` was selected, causing movie titles
-      to be set to per-episode filenames when both `movie.nfo` and per-episode
-      NFO files coexisted.
 
 - [x] **NFO file selection fix** — `findMovieNFO()` now prefers `movie.nfo`
       (Kodi/Jellyfin standard) over per-episode NFO files in the same directory.
