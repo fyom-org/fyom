@@ -7,7 +7,7 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
@@ -89,9 +89,16 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
     let binary_path = find_sidecar_binary()
         .map_err(|e| anyhow::anyhow!("Failed to locate sidecar binary: {}", e))?;
 
-    tracing::info!("Starting sidecar: {:?}", binary_path);
+    // Use the desktop DB path resolved by the main app in lib.rs.
+    // This guarantees the path is based on the main app executable directory,
+    // not the sidecar binary directory.
+    let db_path = PathBuf::from(state.desktop_db_path.as_str());
 
-    let db_path = determine_sidecar_db_path(app);
+    tracing::info!("Desktop sidecar starting");
+    tracing::info!("  app_exe_dir: {}", db_path.parent().unwrap_or(std::path::Path::new("")).display());
+    tracing::info!("  db_path:     {}", db_path.display());
+    tracing::info!("  sidecar_bin: {}", binary_path.display());
+    tracing::info!("  args:        --sidecar --db-path {} --log-level info", db_path.display());
 
     // Spawn the sidecar process
     let mut child = Command::new(&binary_path)
@@ -173,7 +180,8 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
 
                 // Check for readiness token
                 if let Some(api_url) = parse_ready_line(&line) {
-                    tracing::info!("Sidecar ready: {}", api_url);
+                    tracing::info!("FYOM_READY received: {}", api_url);
+                    tracing::info!("  db_path:    {}", db_path.display());
 
                     // Confirm readiness with /readyz
                     if let Err(e) = confirm_readyz(&api_url).await {
@@ -254,15 +262,6 @@ async fn confirm_readyz(api_url: &str) -> Result<()> {
     } else {
         anyhow::bail!("/readyz returned status: {}", resp.status())
     }
-}
-
-/// Determine the desktop DB path.
-/// Uses the sidecar binary directory: <sidecar-binary-dir>/fyom.db
-fn determine_sidecar_db_path(_app: &AppHandle) -> String {
-    // Get the sidecar binary path and use its parent directory
-    let exe_path = std::env::current_exe().unwrap_or_default();
-    let exe_dir = exe_path.parent().unwrap_or(std::path::Path::new("."));
-    exe_dir.join("fyom.db").to_string_lossy().to_string()
 }
 
 /// Shutdown the sidecar process cleanly.

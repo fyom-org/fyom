@@ -21,6 +21,7 @@ const SIDECAR_STARTUP_TIMEOUT_SECS: u64 = 30;
 pub struct AppState {
     pub sidecar_state: Arc<SidecarState>,
     pub shutdown_started: Arc<AtomicBool>,
+    pub desktop_db_path: Arc<String>,
 }
 
 impl Default for AppState {
@@ -28,6 +29,7 @@ impl Default for AppState {
         Self {
             sidecar_state: Arc::new(SidecarState::default()),
             shutdown_started: Arc::new(AtomicBool::new(false)),
+            desktop_db_path: Arc::new(String::new()),
         }
     }
 }
@@ -48,7 +50,19 @@ pub fn run() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let app_state = AppState::default();
+    let mut app_state = AppState::default();
+
+    // Resolve the desktop DB path from the main app executable directory.
+    // This must be done early, before the sidecar is spawned.
+    let exe_path = std::env::current_exe().unwrap_or_default();
+    let exe_dir = exe_path.parent().unwrap_or(std::path::Path::new("."));
+    let desktop_db_path = exe_dir.join("fyom.db").to_string_lossy().to_string();
+    app_state.desktop_db_path = Arc::new(desktop_db_path.clone());
+
+    tracing::info!("Desktop environment:");
+    tracing::info!("  app_exe:     {}", exe_path.display());
+    tracing::info!("  app_exe_dir: {}", exe_dir.display());
+    tracing::info!("  db_path:     {}", desktop_db_path);
 
     let app = tauri::Builder::default()
         .manage(app_state.clone())
