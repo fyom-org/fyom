@@ -5,7 +5,6 @@ vars:
   BUILD_DIR: ./build
   CMD_PATH: ./cmd/fyom
 
-  # Build metadata with safe defaults for local builds and CI.
   VERSION: '{{default "dev" .VERSION}}'
   COMMIT: '{{default "unknown" .COMMIT}}'
   BUILD_TIME: '{{default "unknown" .BUILD_TIME}}'
@@ -93,13 +92,13 @@ tasks:
     desc: "Run Tauri desktop dev mode (requires sidecar binary)"
     deps: [sidecar]
     cmds:
-      - cd src-tauri && cargo tauri dev
+      - cd src-tauri && cargo-tauri dev
 
   build:desktop:
     desc: "Build Tauri desktop app bundle"
     deps: [sidecar]
     cmds:
-      - cd src-tauri && cargo tauri build
+      - cd src-tauri && cargo-tauri build
 
   build:tarball:
     desc: "Build Linux tar.gz artifact"
