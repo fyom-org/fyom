@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "identifier": "com.fyom.fyom",
   "build": {
-    "beforeDevCommand": "cd ../web && npm run dev -- --host",
+    "beforeDevCommand": "cd web && npm run dev -- --host",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../web/dist"
   },

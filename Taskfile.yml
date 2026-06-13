@@ -37,7 +37,7 @@ tasks:
   preview:
     desc: "Run Go backend preview"
     cmds:
-      - CGO_ENABLED=0 FYOM_SERVER_HOST=127.0.0.1 go run cmd/fyom/main.go -c
+      - CGO_ENABLED=0 FYOM_SERVER_HOST=127.0.0.1 go run cmd/fyom/main.go
 
   preview:web:
     desc: "Run Vite preview server"
@@ -92,7 +92,7 @@ tasks:
     desc: "Run Tauri desktop dev mode (requires sidecar binary)"
     deps: [sidecar]
     cmds:
-      - cd src-tauri && cargo-tauri dev
+      - cd src-tauri && FYOM_BIN=../build/fyom cargo-tauri dev
 
   build:desktop:
     desc: "Build Tauri desktop app bundle"
