@@ -36,9 +36,6 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
 
-      - name: Enable Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@main
-
       - name: Show Nix environment
         shell: bash
         run: |
@@ -105,8 +102,10 @@ jobs:
 
   # ============================================================
   # macOS: Nix flake build
-  # macos-14 is Apple Silicon.
-  # macos-13 is Intel.
+  #
+  # flake.nix is intentionally left unchanged for this iteration.
+  # If macOS fails due to Linux-only Nix packages, fix flake.nix
+  # in the next pass.
   # ============================================================
   build-macos:
     name: build ${{ matrix.platform }}
@@ -127,9 +126,6 @@ jobs:
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
-
-      - name: Enable Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Show Nix environment
         shell: bash
@@ -194,10 +190,8 @@ jobs:
   # ============================================================
   # Windows: native build
   #
-  # Important:
-  # Nix installer action does not support native Windows runner.
-  # Therefore Windows cannot use `nix develop` on windows-2022.
-  # This is the only non-Nix job.
+  # Native Windows runner cannot use Determinate Nix installer.
+  # Windows is intentionally built without nix develop.
   # ============================================================
   build-windows:
     name: build windows
@@ -207,15 +201,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: latest
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -284,7 +278,7 @@ jobs:
   # ============================================================
   # Publish GitHub Release
   #
-  # Keep tag/release behavior stable:
+  # Tag release logic is intentionally preserved:
   # - push tag v* publishes release
   # - workflow_dispatch supports prerelease input
   # ============================================================
@@ -316,7 +310,7 @@ jobs:
 
       # ==========================================
       # Determine prerelease
-      # Do not change tag publishing behavior.
+      # Keep release/tag behavior unchanged.
       # ==========================================
       - name: Determine prerelease
         id: prerelease

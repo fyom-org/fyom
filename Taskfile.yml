@@ -24,7 +24,7 @@ tasks:
     desc: "Run Vite dev server"
     dir: web
     cmds:
-      - npm run dev -- --host
+      - pnpm run dev -- --host
 
   # ================================================
   # Preview
@@ -39,7 +39,7 @@ tasks:
     desc: "Run Vite preview server"
     dir: web
     cmds:
-      - npm run preview
+      - pnpm run preview
 
   # ================================================
   # Build
@@ -49,8 +49,8 @@ tasks:
     desc: "Build frontend for production"
     dir: web
     cmds:
-      - npm run build:full
-      - find dist -name "*.map" -delete
+      - pnpm run build:full
+      - node ../scripts/delete-sourcemaps.js dist
 
   build:
     desc: "Build fyom backend binary with embedded frontend"
@@ -86,7 +86,6 @@ tasks:
     cmds:
       - mkdir -p release/fyom-linux-x86_64
       - cp src-tauri/target/release/fyom release/fyom-linux-x86_64/
-      - cp README.md release/fyom-linux-x86_64/ || true
       - tar -czf release/fyom-linux-x86_64.tar.gz -C release fyom-linux-x86_64
 
   # ================================================
