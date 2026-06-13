@@ -91,13 +91,13 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
 
     tracing::info!("Starting sidecar: {:?}", binary_path);
 
-    let data_dir = determine_sidecar_data_dir(app);
+    let db_path = determine_sidecar_db_path(app);
 
     // Spawn the sidecar process
     let mut child = Command::new(&binary_path)
         .arg("--sidecar")
-        .arg("--data-dir")
-        .arg(&data_dir)
+        .arg("--db-path")
+        .arg(&db_path)
         .arg("--log-level")
         .arg("info")
         .stdin(Stdio::null())
@@ -256,21 +256,13 @@ async fn confirm_readyz(api_url: &str) -> Result<()> {
     }
 }
 
-/// Determine the data directory for the sidecar.
-fn determine_sidecar_data_dir(app: &AppHandle) -> String {
-    // Use a platform-appropriate data directory
-    if let Some(data_dir) = app
-        .path()
-        .app_data_dir()
-        .ok()
-        .and_then(|d| d.to_str().map(String::from))
-    {
-        let _ = std::fs::create_dir_all(&data_dir);
-        return data_dir;
-    }
-
-    // Fallback to a local data directory
-    "./data".to_string()
+/// Determine the desktop DB path.
+/// Uses the sidecar binary directory: <sidecar-binary-dir>/fyom.db
+fn determine_sidecar_db_path(_app: &AppHandle) -> String {
+    // Get the sidecar binary path and use its parent directory
+    let exe_path = std::env::current_exe().unwrap_or_default();
+    let exe_dir = exe_path.parent().unwrap_or(std::path::Path::new("."));
+    exe_dir.join("fyom.db").to_string_lossy().to_string()
 }
 
 /// Shutdown the sidecar process cleanly.

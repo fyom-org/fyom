@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -40,53 +41,69 @@ func Run(opts RunOptions) error {
 	}
 	slog.SetDefault(slog.New(logHandler))
 
-	// Load configuration
-	cfg, err := config.Load(opts.DataDir)
+	// Resolve DB path with strict priority: flag > env > default
+	dbPath, dbSource, err := ResolveDBPath(opts.DBPath)
+	if err != nil {
+		slog.Error("failed to resolve db path", "error", err)
+		return fmt.Errorf("resolve db path: %w", err)
+	}
+
+	// Ensure parent directory exists before opening SQLite
+	dbDir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		slog.Error("failed to create db parent directory", "dir", dbDir, "error", err)
+		return fmt.Errorf("create db dir %s: %w", dbDir, err)
+	}
+
+	// Load koanf config (server, auth, log settings)
+	cfg, err := config.Load("")
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	// Override config with CLI options if provided
+	// Override DB path with resolved value
+	cfg.Database.DBPath = dbPath
+
+	// Override server host/port for sidecar mode
 	if opts.Mode == RunModeSidecar {
 		cfg.Server.Host = opts.Host
 		cfg.Server.Port = opts.Port
 	}
 
-	// Initialize the structured logger for startup messages
-	log := logger.New(cfg.Log.Level, cfg.Log.Format)
-
 	slog.Info("fyom starting",
 		"mode", opts.Mode,
 		"version", version.Version,
 		"commit", version.Commit,
-		"go", version.BuildTime,
+		"db_path", dbPath,
+		"db_source", dbSource,
 	)
-
-	// Debug: data directory permissions
-	if info, err := os.Stat(cfg.Database.DataDir); err == nil {
-		slog.Debug("data directory", "path", cfg.Database.DataDir, "mode", info.Mode().String())
-	}
 
 	// Open database
 	db, err := repository.Open(
-		cfg.Database.DataDir,
+		cfg.Database.DBPath,
 		cfg.Database.MaxOpenConns,
 		cfg.Database.MaxIdleConns,
 		cfg.Database.ConnMaxLifetime,
 	)
 	if err != nil {
-		log.Error("failed to open database", "error", err)
+		slog.Error("failed to open database", "error", err)
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer func() { _ = db.Close() }()
 
-	log.Info("database connected", "data_dir", cfg.Database.DataDir)
+	slog.Info("database connected", "db_path", dbPath)
+
+	// Build server config for sidecar mode
+	// (host/port already set in cfg above)
+
+	// Initialize the structured logger for startup messages
+	log := logger.New(cfg.Log.Level, cfg.Log.Format)
 
 	// Create and run server
 	srv := fyomserver.New(cfg, log, db, version.Version, version.Commit, version.BuildTime, runtime.Version())
 	addr := cfg.Server.Address()
-	log.Info("server listening", "addr", addr)
+	slog.Info("server listening", "addr", addr)
 
 	// In sidecar mode, emit readiness signal after server is fully initialized
 	if opts.Mode == RunModeSidecar {
@@ -118,29 +135,42 @@ func RunWithContext(ctx context.Context, opts RunOptions) error {
 	logHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})
 	slog.SetDefault(slog.New(logHandler))
 
-	cfg, err := config.Load(opts.DataDir)
+	// Resolve DB path
+	dbPath, dbSource, err := ResolveDBPath(opts.DBPath)
+	if err != nil {
+		return fmt.Errorf("resolve db path: %w", err)
+	}
+
+	// Ensure parent directory
+	dbDir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		return fmt.Errorf("create db dir %s: %w", dbDir, err)
+	}
+
+	// Load koanf config
+	cfg, err := config.Load("")
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-
+	cfg.Database.DBPath = dbPath
 	if opts.Mode == RunModeSidecar {
 		cfg.Server.Host = opts.Host
 		cfg.Server.Port = opts.Port
 	}
 
-	log := logger.New(cfg.Log.Level, cfg.Log.Format)
-
-	db, err := repository.Open(
-		cfg.Database.DataDir,
-		cfg.Database.MaxOpenConns,
-		cfg.Database.MaxIdleConns,
-		cfg.Database.ConnMaxLifetime,
+	slog.Info("fyom starting",
+		"mode", opts.Mode,
+		"db_path", dbPath,
+		"db_source", dbSource,
 	)
+
+	db, err := repository.Open(cfg.Database.DBPath, cfg.Database.MaxOpenConns, cfg.Database.MaxIdleConns, cfg.Database.ConnMaxLifetime)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer func() { _ = db.Close() }()
 
+	log := logger.New(cfg.Log.Level, cfg.Log.Format)
 	srv := fyomserver.New(cfg, log, db, version.Version, version.Commit, version.BuildTime, runtime.Version())
 
 	// Start server in background
@@ -152,7 +182,6 @@ func RunWithContext(ctx context.Context, opts RunOptions) error {
 	// Wait for context cancellation or server error
 	select {
 	case <-ctx.Done():
-		// Trigger shutdown via signal
 		return nil
 	case err := <-errCh:
 		return err

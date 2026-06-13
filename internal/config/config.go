@@ -23,7 +23,7 @@ type Server struct {
 
 // Database holds database configuration.
 type Database struct {
-	DataDir         string `koanf:"data_dir"`
+	DBPath          string `koanf:"db_path"`
 	MaxOpenConns    int    `koanf:"max_open_conns"`
 	MaxIdleConns    int    `koanf:"max_idle_conns"`
 	ConnMaxLifetime int    `koanf:"conn_max_lifetime_seconds"`
@@ -61,18 +61,18 @@ func Load(cfgPath string) (*Config, error) {
 
 	// Defaults via confmap provider
 	defaults := map[string]interface{}{
-		"server.host":                      "0.0.0.0",
-		"server.port":                      8080,
-		"server.mode":                      "release",
-		"database.data_dir":                "./data",
-		"database.max_open_conns":          25,
-		"database.max_idle_conns":          5,
+		"server.host":                        "0.0.0.0",
+		"server.port":                        8080,
+		"server.mode":                        "release",
+		"database.db_path":                   "",
+		"database.max_open_conns":            25,
+		"database.max_idle_conns":            5,
 		"database.conn_max_lifetime_seconds": 300,
-		"auth.jwt_secret":                  "change-me-in-production",
-		"auth.token_expiry_hours":          24,
-		"auth.refresh_expiry_hours":        168,
-		"log.level":                        "info",
-		"log.format":                       "json",
+		"auth.jwt_secret":                    "change-me-in-production",
+		"auth.token_expiry_hours":            24,
+		"auth.refresh_expiry_hours":          168,
+		"log.level":                          "info",
+		"log.format":                         "json",
 	}
 	if err := k.Load(confmap.Provider(defaults, "."), nil); err != nil {
 		return nil, fmt.Errorf("load defaults: %w", err)
@@ -105,6 +105,12 @@ func Load(cfgPath string) (*Config, error) {
 	var cfg Config
 	if err := k.Unmarshal("", &cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
+	}
+
+	// Explicit env override for DB path (koanf env conversion turns
+	// FYOM_DB_PATH into db.path which doesn't match the db_path struct tag).
+	if envDBPath := os.Getenv("FYOM_DB_PATH"); envDBPath != "" {
+		cfg.Database.DBPath = envDBPath
 	}
 
 	return &cfg, nil

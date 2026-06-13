@@ -23,6 +23,8 @@ tasks:
     desc: "Run Go backend with Air hot-reload"
     cmds:
       - air -c .air.toml
+    env:
+      FYOM_DB_PATH: "{{.BUILD_DIR}}/fyom.db"
 
   dev:web:
     desc: "Run Vite dev server"
@@ -37,7 +39,7 @@ tasks:
   preview:
     desc: "Run Go backend preview"
     cmds:
-      - CGO_ENABLED=0 FYOM_SERVER_HOST=127.0.0.1 go run cmd/fyom/main.go
+      - CGO_ENABLED=0 go run cmd/fyom/main.go --db-path ./build/fyom.db
 
   preview:web:
     desc: "Run Vite preview server"

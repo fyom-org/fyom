@@ -13,17 +13,17 @@ import (
 func main() {
 	logLevel := flag.String("log-level", "info", "log level: debug, info, warn, error")
 	logFormat := flag.String("log-format", "text", "log format: text, json")
-	dataDir := flag.String("data-dir", "", "data directory (default: current directory)")
+	dbPath := flag.String("db-path", "", "path to sqlite database file (default: <binary-dir>/fyom.db)")
 	sidecar := flag.Bool("sidecar", false, "run in sidecar mode (bind to 127.0.0.1:27403)")
 	flag.Parse()
 
 	opts := app.DefaultRunOptions()
 	opts.LogLevel = *logLevel
 	opts.LogFormat = *logFormat
-	opts.DataDir = *dataDir
+	opts.DBPath = *dbPath
 
 	if *sidecar {
-		opts = app.SidecarRunOptions(*dataDir, *logLevel, *logFormat)
+		opts = app.SidecarRunOptions(*dbPath, *logLevel, *logFormat)
 	}
 
 	if err := app.Run(opts); err != nil {

@@ -21,8 +21,12 @@ type DB struct {
 }
 
 // Open initializes a SQLite database, runs migrations, and configures the pool.
-func Open(dataDir string, maxOpen, maxIdle, maxLifetimeSec int) (*DB, error) {
-	dbPath := filepath.Join(dataDir, "fyom.db")
+// dbPath can be a full file path or a directory (in which case fyom.db is appended).
+func Open(dbPath string, maxOpen, maxIdle, maxLifetimeSec int) (*DB, error) {
+	// If dbPath is a directory, append fyom.db
+	if info, err := os.Stat(dbPath); err == nil && info.IsDir() {
+		dbPath = filepath.Join(dbPath, "fyom.db")
+	}
 	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL", dbPath)
 
 	sqlDB, err := sql.Open("sqlite", dsn)
