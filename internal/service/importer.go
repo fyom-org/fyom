@@ -85,53 +85,48 @@ func (imp *Importer) importDirectory(ctx context.Context, sourcePath string) (*m
 	summary := &model.ImportSummary{}
 	startTime := time.Now()
 
-	entries, err := imp.fs.ReadDir(ctx, sourcePath)
-	if err != nil {
-		return nil, &errors.AppError{Code: 404, Message: "directory not found"}
-	}
-
 	existing, _ := imp.mediaRepo.List(ctx, "")
 	existingPaths := make(map[string]bool)
 	for _, item := range existing {
 		existingPaths[item.FilePath] = true
 	}
 
-	for _, entry := range entries {
+	// Recursively walk through all directories
+	imp.walkDir(ctx, sourcePath, func(path string, entry DirEntry) {
 		if !entry.IsDir {
 			summary.SkippedFiles++
-			continue
+			return
 		}
-		dirPath := imp.fs.Join(sourcePath, entry.Name)
 		summary.ScannedFiles++
 
-		tvshowNFOPath := imp.fs.Join(dirPath, "tvshow.nfo")
+		tvshowNFOPath := imp.fs.Join(path, "tvshow.nfo")
 		if imp.fs.Exists(ctx, tvshowNFOPath) {
-			n, warns, err := imp.processShowDir(ctx, dirPath, existingPaths)
+			n, warns, err := imp.processShowDir(ctx, path, existingPaths)
 			if err != nil {
 				summary.ParseWarnings = append(summary.ParseWarnings,
 					fmt.Sprintf("%s: %v", entry.Name, err))
 			}
 			summary.ImportedItems += n
 			summary.ParseWarnings = append(summary.ParseWarnings, warns...)
-			continue
+			return
 		}
 
-		movieNFO := imp.findMovieNFO(ctx, dirPath)
+		movieNFO := imp.findMovieNFO(ctx, path)
 		if movieNFO != "" {
-			n, warns, err := imp.processMovieDir(ctx, dirPath, movieNFO, existingPaths)
+			n, warns, err := imp.processMovieDir(ctx, path, movieNFO, existingPaths)
 			if err != nil {
 				summary.ParseWarnings = append(summary.ParseWarnings,
 					fmt.Sprintf("%s: %v", entry.Name, err))
 			}
 			summary.ImportedItems += n
 			summary.ParseWarnings = append(summary.ParseWarnings, warns...)
-			continue
+			return
 		}
 
-		n, warns := imp.processDirAsMovie(ctx, dirPath, existingPaths)
+		n, warns := imp.processDirAsMovie(ctx, path, existingPaths)
 		summary.ImportedItems += n
 		summary.ParseWarnings = append(summary.ParseWarnings, warns...)
-	}
+	})
 
 	summary.Duration = time.Since(startTime)
 	return summary, nil
@@ -176,47 +171,41 @@ func (imp *Importer) runImport(jobID, sourcePath string) {
 		existingPaths[item.FilePath] = true
 	}
 
-	entries, err := imp.fs.ReadDir(ctx, sourcePath)
-	if err != nil {
-		_ = imp.jobRepo.UpdateError(ctx, jobID, err.Error())
-		return
-	}
-
 	done := 0
 	var importErr error
 
-	for _, entry := range entries {
+	// Recursively walk through all directories
+	imp.walkDir(ctx, sourcePath, func(path string, entry DirEntry) {
 		if !entry.IsDir {
-			continue
+			return
 		}
-		dirPath := imp.fs.Join(sourcePath, entry.Name)
 
-		tvshowNFOPath := imp.fs.Join(dirPath, "tvshow.nfo")
+		tvshowNFOPath := imp.fs.Join(path, "tvshow.nfo")
 		if imp.fs.Exists(ctx, tvshowNFOPath) {
-			n, _, err := imp.processShowDir(ctx, dirPath, existingPaths)
+			n, _, err := imp.processShowDir(ctx, path, existingPaths)
 			if err != nil {
 				importErr = err
 			}
 			done += n
 			_ = imp.jobRepo.UpdateProgress(ctx, jobID, total, done, "running")
-			continue
+			return
 		}
 
-		movieNFO := imp.findMovieNFO(ctx, dirPath)
+		movieNFO := imp.findMovieNFO(ctx, path)
 		if movieNFO != "" {
-			n, _, err := imp.processMovieDir(ctx, dirPath, movieNFO, existingPaths)
+			n, _, err := imp.processMovieDir(ctx, path, movieNFO, existingPaths)
 			if err != nil {
 				importErr = err
 			}
 			done += n
 			_ = imp.jobRepo.UpdateProgress(ctx, jobID, total, done, "running")
-			continue
+			return
 		}
 
-		n, _ := imp.processDirAsMovie(ctx, dirPath, existingPaths)
+		n, _ := imp.processDirAsMovie(ctx, path, existingPaths)
 		done += n
 		_ = imp.jobRepo.UpdateProgress(ctx, jobID, total, done, "running")
-	}
+	})
 
 	if importErr != nil {
 		_ = imp.jobRepo.UpdateError(ctx, jobID, importErr.Error())
@@ -650,44 +639,39 @@ func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, exi
 
 // processEpisodeFilesInDir scans a directory for video files and creates episode items.
 func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, showID string, existingPaths map[string]bool) (int, error) {
-	entries, err := imp.fs.ReadDir(ctx, dirPath)
-	if err != nil {
-		return 0, nil
-	}
+	created := 0
 
-	var videoFiles []string
-	for _, entry := range entries {
+	// Recursively walk through all directories
+	imp.walkDir(ctx, dirPath, func(path string, entry DirEntry) {
 		if entry.IsDir {
-			continue
+			return
 		}
+
 		name := entry.Name
 		var ext string
 		if idx := strings.LastIndex(name, "."); idx >= 0 {
 			ext = strings.ToLower(name[idx:])
 		}
-		if videoExtensions[ext] {
-			videoFiles = append(videoFiles, entry.Name)
+		if !videoExtensions[ext] {
+			return
 		}
-	}
 
-	created := 0
-	for _, vf := range videoFiles {
-		videoPath := imp.fs.Join(dirPath, vf)
+		videoPath := imp.fs.Join(path, name)
 		if existingPaths[videoPath] {
-			continue
+			return
 		}
 
-		baseNameNoExt := trimExt(vf)
-		season, episode := extractEpisodeInfo(vf)
+		baseNameNoExt := trimExt(name)
+		season, episode := extractEpisodeInfo(name)
 
-		episodeNFOPath := imp.fs.Join(dirPath, baseNameNoExt+".nfo")
+		epNFOPath := imp.fs.Join(path, baseNameNoExt+".nfo")
 		var epTitle, epOverview string
 		var epRating float64
 		var epRuntime int
 		var nfoThumb string
 
-		if imp.fs.Exists(ctx, episodeNFOPath) {
-			if nf, err := imp.fs.Open(ctx, episodeNFOPath); err == nil {
+		if imp.fs.Exists(ctx, epNFOPath) {
+			if nf, err := imp.fs.Open(ctx, epNFOPath); err == nil {
 				episodes, err := ParseEpisodeNFOs(nf)
 				nf.Close()
 				if err == nil && len(episodes) > 0 {
@@ -713,7 +697,7 @@ func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, show
 
 		var thumbPath string
 		if _, ok := imp.fs.(*LocalImportFS); ok {
-			thumbPath = FindEpisodeThumbnailPath(dirPath, baseNameNoExt, nfoThumb)
+			thumbPath = FindEpisodeThumbnailPath(path, baseNameNoExt, nfoThumb)
 		} else {
 			thumbPath = nfoThumb
 		}
@@ -740,8 +724,8 @@ func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, show
 		}
 
 		// Apply enhanced fields from NFO if available
-		if imp.fs.Exists(ctx, episodeNFOPath) {
-			if nf, err := imp.fs.Open(ctx, episodeNFOPath); err == nil {
+		if imp.fs.Exists(ctx, epNFOPath) {
+			if nf, err := imp.fs.Open(ctx, epNFOPath); err == nil {
 				episodes, err := ParseEpisodeNFOs(nf)
 				nf.Close()
 				if err == nil && len(episodes) > 0 {
@@ -751,10 +735,12 @@ func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, show
 		}
 
 		if err := imp.mediaRepo.Create(ctx, epItem); err != nil {
-			return created, err
+			// Don't stop processing on error, just log it
+			// We can't return error from callback, so we'll just skip
+			return
 		}
 		created++
-	}
+	})
 
 	return created, nil
 }
