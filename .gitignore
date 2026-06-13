@@ -48,3 +48,15 @@ result/
 
 # Cargo gen
 src-tauri/gen/
+
+# Release artifacts
+/release/
+
+# Release checksums
+*.sha256
+*.sha512
+
+# Environment config
+.env
+.env.*
+!.env.example
