@@ -27,7 +27,7 @@
         libsoup = if pkgs ? libsoup_3 then pkgs.libsoup_3 else pkgs.libsoup;
 
         commonPackages = with pkgs; [
-          # -- Rust Toolchain --
+          # Rust
           rustc
           cargo
           rust-analyzer
@@ -35,59 +35,67 @@
           clippy
           cargo-tauri
 
-          # -- Native build tooling --
+          # Native tooling
           pkg-config
           llvmPackages.libclang
+          gcc
+          cmake
+          ninja
 
-          # -- Frontend Tooling --
+          # Frontend
           nodejs
           pnpm
           typescript
           vite
 
-          # -- Go Toolchain --
+          # Go
           go
           go-task
           golangci-lint
           gnumake
 
-          # -- Database --
+          # Database
           sqlite
           dbmate
 
-          # -- Utilities --
+          # Utilities
           git
           jq
           python3
-          cmake
-          ninja
         ];
 
-        linuxPackages = lib.optionals pkgs.stdenv.isLinux (
-          with pkgs;
-          [
-            gcc
+        linuxRuntimeLibs = with pkgs; [
+          # GTK / GNOME
+          gtk3
+          glib
+          gdk-pixbuf
+          pango
+          cairo
 
-            # -- Tauri / Linux System Dependencies --
-            webkitgtk
-            libsoup
-            glib
-            gtk3
-            gdk-pixbuf
-            pango
-            cairo
-            openssl
-            dbus
-            alsa-lib
-            fontconfig
-            libsecret
-            libayatana-appindicator
+          # Tauri
+          webkitgtk
+          libsoup
+          openssl
+          dbus
+          alsa-lib
+          fontconfig
+          libsecret
+          libayatana-appindicator
 
-            # -- NixOS Desktop Runtime Fixes --
-            gsettings-desktop-schemas
-            adwaita-icon-theme
-          ]
-        );
+          # X11 / Wayland compatibility
+          libX11
+          libXcursor
+          libXrandr
+          libXi
+          libXtst
+          libxkbcommon
+
+          # Desktop integration
+          gsettings-desktop-schemas
+          adwaita-icon-theme
+        ];
+
+        linuxPackages = lib.optionals pkgs.stdenv.isLinux linuxRuntimeLibs;
 
         darwinPackages = lib.optionals pkgs.stdenv.isDarwin (
           with pkgs;
@@ -104,17 +112,17 @@
         );
 
         linuxShellHook = lib.optionalString pkgs.stdenv.isLinux ''
-          # Fix missing GTK/WebKit schemas and themes on NixOS.
-          export XDG_DATA_DIRS=${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.adwaita-icon-theme}/share:$XDG_DATA_DIRS
+          export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
 
-          echo "🚀 fyom Linux dev shell loaded."
-          echo "⚙️  Run 'task dev:desktop' for development"
-          echo "⚙️  Run 'task build:desktop' for building"
+          export LD_LIBRARY_PATH="${lib.makeLibraryPath linuxRuntimeLibs}:$LD_LIBRARY_PATH"
+
+          export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.adwaita-icon-theme}/share:$XDG_DATA_DIRS"
+
+          export GIO_EXTRA_MODULES="${pkgs.dconf.lib}/lib/gio/modules"
         '';
 
         darwinShellHook = lib.optionalString pkgs.stdenv.isDarwin ''
-          echo "🚀 fyom macOS dev shell loaded."
-          echo "⚙️  Run 'task build:desktop' for building"
+          export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
         '';
 
       in
@@ -122,9 +130,11 @@
         devShells.default = pkgs.mkShell {
           packages = commonPackages ++ linuxPackages ++ darwinPackages;
 
-          env = {
-            LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-          };
+          nativeBuildInputs = lib.optionals pkgs.stdenv.isLinux [
+            pkgs.pkg-config
+          ];
+
+          buildInputs = lib.optionals pkgs.stdenv.isLinux linuxRuntimeLibs;
 
           shellHook = linuxShellHook + darwinShellHook;
         };
