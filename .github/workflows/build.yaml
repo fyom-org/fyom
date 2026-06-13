@@ -1,0 +1,198 @@
+name: desktop-build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  build-linux:
+    name: build-linux-nix
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v14
+
+      - name: Show Nix version
+        run: nix --version
+
+      - name: Build desktop app in Nix dev shell
+        run: nix develop --command task build:desktop
+
+      - name: Collect Linux assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p release-assets
+
+          find src-tauri/target/release/bundle -type f \
+            \( -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" -o -name "*.tar.gz" \) \
+            -exec cp {} release-assets/ \;
+
+          echo "Collected Linux assets:"
+          ls -lah release-assets
+
+          if [ -z "$(ls -A release-assets)" ]; then
+            echo "No Linux release assets found"
+            exit 1
+          fi
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-linux
+          path: release-assets/*
+          if-no-files-found: error
+
+  build-macos:
+    name: build-macos-native
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Task
+        uses: go-task/setup-task@v1
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build desktop app on macOS runner
+        run: task build:desktop
+
+      - name: Collect macOS assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p release-assets
+
+          if [ -d "src-tauri/target/release/bundle" ]; then
+            find src-tauri/target/release/bundle -type f \
+              \( -name "*.dmg" -o -name "*.app.tar.gz" -o -name "*.tar.gz" -o -name "*.sig" \) \
+              -exec cp {} release-assets/ \;
+          fi
+
+          if [ -f "src-tauri/target/release/fyom" ]; then
+            cp src-tauri/target/release/fyom release-assets/
+          fi
+
+          echo "Collected macOS assets:"
+          ls -lah release-assets || true
+
+          if [ -z "$(ls -A release-assets 2>/dev/null || true)" ]; then
+            echo "No macOS release assets found"
+            exit 1
+          fi
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-macos
+          path: release-assets/*
+          if-no-files-found: error
+
+  build-windows:
+    name: build-windows-native
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Task
+        uses: go-task/setup-task@v1
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build desktop app on Windows runner
+        shell: pwsh
+        run: task build:desktop
+
+      - name: Collect Windows assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+
+          $bundleFiles = @()
+          if (Test-Path "src-tauri/target/release/bundle") {
+            $bundleFiles = Get-ChildItem -Path src-tauri/target/release/bundle -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Extension -in ".msi", ".exe" }
+          }
+
+          if ($bundleFiles.Count -gt 0) {
+            $bundleFiles | Copy-Item -Destination release-assets
+            Write-Host "Collected bundled Windows artifacts."
+          }
+          elseif (Test-Path "src-tauri/target/release/fyom.exe") {
+            Copy-Item "src-tauri/target/release/fyom.exe" -Destination release-assets
+            Write-Host "No installer bundle found; collected raw fyom.exe as fallback artifact."
+          }
+          else {
+            Write-Error "No Windows desktop artifact found."
+            exit 1
+          }
+
+          Write-Host "Collected Windows assets:"
+          Get-ChildItem release-assets
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-windows
+          path: release-assets/*
+          if-no-files-found: error
