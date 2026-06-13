@@ -1,11 +1,10 @@
-name: build desktop
+name: desktop-build
 
 on:
   workflow_dispatch:
   push:
     branches:
       - main
-      - christina/main
   pull_request:
 
 permissions:
@@ -31,8 +30,7 @@ jobs:
         run: nix --version
 
       - name: Build desktop app in Nix dev shell
-        run: |
-          nix develop --command task build:desktop
+        run: nix develop --command task build:desktop
         env:
           VERSION: ${{ github.ref_name }}
           COMMIT: ${{ github.sha }}
@@ -89,6 +87,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -102,6 +101,7 @@ jobs:
         uses: go-task/setup-task@v1
 
       - name: Install frontend dependencies
+        working-directory: web
         run: pnpm install --frozen-lockfile
 
       - name: Build desktop app on macOS runner
@@ -162,6 +162,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -176,6 +177,7 @@ jobs:
 
       - name: Install frontend dependencies
         shell: pwsh
+        working-directory: web
         run: pnpm install --frozen-lockfile
 
       - name: Build desktop app on Windows runner
