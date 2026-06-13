@@ -56,7 +56,7 @@ func setupIntegrationRouter(t *testing.T) (http.Handler, *repository.DB, func())
 	t.Helper()
 
 	tmpDir := t.TempDir()
-	db, err := repository.Open(tmpDir, 5, 2, 60)
+	db, err := repository.Open(filepath.Join(tmpDir, "fyom.db"), 5, 2, 60)
 	require.NoError(t, err)
 
 	cfg := &config.Config{

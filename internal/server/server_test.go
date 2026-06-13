@@ -3,6 +3,7 @@ package server
 import (
 	"log/slog"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 
 func TestServer_Shutdown_Idempotent(t *testing.T) {
 	tmpDir := t.TempDir()
-	db, err := repository.Open(tmpDir, 5, 2, 60)
+	db, err := repository.Open(filepath.Join(tmpDir, "fyom.db"), 5, 2, 60)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -54,7 +55,7 @@ func TestServer_Shutdown_Idempotent(t *testing.T) {
 
 func TestServer_ShutdownStopsScheduler(t *testing.T) {
 	tmpDir := t.TempDir()
-	db, err := repository.Open(tmpDir, 5, 2, 60)
+	db, err := repository.Open(filepath.Join(tmpDir, "fyom.db"), 5, 2, 60)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -97,7 +98,7 @@ func TestServer_ShutdownStopsScheduler(t *testing.T) {
 
 func TestServer_WaitForImports(t *testing.T) {
 	tmpDir := t.TempDir()
-	db, err := repository.Open(tmpDir, 5, 2, 60)
+	db, err := repository.Open(filepath.Join(tmpDir, "fyom.db"), 5, 2, 60)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -143,7 +144,7 @@ func TestServer_WaitForImports(t *testing.T) {
 
 func TestServer_WaitForImports_Timeout(t *testing.T) {
 	tmpDir := t.TempDir()
-	db, err := repository.Open(tmpDir, 5, 2, 60)
+	db, err := repository.Open(filepath.Join(tmpDir, "fyom.db"), 5, 2, 60)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -185,7 +186,7 @@ func TestServer_WaitForImports_Timeout(t *testing.T) {
 
 func TestServer_HealthEndpoints(t *testing.T) {
 	tmpDir := t.TempDir()
-	db, err := repository.Open(tmpDir, 5, 2, 60)
+	db, err := repository.Open(filepath.Join(tmpDir, "fyom.db"), 5, 2, 60)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 

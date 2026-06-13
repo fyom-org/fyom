@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -37,7 +38,7 @@ func setupTestRouter(t *testing.T) http.Handler {
 	t.Helper()
 
 	tmpDir := t.TempDir()
-	db, err := repository.Open(tmpDir, 5, 2, 60)
+	db, err := repository.Open(filepath.Join(tmpDir, "fyom.db"), 5, 2, 60)
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)
 	}

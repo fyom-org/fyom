@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	stderrors "errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/fyom/fyom/internal/repository"
@@ -14,7 +15,7 @@ import (
 func setupAuthTest(t *testing.T) (*AuthService, func()) {
 	t.Helper()
 	tmpDir := t.TempDir()
-	db, err := repository.Open(tmpDir, 5, 2, 60)
+	db, err := repository.Open(filepath.Join(tmpDir, "fyom.db"), 5, 2, 60)
 	require.NoError(t, err)
 
 	userRepo := repository.NewUserRepository(db)

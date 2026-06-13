@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,7 +18,8 @@ import (
 func setupMigrationTestDB(t *testing.T) *DB {
 	t.Helper()
 	tmpDir := t.TempDir()
-	db, err := Open(tmpDir, 5, 2, 60)
+	dbPath := filepath.Join(tmpDir, "fyom.db")
+	db, err := Open(dbPath, 5, 2, 60)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = db.Close()
@@ -136,7 +138,7 @@ func TestMigration_PrePhase8ToLatest(t *testing.T) {
 
 	// Now open via the normal path — this should run remaining migrations (0012-0015)
 	sqlDB.Close()
-	db, err := Open(tmpDir, 5, 2, 60)
+	db, err := Open(dbPath, 5, 2, 60)
 	require.NoError(t, err)
 	defer db.Close()
 

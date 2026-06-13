@@ -107,7 +107,7 @@ func buildFixture_library(t *testing.T) string {
 func openImporterTestDB(t *testing.T) *repository.DB {
 	t.Helper()
 	tmpDir := t.TempDir()
-	db, err := repository.Open(tmpDir, 5, 2, 60)
+	db, err := repository.Open(filepath.Join(tmpDir, "fyom.db"), 5, 2, 60)
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)
 	}

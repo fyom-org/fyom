@@ -15,10 +15,7 @@ func TestLoad_Defaults(t *testing.T) {
 	defer func() { require.NoError(t, os.Chdir(origDir)) }()
 
 	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load() error: %v", err)
-	}
-
+	require.NoError(t, err)
 	require.Equal(t, "0.0.0.0", cfg.Server.Host)
 	require.Equal(t, 8080, cfg.Server.Port)
 	require.Equal(t, "", cfg.Database.DBPath) // empty = use default-binary-dir

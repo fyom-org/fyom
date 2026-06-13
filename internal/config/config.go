@@ -107,8 +107,10 @@ func Load(cfgPath string) (*Config, error) {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 
-	// Explicit env override for DB path (koanf env conversion turns
-	// FYOM_DB_PATH into db.path which doesn't match the db_path struct tag).
+	// koanf's env provider converts FYOM_DATABASE_DB_PATH to "database.db.path"
+	// (all underscores become dots), which doesn't match the "db_path" struct tag.
+	// Apply FYOM_DB_PATH as an explicit env override after koanf unmarshaling.
+	// Flag-level overrides are applied later in app.Run.
 	if envDBPath := os.Getenv("FYOM_DB_PATH"); envDBPath != "" {
 		cfg.Database.DBPath = envDBPath
 	}

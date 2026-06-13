@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/fyom/fyom/internal/model"
@@ -13,7 +14,8 @@ func setupTestDB(t *testing.T) *DB {
 	t.Helper()
 	tmpDir := t.TempDir()
 
-	db, err := Open(tmpDir, 5, 2, 60)
+	dbPath := filepath.Join(tmpDir, "fyom.db")
+	db, err := Open(dbPath, 5, 2, 60)
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)
 	}
