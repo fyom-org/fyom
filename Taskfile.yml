@@ -81,6 +81,14 @@ tasks:
     cmds:
       - cd src-tauri && cargo tauri build
 
+  build:tarball:
+    desc: "Build Linux tar.gz artifact"
+    cmds:
+      - mkdir -p release/fyom-linux-x86_64
+      - cp src-tauri/target/release/fyom release/fyom-linux-x86_64/
+      - cp README.md release/fyom-linux-x86_64/ || true
+      - tar -czf release/fyom-linux-x86_64.tar.gz -C release fyom-linux-x86_64
+
   # ================================================
   # Test
   # ================================================
