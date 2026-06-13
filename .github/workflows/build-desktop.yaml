@@ -1,10 +1,11 @@
-name: desktop-build
+name: build desktop
 
 on:
   workflow_dispatch:
   push:
     branches:
       - main
+      - christina/main
   pull_request:
 
 permissions:
@@ -30,7 +31,12 @@ jobs:
         run: nix --version
 
       - name: Build desktop app in Nix dev shell
-        run: nix develop --command task build:desktop
+        run: |
+          nix develop --command task build:desktop
+        env:
+          VERSION: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+          BUILD_TIME: ${{ github.run_id }}
 
       - name: Collect Linux assets
         shell: bash
@@ -39,14 +45,20 @@ jobs:
 
           mkdir -p release-assets
 
-          find src-tauri/target/release/bundle -type f \
-            \( -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" -o -name "*.tar.gz" \) \
-            -exec cp {} release-assets/ \;
+          if [ -d "src-tauri/target/release/bundle" ]; then
+            find src-tauri/target/release/bundle -type f \
+              \( -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" -o -name "*.tar.gz" \) \
+              -exec cp {} release-assets/ \;
+          fi
+
+          if [ -f "src-tauri/target/release/fyom" ] && [ -z "$(ls -A release-assets 2>/dev/null || true)" ]; then
+            cp src-tauri/target/release/fyom release-assets/
+          fi
 
           echo "Collected Linux assets:"
-          ls -lah release-assets
+          ls -lah release-assets || true
 
-          if [ -z "$(ls -A release-assets)" ]; then
+          if [ -z "$(ls -A release-assets 2>/dev/null || true)" ]; then
             echo "No Linux release assets found"
             exit 1
           fi
@@ -66,16 +78,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -93,6 +106,10 @@ jobs:
 
       - name: Build desktop app on macOS runner
         run: task build:desktop
+        env:
+          VERSION: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+          BUILD_TIME: ${{ github.run_id }}
 
       - name: Collect macOS assets
         shell: bash
@@ -107,7 +124,7 @@ jobs:
               -exec cp {} release-assets/ \;
           fi
 
-          if [ -f "src-tauri/target/release/fyom" ]; then
+          if [ -f "src-tauri/target/release/fyom" ] && [ -z "$(ls -A release-assets 2>/dev/null || true)" ]; then
             cp src-tauri/target/release/fyom release-assets/
           fi
 
@@ -134,16 +151,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -157,11 +175,16 @@ jobs:
         uses: go-task/setup-task@v1
 
       - name: Install frontend dependencies
+        shell: pwsh
         run: pnpm install --frozen-lockfile
 
       - name: Build desktop app on Windows runner
         shell: pwsh
         run: task build:desktop
+        env:
+          VERSION: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+          BUILD_TIME: ${{ github.run_id }}
 
       - name: Collect Windows assets
         shell: pwsh
