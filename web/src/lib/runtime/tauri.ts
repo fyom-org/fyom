@@ -17,12 +17,6 @@ let unlistenError: (() => void) | null = null;
 // Track if already initialized
 let initialized = false;
 
-// Invoke function from Tauri API
-// In Tauri v2, invoke is available from @tauri-apps/api
-// We use require to avoid TypeScript module resolution issues
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { invoke } = require('@tauri-apps/api');
-
 /**
  * Check if we are running in a Tauri environment.
  */
@@ -32,9 +26,12 @@ export function isTauriEnvironment(): boolean {
 
 /**
  * Get the sidecar status from Tauri backend using invoke.
+ * Uses dynamic import to avoid TypeScript module resolution issues.
  */
 async function getSidecarStatus(): Promise<{ status: string; api_base_url?: string } | null> {
   try {
+    // Dynamic import to get invoke function
+    const { invoke } = await import('@tauri-apps/api');
     const result = (await invoke('get_sidecar_status')) as {
       status: string;
       api_base_url?: string;
