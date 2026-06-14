@@ -1,32 +1,141 @@
 //! Sidecar lifecycle management
 //!
-//! Handles spawning, readiness detection, and graceful shutdown of the Go sidecar process.
+//! Handles spawning, readiness detection, long-running stdout/stderr draining,
+//! readiness confirmation, and graceful shutdown of the Go sidecar process.
 
-use std::path::PathBuf;
-use std::process::Stdio;
+use std::path::{Path, PathBuf};
+use std::process::{ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Result, anyhow, bail};
+use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex as AsyncMutex, oneshot};
 
-use crate::{SIDECAR_ERROR_EVENT, SIDECAR_READY_EVENT, SIDECAR_STARTUP_TIMEOUT_SECS};
+use crate::{AppState, SIDECAR_ERROR_EVENT, SIDECAR_READY_EVENT, SIDECAR_STARTUP_TIMEOUT_SECS};
 
-/// The expected readiness token emitted by the Go sidecar on stdout.
 const READY_TOKEN: &str = "FYOM_READY";
 
-/// Maximum number of /readyz retry attempts
-const READYZ_MAX_RETRIES: u32 = 3;
+const READYZ_CONNECT_TIMEOUT_MS: u64 = 300;
+const READYZ_REQUEST_TIMEOUT_SECS: u64 = 1;
+const READYZ_RETRY_DELAY_MS: u64 = 200;
+const READYZ_INITIAL_GRACE_MS: u64 = 200;
 
-/// Delay between /readyz retry attempts
-const READYZ_RETRY_DELAY_MS: u64 = 100;
-
-/// Parse a readiness line from the sidecar stdout.
+/// Global runtime slot for the currently running sidecar.
 ///
-/// Expected format: `FYOM_READY http://127.0.0.1:27403`
-/// Returns the API base URL if the line is valid.
+/// This keeps the running sidecar handle alive after `bootstrap_sidecar()`
+/// returns successfully, without requiring an immediate wider refactor of
+/// `AppState`.
+static RUNNING_SIDECAR: OnceLock<AsyncMutex<Option<RunningSidecar>>> = OnceLock::new();
+
+fn runtime_slot() -> &'static AsyncMutex<Option<RunningSidecar>> {
+    RUNNING_SIDECAR.get_or_init(|| AsyncMutex::new(None))
+}
+
+fn should_warn_readyz_retry(attempt: u32) -> bool {
+    attempt == 1 || attempt == 5 || attempt % 10 == 0
+}
+
+/// Runtime handle for the running sidecar process.
+struct RunningSidecar {
+    pid: u32,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    stdout_task: JoinHandle<()>,
+    stderr_task: JoinHandle<()>,
+    monitor_task: JoinHandle<()>,
+    stop_requested: Arc<AtomicBool>,
+}
+
+impl RunningSidecar {
+    fn new(
+        pid: u32,
+        shutdown_tx: oneshot::Sender<()>,
+        stdout_task: JoinHandle<()>,
+        stderr_task: JoinHandle<()>,
+        monitor_task: JoinHandle<()>,
+        stop_requested: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            pid,
+            shutdown_tx: Some(shutdown_tx),
+            stdout_task,
+            stderr_task,
+            monitor_task,
+            stop_requested,
+        }
+    }
+
+    async fn shutdown(mut self, reason: &str) {
+        tracing::info!(
+            "Shutting down sidecar runtime, pid={}, reason={}",
+            self.pid,
+            reason
+        );
+
+        self.stop_requested.store(true, Ordering::SeqCst);
+
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+
+        await_task("monitor", &mut self.monitor_task).await;
+        await_task("stdout", &mut self.stdout_task).await;
+        await_task("stderr", &mut self.stderr_task).await;
+    }
+}
+
+async fn await_task(name: &str, handle: &mut JoinHandle<()>) {
+    match tokio::time::timeout(Duration::from_secs(3), &mut *handle).await {
+        Ok(join_result) => {
+            if let Err(e) = join_result {
+                tracing::warn!("Sidecar {} task join failed: {}", name, e);
+            }
+        }
+        Err(_) => {
+            tracing::warn!("Timed out waiting for sidecar {} task to finish", name);
+            handle.abort();
+        }
+    }
+}
+
+#[derive(Debug)]
+enum MonitorOutcome {
+    Exited(ExitStatus),
+    WaitError(String),
+    KilledByRequest(Option<ExitStatus>),
+}
+
+fn format_exit_status(status: &ExitStatus) -> String {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+
+        if let Some(code) = status.code() {
+            return format!("exit code {}", code);
+        }
+        if let Some(sig) = status.signal() {
+            return format!("signal {}", sig);
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        if let Some(code) = status.code() {
+            return format!("exit code {}", code);
+        }
+    }
+
+    format!("{:?}", status)
+}
+
+/// Parse a readiness line from sidecar stdout.
+///
+/// Expected format:
+/// `FYOM_READY http://127.0.0.1:27403`
 pub fn parse_ready_line(line: &str) -> Option<String> {
     let line = line.trim();
     if let Some(rest) = line.strip_prefix(READY_TOKEN) {
@@ -42,24 +151,21 @@ pub fn parse_ready_line(line: &str) -> Option<String> {
 ///
 /// Search order:
 /// 1. `FYOM_BIN` environment variable
-/// 2. `build/fyom` relative to the project root (Cargo workspace root)
+/// 2. common build paths relative to the Tauri project root
 /// 3. `fyom` on PATH
 fn find_sidecar_binary() -> Result<PathBuf> {
-    // 1. Explicit env override
     if let Ok(bin) = std::env::var("FYOM_BIN") {
         let path = PathBuf::from(&bin);
         if path.exists() {
             return Ok(path);
         }
-        anyhow::bail!("FYOM_BIN={} not found", bin);
+        bail!("FYOM_BIN={} not found", bin);
     }
 
-    // 2. Check common build locations relative to the Tauri project root
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
 
-    // src-tauri -> project root -> build/fyom
     let candidates = [
         manifest_dir.join("../../build/fyom"),
         manifest_dir.join("../build/fyom"),
@@ -72,7 +178,6 @@ fn find_sidecar_binary() -> Result<PathBuf> {
         }
     }
 
-    // 3. Fall back to PATH
     if let Ok(output) = std::process::Command::new("which").arg("fyom").output() {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -82,80 +187,275 @@ fn find_sidecar_binary() -> Result<PathBuf> {
         }
     }
 
-    anyhow::bail!("fyom sidecar binary not found. Build it with: task sidecar (or set FYOM_BIN)")
+    bail!("fyom sidecar binary not found. Build it with: task sidecar (or set FYOM_BIN)")
 }
 
-/// Confirm sidecar readiness by calling /readyz with bounded retries.
-async fn confirm_readyz_with_retries(api_url: &str) -> Result<()> {
+async fn take_running_sidecar() -> Option<RunningSidecar> {
+    runtime_slot().lock().await.take()
+}
+
+async fn install_running_sidecar(runtime: RunningSidecar) {
+    let mut slot = runtime_slot().lock().await;
+    if let Some(existing) = slot.take() {
+        tracing::warn!(
+            "Replacing existing sidecar runtime handle for pid={}; shutting old one down first",
+            existing.pid
+        );
+        drop(slot);
+        existing.shutdown("replaced by new runtime").await;
+        slot = runtime_slot().lock().await;
+    }
+    *slot = Some(runtime);
+}
+
+fn log_stream_eof(stream_name: &str, ready_seen: bool, stop_requested: bool) {
+    if stop_requested {
+        tracing::info!(
+            "[sidecar-drain] Sidecar {} closed after shutdown",
+            stream_name
+        );
+    } else if ready_seen {
+        tracing::warn!(
+            "[sidecar-drain] Sidecar {} closed after readiness",
+            stream_name
+        );
+    } else {
+        tracing::error!(
+            "[sidecar-drain] Sidecar {} closed before readiness",
+            stream_name
+        );
+    }
+}
+
+fn spawn_stdout_drain_task(
+    stdout: tokio::process::ChildStdout,
+    ready_tx: oneshot::Sender<String>,
+    ready_seen: Arc<AtomicBool>,
+    stop_requested: Arc<AtomicBool>,
+) -> JoinHandle<()> {
+    tauri::async_runtime::spawn(async move {
+        tracing::info!("[sidecar-drain] stdout drain task started");
+
+        let reader = BufReader::new(stdout);
+        let mut lines = reader.lines();
+        let mut ready_tx = Some(ready_tx);
+
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    tracing::debug!(target: "sidecar", "[stdout] {}", line);
+
+                    if let Some(api_url) = parse_ready_line(&line) {
+                        if ready_seen.swap(true, Ordering::SeqCst) {
+                            tracing::debug!(
+                                "[sidecar-drain] Duplicate FYOM_READY ignored: {}",
+                                api_url
+                            );
+                            continue;
+                        }
+
+                        tracing::info!("[sidecar-drain] FYOM_READY received: {}", api_url);
+
+                        if let Some(tx) = ready_tx.take() {
+                            let _ = tx.send(api_url);
+                        }
+
+                        continue;
+                    }
+                }
+                Ok(None) => {
+                    let ready = ready_seen.load(Ordering::SeqCst);
+                    let stop = stop_requested.load(Ordering::SeqCst);
+                    log_stream_eof("stdout", ready, stop);
+                    break;
+                }
+                Err(e) => {
+                    tracing::error!("[sidecar-drain] Error reading sidecar stdout: {}", e);
+                    break;
+                }
+            }
+        }
+
+        tracing::info!("[sidecar-drain] stdout drain task ended");
+    })
+}
+
+fn spawn_stderr_drain_task(
+    stderr: tokio::process::ChildStderr,
+    ready_seen: Arc<AtomicBool>,
+    stop_requested: Arc<AtomicBool>,
+) -> JoinHandle<()> {
+    tauri::async_runtime::spawn(async move {
+        tracing::info!("[sidecar-drain] stderr drain task started");
+
+        let reader = BufReader::new(stderr);
+        let mut lines = reader.lines();
+
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    tracing::info!(target: "sidecar", "[stderr] {}", line);
+                }
+                Ok(None) => {
+                    let ready = ready_seen.load(Ordering::SeqCst);
+                    let stop = stop_requested.load(Ordering::SeqCst);
+                    log_stream_eof("stderr", ready, stop);
+                    break;
+                }
+                Err(e) => {
+                    tracing::error!("[sidecar-drain] Error reading sidecar stderr: {}", e);
+                    break;
+                }
+            }
+        }
+
+        tracing::info!("[sidecar-drain] stderr drain task ended");
+    })
+}
+
+fn spawn_process_monitor_task(
+    mut child: tokio::process::Child,
+    mut shutdown_rx: oneshot::Receiver<()>,
+    exit_tx: oneshot::Sender<MonitorOutcome>,
+    stop_requested: Arc<AtomicBool>,
+) -> JoinHandle<()> {
+    tauri::async_runtime::spawn(async move {
+        tracing::info!("[sidecar-drain] process monitor task started");
+
+        let outcome = tokio::select! {
+            status = child.wait() => {
+                match status {
+                    Ok(status) => {
+                        if status.success() {
+                            tracing::info!(
+                                "[sidecar-drain] Sidecar exited normally: {}",
+                                format_exit_status(&status)
+                            );
+                        } else {
+                            tracing::warn!(
+                                "[sidecar-drain] Sidecar exited with non-zero status: {}",
+                                format_exit_status(&status)
+                            );
+                        }
+                        MonitorOutcome::Exited(status)
+                    }
+                    Err(e) => {
+                        tracing::error!("[sidecar-drain] Sidecar wait error: {}", e);
+                        MonitorOutcome::WaitError(e.to_string())
+                    }
+                }
+            }
+            signal = &mut shutdown_rx => {
+                match signal {
+                    Ok(()) => {
+                        stop_requested.store(true, Ordering::SeqCst);
+                        tracing::info!("[sidecar-drain] Explicit shutdown signal received, killing sidecar");
+
+                        if let Err(e) = child.kill().await {
+                            tracing::warn!("[sidecar-drain] Failed to kill sidecar: {}", e);
+                        }
+
+                        match child.wait().await {
+                            Ok(status) => {
+                                tracing::info!(
+                                    "[sidecar-drain] Sidecar terminated after shutdown request: {}",
+                                    format_exit_status(&status)
+                                );
+                                MonitorOutcome::KilledByRequest(Some(status))
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "[sidecar-drain] Sidecar kill issued, but wait failed: {}",
+                                    e
+                                );
+                                MonitorOutcome::WaitError(e.to_string())
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        tracing::debug!(
+                            "[sidecar-drain] Shutdown sender dropped without explicit signal; monitor will keep waiting for natural exit"
+                        );
+
+                        match child.wait().await {
+                            Ok(status) => {
+                                if status.success() {
+                                    tracing::info!(
+                                        "[sidecar-drain] Sidecar exited normally after shutdown sender drop: {}",
+                                        format_exit_status(&status)
+                                    );
+                                } else {
+                                    tracing::warn!(
+                                        "[sidecar-drain] Sidecar exited with non-zero status after shutdown sender drop: {}",
+                                        format_exit_status(&status)
+                                    );
+                                }
+                                MonitorOutcome::Exited(status)
+                            }
+                            Err(e) => {
+                                tracing::error!("[sidecar-drain] Sidecar wait error: {}", e);
+                                MonitorOutcome::WaitError(e.to_string())
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        let _ = exit_tx.send(outcome);
+        tracing::info!("[sidecar-drain] process monitor task ended");
+    })
+}
+
+async fn confirm_readyz_once(api_url: &str) -> Result<()> {
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
+        .connect_timeout(Duration::from_millis(READYZ_CONNECT_TIMEOUT_MS))
+        .timeout(Duration::from_secs(READYZ_REQUEST_TIMEOUT_SECS))
         .build()?;
 
     let url = format!("{}/readyz", api_url);
-
-    for attempt in 1..=READYZ_MAX_RETRIES {
-        match client.get(&url).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                tracing::info!(
-                    "/readyz confirmed OK (attempt {}/{})",
-                    attempt,
-                    READYZ_MAX_RETRIES
-                );
-                return Ok(());
-            }
-            Ok(resp) => {
-                tracing::warn!(
-                    "/readyz returned status: {} (attempt {}/{})",
-                    resp.status(),
-                    attempt,
-                    READYZ_MAX_RETRIES
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "/readyz request failed: {} (attempt {}/{})",
-                    e,
-                    attempt,
-                    READYZ_MAX_RETRIES
-                );
-            }
-        }
-
-        if attempt < READYZ_MAX_RETRIES {
-            tokio::time::sleep(Duration::from_millis(READYZ_RETRY_DELAY_MS)).await;
-        }
+    let resp = client.get(&url).send().await?;
+    if resp.status().is_success() {
+        return Ok(());
     }
 
-    // All retries exhausted
-    anyhow::bail!(
-        "/readyz confirmation failed after {} attempts",
-        READYZ_MAX_RETRIES
-    )
+    bail!("/readyz returned unexpected status {}", resp.status())
+}
+
+async fn cleanup_failed_bootstrap(runtime: RunningSidecar, reason: &str) {
+    tracing::warn!("Cleaning up failed sidecar bootstrap: {}", reason);
+    runtime.shutdown(reason).await;
 }
 
 /// Bootstrap the Go sidecar process.
 ///
-/// Spawns the sidecar, starts background drain tasks, waits for FYOM_READY signal,
-/// confirms readiness via /readyz, and returns when sidecar is ready.
-/// The main window should remain hidden until this succeeds.
-pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Result<()> {
+/// Success path:
+/// 1. spawn sidecar
+/// 2. start long-running stdout/stderr drain tasks
+/// 3. wait for first FYOM_READY
+/// 4. confirm /readyz within the startup timeout budget
+/// 5. store runtime handle globally
+/// 6. emit ready event and return success
+pub async fn bootstrap_sidecar(app: &AppHandle, state: &AppState) -> Result<()> {
     let sidecar_state = &state.sidecar_state;
     sidecar_state.set_starting();
 
-    let binary_path = find_sidecar_binary()
-        .map_err(|e| anyhow::anyhow!("Failed to locate sidecar binary: {}", e))?;
+    if let Some(existing) = take_running_sidecar().await {
+        tracing::warn!(
+            "A sidecar runtime is already installed (pid={}); shutting it down before restarting",
+            existing.pid
+        );
+        existing.shutdown("restart before bootstrap").await;
+    }
 
-    // Use the desktop DB path resolved by the main app in lib.rs.
+    let binary_path =
+        find_sidecar_binary().map_err(|e| anyhow!("Failed to locate sidecar binary: {}", e))?;
+
     let db_path = PathBuf::from(state.desktop_db_path.as_str());
+    let app_exe_dir = db_path.parent().unwrap_or(Path::new(""));
 
     tracing::info!("Desktop sidecar starting");
-    tracing::info!(
-        "  app_exe_dir: {}",
-        db_path
-            .parent()
-            .unwrap_or(std::path::Path::new(""))
-            .display()
-    );
+    tracing::info!("  app_exe_dir: {}", app_exe_dir.display());
     tracing::info!("  db_path:     {}", db_path.display());
     tracing::info!("  sidecar_bin: {}", binary_path.display());
     tracing::info!(
@@ -163,7 +463,6 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
         db_path.display()
     );
 
-    // Spawn the sidecar process
     let mut child = Command::new(&binary_path)
         .arg("--sidecar")
         .arg("--db-path")
@@ -174,188 +473,211 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| {
-            let msg = format!("Failed to spawn sidecar: {}", e);
-            tracing::error!("{}", msg);
-            anyhow::anyhow!("{}", msg)
-        })?;
+        .map_err(|e| anyhow!("Failed to spawn sidecar: {}", e))?;
 
     let child_id = child.id().unwrap_or(0);
     sidecar_state.set_child_pid(child_id);
     tracing::info!("Sidecar spawned, pid={}", child_id);
 
-    // Take stdout and stderr handles
     let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| anyhow::anyhow!("Failed to capture sidecar stdout"))?;
+        .ok_or_else(|| anyhow!("Failed to capture sidecar stdout"))?;
     let stderr = child
         .stderr
         .take()
-        .ok_or_else(|| anyhow::anyhow!("Failed to capture sidecar stderr"))?;
+        .ok_or_else(|| anyhow!("Failed to capture sidecar stderr"))?;
 
-    // Create channel for readiness notification
-    let (ready_tx, mut ready_rx) = mpsc::channel::<String>(1);
+    let ready_seen = Arc::new(AtomicBool::new(false));
+    let stop_requested = Arc::new(AtomicBool::new(false));
 
-    // Create channel for kill signal
-    let (kill_tx, mut kill_rx) = mpsc::channel::<()>(1);
+    let (ready_tx, mut ready_rx) = oneshot::channel::<String>();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let (exit_tx, mut exit_rx) = oneshot::channel::<MonitorOutcome>();
 
-    // Spawn a background task to drain stdout and detect FYOM_READY
-    // This task owns the child process and stdout reader
-    tauri::async_runtime::spawn(async move {
-        tracing::info!("[sidecar-drain] stdout drain task started");
+    let stdout_task = spawn_stdout_drain_task(
+        stdout,
+        ready_tx,
+        Arc::clone(&ready_seen),
+        Arc::clone(&stop_requested),
+    );
 
-        let reader = BufReader::new(stdout);
-        let mut lines = reader.lines();
-        let mut ready_emitted = false;
+    let stderr_task =
+        spawn_stderr_drain_task(stderr, Arc::clone(&ready_seen), Arc::clone(&stop_requested));
 
-        // Spawn stderr drain in background
-        tauri::async_runtime::spawn(async move {
-            tracing::info!("[sidecar-drain] stderr drain task started");
-            let reader = BufReader::new(stderr);
-            let mut lines = reader.lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                tracing::info!(target: "sidecar", "[stderr] {}", line);
-            }
-            tracing::info!("[sidecar-drain] stderr drain task ended");
-        });
+    let monitor_task =
+        spawn_process_monitor_task(child, shutdown_rx, exit_tx, Arc::clone(&stop_requested));
 
-        // Monitor child process exit and kill signals
-        tauri::async_runtime::spawn(async move {
-            tracing::info!("[sidecar-drain] process monitor task started");
-            tokio::select! {
-                status = child.wait() => {
-                    match status {
-                        Ok(status) if !status.success() => {
-                            tracing::warn!("[sidecar-drain] Sidecar exited with non-zero status: {:?}", status);
-                        }
-                        Err(e) => {
-                            tracing::error!("[sidecar-drain] Sidecar wait error: {}", e);
-                        }
-                        _ => tracing::info!("[sidecar-drain] Sidecar exited normally"),
-                    }
-                }
-                _ = kill_rx.recv() => {
-                    tracing::info!("[sidecar-drain] Kill signal received, killing sidecar");
-                    let _ = child.kill().await;
-                }
-            }
-            tracing::info!("[sidecar-drain] process monitor task ended");
-        });
+    let runtime = RunningSidecar::new(
+        child_id,
+        shutdown_tx,
+        stdout_task,
+        stderr_task,
+        monitor_task,
+        Arc::clone(&stop_requested),
+    );
 
-        // Read stdout lines and detect readiness
-        loop {
-            match tokio::time::timeout(Duration::from_millis(200), lines.next_line()).await {
-                Ok(Ok(Some(line))) => {
-                    tracing::debug!(target: "sidecar", "[stdout] {}", line);
+    let startup_deadline = Instant::now() + Duration::from_secs(SIDECAR_STARTUP_TIMEOUT_SECS);
+    let mut ready_api_url: Option<String> = None;
+    let mut readyz_attempts: u32 = 0;
+    let mut readyz_not_before: Option<Instant> = None;
 
-                    // Check for readiness token
-                    if let Some(api_url) = parse_ready_line(&line) {
-                        if ready_emitted {
-                            // Already emitted ready event, skip but continue draining
-                            continue;
-                        }
-
-                        ready_emitted = true;
-                        tracing::info!("[sidecar-drain] FYOM_READY received: {}", api_url);
-
-                        // Send the API URL through the channel
-                        // This is a one-time signal, channel capacity is 1
-                        let _ = ready_tx.send(api_url).await;
-
-                        // Continue reading stdout to drain the pipe
-                        continue;
-                    }
-                }
-                Ok(Ok(None)) => {
-                    // EOF on stdout — process may have exited
-                    tracing::error!("[sidecar-drain] Sidecar stdout closed unexpectedly");
-                    break;
-                }
-                Ok(Err(e)) => {
-                    tracing::error!("[sidecar-drain] Error reading sidecar stdout: {}", e);
-                    break;
-                }
-                Err(_) => {
-                    // Timeout — continue looping
-                    continue;
-                }
-            }
-        }
-        tracing::info!("[sidecar-drain] stdout drain task ended");
-    });
-
-    // Wait for ready notification with timeout
-    let deadline = Duration::from_secs(SIDECAR_STARTUP_TIMEOUT_SECS);
-    let start = Instant::now();
+    let mut runtime = Some(runtime);
 
     loop {
-        // Check if we received the ready signal
-        match tokio::time::timeout(Duration::from_millis(0), ready_rx.recv()).await {
-            Ok(Some(api_url)) => {
-                tracing::info!("[bootstrap] FYOM_READY received, confirming /readyz...");
-
-                // Confirm readiness with /readyz using bounded retries
-                if let Err(e) = confirm_readyz_with_retries(&api_url).await {
-                    tracing::error!("[bootstrap] /readyz confirmation failed: {}", e);
-                    // Even if /readyz fails, if we got FYOM_READY, the sidecar is likely ready
-                    // But we treat this as a failure for strict readiness confirmation
-                    let msg = format!("Sidecar ready but /readyz failed: {}", e);
-                    sidecar_state.set_error(msg.clone());
-                    let _ = app.emit(SIDECAR_ERROR_EVENT, msg.clone());
-                    anyhow::bail!("{}", msg);
-                }
-
-                tracing::info!("[bootstrap] /readyz confirmed OK");
-
-                // Store the API base URL
-                let api_base_url = format!("{}/api/v1", api_url);
-                sidecar_state.set_ready(api_base_url.clone());
-
-                // Emit readiness event to the frontend
-                let _ = app.emit(SIDECAR_READY_EVENT, api_url.clone());
-
-                tracing::info!("[bootstrap] Sidecar bootstrap completed successfully");
-
-                // Bootstrap completed successfully
-                return Ok(());
-            }
-            Ok(None) => {
-                // Channel closed, sidecar probably exited before emitting FYOM_READY
-                let msg = "Sidecar exited without emitting FYOM_READY".to_string();
-                tracing::error!("[bootstrap] {}", msg);
-                sidecar_state.set_error(msg.clone());
-                let _ = app.emit(SIDECAR_ERROR_EVENT, msg.clone());
-                anyhow::bail!("{}", msg);
-            }
-            Err(_) => {
-                // No message yet, continue waiting
-            }
-        }
-
-        // Check timeout
-        if start.elapsed() > deadline {
-            // Send kill signal to background task
-            let _ = kill_tx.send(()).await;
+        if Instant::now() >= startup_deadline {
             let msg = format!(
                 "Sidecar startup timed out after {}s (pid={})",
                 SIDECAR_STARTUP_TIMEOUT_SECS, child_id
             );
+
+            if let Some(rt) = runtime.take() {
+                cleanup_failed_bootstrap(rt, &msg).await;
+            }
+
             tracing::error!("[bootstrap] {}", msg);
             sidecar_state.set_error(msg.clone());
             let _ = app.emit(SIDECAR_ERROR_EVENT, msg.clone());
-            anyhow::bail!("{}", msg);
+            bail!("{}", msg);
         }
 
-        // Short sleep to avoid busy waiting
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::select! {
+            exit_result = &mut exit_rx => {
+                let msg = match exit_result {
+                    Ok(MonitorOutcome::Exited(status)) => {
+                        format!(
+                            "Sidecar exited before bootstrap completed: {}",
+                            format_exit_status(&status)
+                        )
+                    }
+                    Ok(MonitorOutcome::KilledByRequest(status)) => {
+                        if let Some(status) = status {
+                            format!(
+                                "Sidecar was killed during bootstrap: {}",
+                                format_exit_status(&status)
+                            )
+                        } else {
+                            "Sidecar was killed during bootstrap".to_string()
+                        }
+                    }
+                    Ok(MonitorOutcome::WaitError(err)) => {
+                        format!("Sidecar monitor wait error during bootstrap: {}", err)
+                    }
+                    Err(_) => {
+                        "Sidecar monitor channel closed unexpectedly during bootstrap".to_string()
+                    }
+                };
+
+                if let Some(rt) = runtime.take() {
+                    cleanup_failed_bootstrap(rt, &msg).await;
+                }
+
+                tracing::error!("[bootstrap] {}", msg);
+                sidecar_state.set_error(msg.clone());
+                let _ = app.emit(SIDECAR_ERROR_EVENT, msg.clone());
+                bail!("{}", msg);
+            }
+
+            ready_result = &mut ready_rx, if ready_api_url.is_none() => {
+                match ready_result {
+                    Ok(api_url) => {
+                        tracing::info!(
+                            "[bootstrap] FYOM_READY received, waiting {}ms before confirming /readyz...",
+                            READYZ_INITIAL_GRACE_MS
+                        );
+                        ready_api_url = Some(api_url);
+                        readyz_not_before = Some(Instant::now() + Duration::from_millis(READYZ_INITIAL_GRACE_MS));
+                    }
+                    Err(_) => {
+                        let msg = format!("Sidecar stdout ended before emitting FYOM_READY (pid={})", child_id);
+
+                        if let Some(rt) = runtime.take() {
+                            cleanup_failed_bootstrap(rt, &msg).await;
+                        }
+
+                        tracing::error!("[bootstrap] {}", msg);
+                        sidecar_state.set_error(msg.clone());
+                        let _ = app.emit(SIDECAR_ERROR_EVENT, msg.clone());
+                        bail!("{}", msg);
+                    }
+                }
+            }
+
+            _ = tokio::time::sleep(Duration::from_millis(READYZ_RETRY_DELAY_MS)), if ready_api_url.is_some() => {
+                if let Some(not_before) = readyz_not_before {
+                    if Instant::now() < not_before {
+                        continue;
+                    }
+                }
+
+                let api_url = ready_api_url.as_ref().expect("checked is_some");
+                readyz_attempts += 1;
+
+                match confirm_readyz_once(api_url).await {
+                    Ok(()) => {
+                        tracing::info!("/readyz confirmed OK (attempt {})", readyz_attempts);
+                        tracing::info!("[bootstrap] /readyz confirmed OK");
+
+                        let api_base_url = format!("{}/api/v1", api_url);
+                        sidecar_state.set_ready(api_base_url);
+
+                        if let Some(rt) = runtime.take() {
+                            install_running_sidecar(rt).await;
+                        }
+
+                        let _ = app.emit(SIDECAR_READY_EVENT, api_url.clone());
+                        tracing::info!("[bootstrap] Sidecar bootstrap completed successfully");
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        let now = Instant::now();
+                        if now >= startup_deadline {
+                            let msg = format!(
+                                "Sidecar emitted FYOM_READY but /readyz never confirmed before timeout: {}",
+                                e
+                            );
+
+                            if let Some(rt) = runtime.take() {
+                                cleanup_failed_bootstrap(rt, &msg).await;
+                            }
+
+                            tracing::error!("[bootstrap] {}", msg);
+                            sidecar_state.set_error(msg.clone());
+                            let _ = app.emit(SIDECAR_ERROR_EVENT, msg.clone());
+                            bail!("{}", msg);
+                        } else {
+                            if should_warn_readyz_retry(readyz_attempts) {
+                                tracing::warn!(
+                                    "[bootstrap] /readyz request failed after FYOM_READY: {} (attempt {}, retrying until timeout budget is exhausted)",
+                                    e,
+                                    readyz_attempts,
+                                );
+                            } else {
+                                tracing::debug!(
+                                    "[bootstrap] /readyz request failed after FYOM_READY: {} (attempt {})",
+                                    e,
+                                    readyz_attempts,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
 /// Shutdown the sidecar process cleanly.
-pub async fn shutdown_sidecar(_app: &AppHandle, state: &crate::AppState) -> Result<()> {
+pub async fn shutdown_sidecar(_app: &AppHandle, state: &AppState) -> Result<()> {
     let sidecar_state = &state.sidecar_state;
     tracing::info!("Shutting down sidecar");
+
+    if let Some(runtime) = take_running_sidecar().await {
+        runtime.shutdown("shutdown_sidecar called").await;
+    } else {
+        tracing::info!("No running sidecar to shut down");
+    }
+
     sidecar_state.set_error("Shutting down".to_string());
     Ok(())
 }
