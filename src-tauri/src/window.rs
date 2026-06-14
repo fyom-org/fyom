@@ -5,26 +5,10 @@ use tauri::{AppHandle, Manager, Runtime};
 
 use crate::MAIN_WINDOW_LABEL;
 
-/// Setup the main window with close-to-tray behavior.
+/// Setup the main window. Window starts invisible and is shown only
+/// after the sidecar is ready.
 pub fn setup_main_window<R: Runtime>(_app: &tauri::App<R>) -> Result<()> {
-    // Window is configured as invisible in tauri.conf.json.
-    // We show it only when the sidecar is ready.
     Ok(())
-}
-
-/// Configure the window to hide to tray instead of closing.
-/// Returns true if the close was intercepted (hidden to tray).
-pub fn on_window_close_requested<R: Runtime>(
-    app: &AppHandle<R>,
-) -> bool {
-    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        if let Err(e) = window.hide() {
-            tracing::error!("Failed to hide window: {}", e);
-            return false; // Allow close if hide fails
-        }
-        return true; // Close intercepted
-    }
-    false
 }
 
 /// Show and focus the main window.

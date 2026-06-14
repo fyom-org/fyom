@@ -116,26 +116,22 @@ pub fn run() {
     app.run(|app_handle, event| {
         match event {
             tauri::RunEvent::ExitRequested { api, .. } => {
-                // Check if this is a real app exit (e.g. tray Quit) or just
-                // a window close (should hide to tray).
                 let has_exit_intent = app_handle
                     .try_state::<AppState>()
                     .map(|s| s.has_exit_intent())
                     .unwrap_or(false);
                 if has_exit_intent {
-                    // Real exit: allow the default exit behavior after shutdown.
-                    // The shutdown itself is handled by request_quit() which was
-                    // called by the tray quit handler.
-                    tracing::info!("Exit requested with intent, allowing app exit");
+                    // Real exit (e.g. tray Quit): sidecar shutdown was already
+                    // initiated by the tray handler; just allow the exit.
+                    tracing::info!("App exit requested (intent=true)");
                 } else {
-                    // Window close without exit intent: hide to tray, don't exit.
+                    // Window close without exit intent: hide to tray.
                     api.prevent_exit();
-                    tracing::debug!("Exit requested without intent, hiding to tray");
+                    tracing::debug!("Window close intercepted, hiding to tray");
                 }
             }
             tauri::RunEvent::Exit => {
-                // Final cleanup on actual exit.
-                tracing::info!("App exiting");
+                tracing::info!("App exited");
             }
             _ => {}
         }
