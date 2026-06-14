@@ -9,9 +9,18 @@
         }"
       >
         <div class="sidebar-content">
-          <router-link to="/" exact-active-class="router-link-active">Home</router-link>
-          <router-link to="/profile" @click="sidebarOpen = false">Profile</router-link>
-          <router-link to="/library">Library</router-link>
+          <router-link
+            to="/"
+            exact-active-class="router-link-active"
+            @click="isMobile && (sidebarOpen = false)"
+            >Home</router-link
+          >
+          <router-link to="/profile" @click="isMobile && (sidebarOpen = false)"
+            >Profile</router-link
+          >
+          <router-link to="/library" @click="isMobile && (sidebarOpen = false)"
+            >Library</router-link
+          >
           <!-- Library switcher — only shows when 2+ libraries exist -->
           <div class="library-section" v-if="libraries.length >= 2">
             <div class="section-label">Libraries</div>
@@ -20,7 +29,7 @@
               :key="lib.id"
               :to="`/library/${lib.id}`"
               class="nav-link library-link"
-              @click="sidebarOpen = false"
+              @click="isMobile && (sidebarOpen = false)"
             >
               <span class="library-icon">
                 {{ lib.type === 'movie' ? '🎬' : lib.type === 'show' ? '📺' : '📁' }}
