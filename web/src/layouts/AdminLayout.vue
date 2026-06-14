@@ -28,19 +28,15 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import { getMe } from '@/api/auth';
 
 const router = useRouter();
 const username = ref('');
 
 onMounted(async () => {
   try {
-    const res = await fetch('/api/v1/auth/me', {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      username.value = data.data?.username || '';
-    }
+    const data = await getMe();
+    username.value = data?.username || '';
   } catch {
     // ignore
   }

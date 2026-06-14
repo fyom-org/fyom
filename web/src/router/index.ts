@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import MainLayout from '@/layouts/MainLayout.vue';
 import AdminLayout from '@/layouts/AdminLayout.vue';
+import { getMe } from '@/api/auth';
 
 const router = createRouter({
   history: createWebHistory(),
@@ -93,14 +94,8 @@ router.beforeEach(async (to) => {
   // Admin routes: verify role via API, not localStorage
   if (to.path.startsWith('/admin')) {
     try {
-      const res = await fetch('/api/v1/auth/me', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        return router.push('/login');
-      }
-      const data = await res.json();
-      if (data.data?.role !== 'admin') {
+      const { data } = await getMe();
+      if (data?.role !== 'admin') {
         return router.push('/');
       }
     } catch {
