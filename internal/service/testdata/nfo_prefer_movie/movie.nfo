@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<movie>
+    <title>秒速5厘米</title>
+    <year>2007</year>
+    <plot>如果，樱花掉落的速度是每秒5厘米，那么两颗心需要多久才能靠近？</plot>
+    <rating>7.292</rating>
+    <genre>动画</genre>
+    <genre>爱情</genre>
+    <genre>剧情</genre>
+    <studio>CoMix Wave Films</studio>
+    <director>新海诚</director>
+    <writer>新海诚</writer>
+    <uniqueid type="imdb">tt0983213</uniqueid>
+    <uniqueid type="tmdb">38142</uniqueid>
+</movie>

@@ -21,10 +21,11 @@ func TestLibraryCreate_PreservesProvidedName_AndDoesNotReplaceWithSourcePath(t *
 	defer db.Close()
 
 	libRepo := repository.NewLibraryRepository(db)
+	sourcePath := filepath.Join(dir, "movies")
 	lib := &model.Library{
 		Name:           "Anime",
 		Type:           "mixed",
-		SourcePath:     "/root/media/library1",
+		SourcePath:     sourcePath,
 		ProviderID:     "local",
 		MetadataSource: "nfo",
 	}
@@ -45,8 +46,8 @@ func TestLibraryCreate_PreservesProvidedName_AndDoesNotReplaceWithSourcePath(t *
 	if storedName != "Anime" {
 		t.Errorf("name = %q, expected %q", storedName, "Anime")
 	}
-	if storedSourcePath != "/root/media/library1" {
-		t.Errorf("source_path = %q, expected %q", storedSourcePath, "/root/media/library1")
+	if storedSourcePath != sourcePath {
+		t.Errorf("source_path = %q, expected %q", storedSourcePath, sourcePath)
 	}
 }
 
@@ -63,12 +64,13 @@ func TestLibraryCreate_EmptyName_DoesNotPersistRawSourcePathAsName(t *testing.T)
 
 	libRepo := repository.NewLibraryRepository(db)
 
+	sourcePath := filepath.Join(dir, "movies")
 	// The handler requires name to be non-empty, but the repository doesn't enforce it.
 	// Test that if an empty name is passed, it doesn't default to source_path.
 	lib := &model.Library{
 		Name:           "",
 		Type:           "mixed",
-		SourcePath:     "/root/media/library1",
+		SourcePath:     sourcePath,
 		ProviderID:     "local",
 		MetadataSource: "nfo",
 	}
