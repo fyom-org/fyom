@@ -413,6 +413,48 @@ Current client-side genre filtering is unaffected.
       scanned files, imported items, updated items, skipped files,
       parse warnings, duration
 
+- [x] Rebuild importer around a context-driven pipeline:
+      - filesystem snapshot
+      - typed candidate classification
+      - metadata parsing by entity type
+      - reconcile / persistence stage
+
+- [x] Add explicit media path semantics for imported entities:
+      - `root_path`
+      - `primary_path`
+      - `nfo_path`
+      while keeping legacy `file_path` compatibility for API/storage transition
+
+- [x] Fix episode import path handling:
+      prevent `dir/file/file` double-nesting and ensure episode playable
+      path points to the real media file
+
+- [x] Fix show / movie / episode classification ownership:
+      show subtree files are no longer re-imported as standalone movies,
+      season/episode traversal is context-aware, and library-type policy is
+      enforced during classification
+
+- [x] Fix episode NFO application and unique ID parsing:
+      - episode title/overview/rating/aired now respect episode NFO
+      - `imdbid` XML tag fixed
+      - IMDB / TMDB / TVDB fields no longer cross-map incorrectly
+
+- [x] Add explicit grouping / container directory traversal:
+      importer now treats wrapper / intermediate directories as transparent
+      traversal layers rather than terminal unknowns, while ensuring such
+      directories are never persisted as media items
+
+- [x] Add grouping/container regression coverage:
+      - one extra grouping directory
+      - multiple nested grouping directories
+      - grouping directory must not become persisted media
+      - show-only policy under grouping directories
+      - movie-only policy under grouping directories
+
+- [x] Fix provider integrity for imported media:
+      `providers.id='local'` is now seeded/made durable so library/media rows
+      no longer depend on disabled foreign keys to remain valid
+
 - [x] **BUG FIX: show re-import duplication**
       `processShowDir` generated a new UUID on every import run, bypassing
       the `INSERT OR IGNORE` dedup on `file_path`. Fixed by adding
@@ -422,8 +464,14 @@ Current client-side genre filtering is unaffected.
       Show ID is now stable across re-imports, keeping episode `parent_id`
       foreign keys intact.
 
+- [x] Split oversized importer implementation into stage-focused files
+      inside `internal/service/` to make snapshot/classify/metadata/reconcile
+      control flow inspectable and maintainable
+
 > **Phase 9.2 is complete.** Importer robustness objectives met, key
-> re-import duplication bug fixed.
+> re-import duplication bug fixed, context-driven scan pipeline established,
+> grouping/container directory traversal supported, and importer regression
+> coverage significantly strengthened.
 >
 > **Follow-up notes:**
 > - `ImportSummary` currently returns from synchronous `ImportLibrary`
@@ -436,6 +484,10 @@ Current client-side genre filtering is unaffected.
 >   by design. Future product decisions may revisit whether these
 >   should be treated as user-state instead. (Not a current-phase
 >   blocker.)
+> - Historical pre-fix media rows may still need a dedicated repair /
+>   backfill path if an existing DB already contains old corrupted
+>   importer output. Preventing new corruption is complete; repairing
+>   legacy corrupted rows is follow-up work.
 
 ### 9.3 API Contract & Test Cleanup
 
@@ -443,10 +495,12 @@ Current client-side genre filtering is unaffected.
 > integration-auth tests and constructor-signature drift issues. The rest
 > of 9.3 is deferred until after the desktop playback milestone.
 
-- [ ] Fix failing integration/auth tests (constructor signature drift)
+- [x] Fix failing integration/auth/startup test drift and restore
+      green `go test ./...` execution across the repository
 
-- [ ] Fix all failing integration/auth tests
-      caused by constructor signature drift
+- [x] Remove machine-specific hardcoded media paths from default tests;
+      keep real-media corpus coverage opt-in via environment variable
+      (`FYOM_TEST_MEDIA_ROOT`) rather than hardcoded `/root/...` paths
 
 - [ ] Add API response snapshot tests for `MediaItemResponse`
 
@@ -549,6 +603,11 @@ Current client-side genre filtering is unaffected.
 
 - [x] Ensure scheduler does not start duplicate refresh jobs
       for the same library
+
+- [x] Prevent duplicate built-in `local` provider registration
+      during server bootstrap:
+      DB seed / ensure remains separate from in-memory provider
+      registry registration, avoiding startup panic on fresh DBs
 
 - [ ] Add config documentation for:
       - data directory
