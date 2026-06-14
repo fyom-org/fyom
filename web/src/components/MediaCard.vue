@@ -94,7 +94,7 @@ const progressPercent = computed(() => {
 const statusEmoji = computed(() => {
   switch (props.item.user_status) {
     case STATUS_WANT:
-      return '🔖';
+      return '✦';
     case STATUS_WATCHING:
       return '▶';
     case STATUS_WATCHED:
