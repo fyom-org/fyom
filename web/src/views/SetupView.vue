@@ -68,7 +68,7 @@ async function submit() {
     });
 
     // Step 2: Login to get token
-    const loginRes: any = await request.post('/auth/login', {
+    const loginRes = await request.post('/auth/login', {
       username: username.value,
       password: password.value,
     });

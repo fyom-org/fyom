@@ -15,7 +15,7 @@
           <router-link to="/profile" @click="handleNavClick">Profile</router-link>
           <router-link to="/library" @click="handleNavClick">Library</router-link>
           <!-- Library switcher — only shows when 2+ libraries exist -->
-          <div class="library-section" v-if="libraries.length >= 2">
+          <div v-if="libraries.length >= 2" class="library-section">
             <div class="section-label">Libraries</div>
             <router-link
               v-for="lib in libraries"
@@ -89,9 +89,9 @@ onMounted(async () => {
     // ignore
   }
   try {
-    const res: any = await request.get('/libraries');
+    const res = await request.get('/libraries');
     libraries.value = res.data || [];
-  } catch {
+  } catch
     // ignore
   }
 });
@@ -99,11 +99,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize);
 });
-
-function handleLogout() {
-  store.logout();
-  router.push({ name: 'login' });
-}
 </script>
 
 <style scoped>
