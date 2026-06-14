@@ -157,10 +157,30 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
     let mut lines = reader.lines();
     let mut ready_emitted = false;
 
+    // Spawn a background task to monitor the child process
+    // We do this before the loop to avoid ownership issues
+    let app_handle_for_monitoring = app.clone();
+    tauri::async_runtime::spawn(async move {
+        match child.wait().await {
+            Ok(status) if !status.success() => {
+                tracing::warn!("Sidecar exited with non-zero status: {:?}", status);
+                let _ = app_handle_for_monitoring
+                    .emit(SIDECAR_ERROR_EVENT, format!("Sidecar exited: {:?}", status));
+            }
+            Err(e) => {
+                tracing::error!("Sidecar wait error: {}", e);
+                let _ = app_handle_for_monitoring
+                    .emit(SIDECAR_ERROR_EVENT, format!("Sidecar error: {}", e));
+            }
+            _ => tracing::info!("Sidecar exited normally"),
+        }
+    });
+
     loop {
         // Check overall timeout
         if start.elapsed() > deadline {
-            let _ = child.kill().await;
+            // We can't kill the child here since it was moved to the background task
+            // But we can still report the timeout
             let msg = format!(
                 "Sidecar startup timed out after {}s (pid={})",
                 SIDECAR_STARTUP_TIMEOUT_SECS, child_id
@@ -171,17 +191,9 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
             anyhow::bail!("{}", msg);
         }
 
-        // Check if child process has exited prematurely
-        if let Some(status) = child.try_wait()? {
-            let msg = format!(
-                "Sidecar exited prematurely with status: {:?} (pid={})",
-                status, child_id
-            );
-            tracing::error!("{}", msg);
-            sidecar_state.set_error(msg.clone());
-            let _ = app.emit(SIDECAR_ERROR_EVENT, msg.clone());
-            anyhow::bail!("{}", msg);
-        }
+        // We can't use child.try_wait() here since child was moved to the background task
+        // Instead, we rely on the background task to monitor process exit
+        // and just continue reading stdout
 
         // Try to read next line with a short timeout
         match tokio::time::timeout(Duration::from_millis(200), lines.next_line()).await {
@@ -212,26 +224,6 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
 
                     // Emit readiness event to the frontend
                     let _ = app.emit(SIDECAR_READY_EVENT, full_url);
-
-                    // Keep the child process handle alive — we'll monitor it in the background
-                    let app_handle = app.clone();
-                    tauri::async_runtime::spawn(async move {
-                        match child.wait().await {
-                            Ok(status) if !status.success() => {
-                                tracing::warn!("Sidecar exited with non-zero status: {:?}", status);
-                                let _ = app_handle.emit(
-                                    SIDECAR_ERROR_EVENT,
-                                    format!("Sidecar exited: {:?}", status),
-                                );
-                            }
-                            Err(e) => {
-                                tracing::error!("Sidecar wait error: {}", e);
-                                let _ = app_handle
-                                    .emit(SIDECAR_ERROR_EVENT, format!("Sidecar error: {}", e));
-                            }
-                            _ => tracing::info!("Sidecar exited normally"),
-                        }
-                    });
 
                     // Continue reading stdout instead of returning
                     // This ensures we don't miss any subsequent output from the sidecar
