@@ -567,16 +567,18 @@ Current client-side genre filtering is unaffected.
 - [x] `FYOM_READY` readiness signal and `/readyz` confirmation flow
 - [x] Desktop DB path resolution (`fyom.db` colocated with desktop app executable)
 - [x] Sidecar bootstrap / runtime lifecycle stabilization
-- [x] Tauri system tray, window lifecycle, and close-to-tray behavior
+- [x] Tauri system tray, window lifecycle, close-to-tray behavior, and real quit sequencing
 - [x] Frontend API base URL adapts to Tauri vs browser runtime
+- [x] Desktop auth/network hardening (CORS / preflight handling for sidecar-backed API flows)
+- [x] Runtime-aware media/resource URL normalization for Tauri desktop
 - [x] Build workflow: `task sidecar`, `task dev:desktop`, `task build:desktop`
-- [ ] Desktop auth/network hardening (CORS / preflight handling for sidecar-backed API flows)
 
-> Phase 1 desktop runtime is mostly in place.
+> Phase 1 desktop runtime is now functionally in place.
 > Tauri shell, Go sidecar bootstrap, desktop DB path handling, tray/window lifecycle,
-> and runtime-aware frontend API routing are implemented.
-> Remaining work in this phase is focused on desktop auth/network hardening and a small
-> amount of runtime polish, rather than new architectural expansion.
+> explicit sidecar shutdown on real quit, runtime-aware frontend API routing,
+> desktop auth flow hardening, and media/resource URL normalization are implemented.
+> Remaining work in this phase should stay limited to small runtime polish and
+> follow-up hardening, not new architectural expansion.
 
 ## Production Phase 2: Native Playback with libmpv
 
