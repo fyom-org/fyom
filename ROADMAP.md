@@ -487,6 +487,8 @@ Current client-side genre filtering is unaffected.
       - failed import job
       - missing poster/backdrop/logo
 
+- [ ] Responsive design improvements (mobile-friendly catalog)
+
 - [ ] Mobile catalog pass:
       - library grid
       - media cards
@@ -561,16 +563,20 @@ Current client-side genre filtering is unaffected.
 ## Production Phase 1: Desktop Shell & Tauri
 
 - [x] Tauri 2 desktop shell (wrapping the Web UI)
-- [x] Go sidecar: `--sidecar` mode, fixed port `127.0.0.1:27403`, `FYOM_READY` signal
-- [x] Tauri system tray, window lifecycle, close-to-tray behavior
-- [x] Frontend API base URL adapts to Tauri vs browser context
+- [x] Go sidecar `--sidecar` mode with fixed loopback port `127.0.0.1:27403`
+- [x] `FYOM_READY` readiness signal and `/readyz` confirmation flow
+- [x] Desktop DB path resolution (`fyom.db` colocated with desktop app executable)
+- [x] Sidecar bootstrap / runtime lifecycle stabilization
+- [x] Tauri system tray, window lifecycle, and close-to-tray behavior
+- [x] Frontend API base URL adapts to Tauri vs browser runtime
 - [x] Build workflow: `task sidecar`, `task dev:desktop`, `task build:desktop`
-- [ ] Local network discovery (find other fyom nodes on LAN via mDNS)
-- [ ] Responsive design improvements (mobile-friendly catalog)
+- [ ] Desktop auth/network hardening (CORS / preflight handling for sidecar-backed API flows)
 
-> Phase 1 desktop runtime foundation is in place.
-> Tauri shell, Go sidecar bootstrap, tray/window lifecycle, and runtime-aware frontend API routing are complete.
-> Cross-platform tray behavior validation and CI/CD build matrix are being handled separately outside this roadmap pass.
+> Phase 1 desktop runtime is mostly in place.
+> Tauri shell, Go sidecar bootstrap, desktop DB path handling, tray/window lifecycle,
+> and runtime-aware frontend API routing are implemented.
+> Remaining work in this phase is focused on desktop auth/network hardening and a small
+> amount of runtime polish, rather than new architectural expansion.
 
 ## Production Phase 2: Native Playback with libmpv
 
@@ -581,7 +587,7 @@ Current client-side genre filtering is unaffected.
 - [ ] Audio passthrough (DTS/AC3 to receiver)
 - [ ] RawWindowHandle / transparent window overlay
 
-## Production Phase 3: Polish & Metadata
+## Production Phase 3: Polish UI/UX & Metadata
 
 - [ ] Per-item metadata overrides (layered override: global → library → item)
 - [ ] NFO write-back (Jellyfin-style bidirectional sync)
@@ -604,6 +610,7 @@ Current client-side genre filtering is unaffected.
 
 ## Future Plan 2: Advanced Discovery
 
+- [ ] Local network discovery (find other fyom nodes on LAN via mDNS)
 - [ ] FTS5 full-text search (SQLite virtual table for sub-second search)
 - [ ] Collection / franchise grouping (from set_name field)
 - [ ] Deduplication detection (same movie in multiple libraries)
