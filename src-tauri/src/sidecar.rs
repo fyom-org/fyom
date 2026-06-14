@@ -670,12 +670,12 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &AppState) -> Result<()> 
 /// Shutdown the sidecar process cleanly.
 pub async fn shutdown_sidecar(_app: &AppHandle, state: &AppState) -> Result<()> {
     let sidecar_state = &state.sidecar_state;
-    tracing::info!("Shutting down sidecar");
 
     if let Some(runtime) = take_running_sidecar().await {
+        tracing::info!("Shutting down sidecar (pid={})", runtime.pid);
         runtime.shutdown("shutdown_sidecar called").await;
     } else {
-        tracing::info!("No running sidecar to shut down");
+        tracing::debug!("No running sidecar to shut down (already stopped or never started)");
     }
 
     sidecar_state.set_error("Shutting down".to_string());
