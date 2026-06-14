@@ -234,29 +234,35 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
 
     loop {
         // Check if we received the ready signal
-        if ready_notify.notified().into() {
-            // Get the API URL
-            let api_url = ready_api_url
-                .get()
-                .ok_or_else(|| anyhow::anyhow!("Ready signal received but no API URL stored"))?;
+        // Use a non-blocking check by trying to wait with zero timeout
+        match tokio::time::timeout(Duration::from_millis(0), ready_notify.notified().wait()).await {
+            Ok(()) => {
+                // Get the API URL
+                let api_url = ready_api_url.get().ok_or_else(|| {
+                    anyhow::anyhow!("Ready signal received but no API URL stored")
+                })?;
 
-            tracing::info!("  db_path:    {}", db_path.display());
+                tracing::info!("  db_path:    {}", db_path.display());
 
-            // Confirm readiness with /readyz
-            if let Err(e) = confirm_readyz(api_url).await {
-                tracing::warn!("/readyz confirmation failed: {}", e);
-                // Don't fail — the sidecar emitted FYOM_READY so it's likely fine
+                // Confirm readiness with /readyz
+                if let Err(e) = confirm_readyz(api_url).await {
+                    tracing::warn!("/readyz confirmation failed: {}", e);
+                    // Don't fail — the sidecar emitted FYOM_READY so it's likely fine
+                }
+
+                // Store the API base URL
+                let api_base_url = format!("{}/api/v1", api_url);
+                sidecar_state.set_ready(api_base_url.clone());
+
+                // Emit readiness event to the frontend
+                let _ = app.emit(SIDECAR_READY_EVENT, api_url.to_string());
+
+                // Bootstrap completed successfully
+                return Ok(());
             }
-
-            // Store the API base URL
-            let api_base_url = format!("{}/api/v1", api_url);
-            sidecar_state.set_ready(api_base_url.clone());
-
-            // Emit readiness event to the frontend
-            let _ = app.emit(SIDECAR_READY_EVENT, api_url.to_string());
-
-            // Bootstrap completed successfully
-            return Ok(());
+            Err(_) => {
+                // Notification not yet received, continue waiting
+            }
         }
 
         // Check timeout
