@@ -22,6 +22,9 @@ type MediaItem struct {
 	Rating              float64 `json:"rating,omitempty" db:"rating"`
 	Duration            int     `json:"duration,omitempty" db:"duration"`
 	FilePath            string  `json:"file_path" db:"file_path"`
+	RootPath            string  `json:"root_path" db:"root_path"`
+	PrimaryPath         string  `json:"primary_path" db:"primary_path"`
+	NFOPath             string  `json:"nfo_path" db:"nfo_path"`
 	PosterPath          string  `json:"poster_path,omitempty" db:"poster_path"`
 	BackdropPath        string  `json:"backdrop_path,omitempty" db:"backdrop_path"`
 	ParentID            string  `json:"parent_id,omitempty" db:"parent_id"`

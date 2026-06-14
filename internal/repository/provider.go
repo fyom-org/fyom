@@ -133,3 +133,20 @@ func (r *ProviderRepository) Delete(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+// EnsureLocalProvider creates the 'local' provider row if it does not already exist.
+// This is a defensive runtime check that complements the migration seed.
+func (r *ProviderRepository) EnsureLocalProvider(ctx context.Context) error {
+	var dummy int
+	err := r.db.QueryRowContext(ctx, "SELECT 1 FROM providers WHERE id = 'local'").Scan(&dummy)
+	if err == nil {
+		return nil // already exists
+	}
+	// Insert local provider
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = r.db.ExecContext(ctx,
+		"INSERT INTO providers (id, type, display_name, config, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		"local", "local", "Local Filesystem", "{}", 1, now, now,
+	)
+	return err
+}

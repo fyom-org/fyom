@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -34,12 +35,13 @@ var seasonDirPattern = regexp.MustCompile(`(?i)^season\s*\d+$`)
 
 // Importer handles asynchronous NFO-based media library imports.
 type Importer struct {
-	fs         ImportFS
-	providerID string
-	libraryID  string
-	mediaRepo  *repository.MediaRepository
-	jobRepo    *repository.ImportJobRepository
-	db         *repository.DB
+	fs           ImportFS
+	providerID   string
+	libraryID    string
+	libraryType  string
+	mediaRepo    *repository.MediaRepository
+	jobRepo      *repository.ImportJobRepository
+	db           *repository.DB
 }
 
 // NewImporter creates a new Importer.
@@ -67,68 +69,62 @@ func (imp *Importer) SetLibraryID(id string) {
 func (imp *Importer) ImportLibrary(ctx context.Context, libraryID string) (*model.ImportSummary, error) {
 	imp.SetLibraryID(libraryID)
 
-	// Look up the library to get its source path.
+	// Look up the library to get its source path and type.
 	var sourcePath string
+	var libType string
 	err := imp.db.QueryRowContext(ctx,
-		"SELECT source_path FROM libraries WHERE id = ?", libraryID,
-	).Scan(&sourcePath)
+		"SELECT source_path, type FROM libraries WHERE id = ?", libraryID,
+	).Scan(&sourcePath, &libType)
 	if err != nil {
 		return nil, &errors.AppError{Code: 404, Message: "library not found"}
 	}
+	imp.libraryType = libType
 
-	return imp.importDirectory(ctx, sourcePath)
-}
-
-// importDirectory is the core synchronous scan. It walks sourcePath,
-// processes each subdirectory, and builds an ImportSummary.
-func (imp *Importer) importDirectory(ctx context.Context, sourcePath string) (*model.ImportSummary, error) {
 	summary := &model.ImportSummary{}
 	startTime := time.Now()
 
-	existing, _ := imp.mediaRepo.List(ctx, "")
-	existingPaths := make(map[string]bool)
-	for _, item := range existing {
-		existingPaths[item.FilePath] = true
+	// Stage 1: Build filesystem snapshot
+	rootNode, err := imp.buildSnapshot(ctx, sourcePath)
+	if err != nil {
+		return nil, err
 	}
 
-	// Recursively walk through all directories
-	imp.walkDir(ctx, sourcePath, func(path string, entry DirEntry) {
-		if !entry.IsDir {
-			summary.SkippedFiles++
-			return
+	// Stage 2: Classify nodes into typed candidates
+	walkCtx := &WalkContext{
+		ScanID:        uuid.New().String(),
+		LibraryID:     libraryID,
+		SourceRoot:    sourcePath,
+		ClaimedPaths:  make(map[string]PathClaim),
+	}
+	classResult := imp.classifyTree(ctx, rootNode, walkCtx)
+
+	// Stage 3: Parse metadata by candidate type
+	imp.parseCandidateMetadata(ctx, classResult.Candidates)
+
+	// Stage 4: Reconcile candidates into DB writes
+	reconResult, err := imp.reconcileCandidates(ctx, classResult.Candidates)
+	if err != nil {
+		summary.ParseWarnings = append(summary.ParseWarnings, fmt.Sprintf("reconcile error: %v", err))
+	}
+
+	// Build summary
+	summary.ImportedItems = 0
+	for _, r := range reconResult.Accepted {
+		if r.Action == ReconcileCreate {
+			summary.ImportedItems++
 		}
-		summary.ScannedFiles++
-
-		tvshowNFOPath := imp.fs.Join(path, "tvshow.nfo")
-		if imp.fs.Exists(ctx, tvshowNFOPath) {
-			n, warns, err := imp.processShowDir(ctx, path, existingPaths)
-			if err != nil {
-				summary.ParseWarnings = append(summary.ParseWarnings,
-					fmt.Sprintf("%s: %v", entry.Name, err))
-			}
-			summary.ImportedItems += n
-			summary.ParseWarnings = append(summary.ParseWarnings, warns...)
-			return
+	}
+	summary.UpdatedItems = 0
+	for _, r := range reconResult.Accepted {
+		if r.Action == ReconcileUpdate {
+			summary.UpdatedItems++
 		}
-
-		movieNFO := imp.findMovieNFO(ctx, path)
-		if movieNFO != "" {
-			n, warns, err := imp.processMovieDir(ctx, path, movieNFO, existingPaths)
-			if err != nil {
-				summary.ParseWarnings = append(summary.ParseWarnings,
-					fmt.Sprintf("%s: %v", entry.Name, err))
-			}
-			summary.ImportedItems += n
-			summary.ParseWarnings = append(summary.ParseWarnings, warns...)
-			return
-		}
-
-		n, warns := imp.processDirAsMovie(ctx, path, existingPaths)
-		summary.ImportedItems += n
-		summary.ParseWarnings = append(summary.ParseWarnings, warns...)
-	})
-
+	}
+	summary.ScannedFiles = classResult.ScannedDirs
+	summary.SkippedFiles = len(reconResult.Rejected)
+	summary.ParseWarnings = append(summary.ParseWarnings, imp.buildRejectWarnings(reconResult.Rejected)...)
 	summary.Duration = time.Since(startTime)
+
 	return summary, nil
 }
 
@@ -149,106 +145,1029 @@ func (imp *Importer) ImportRequest(ctx context.Context, sourcePath string) (*mod
 }
 
 // runImport does the actual directory scanning and DB insertion in a goroutine.
-// BUG FIX: previously, processMovieDir / processShowDir errors caused
-// the entire scan to abort (the loop `continue`d but importErr was set
-// and the job ended in error state). Now errors are collected as warnings
-// and the scan always continues.
 func (imp *Importer) runImport(jobID, sourcePath string) {
 	ctx := context.Background()
 
 	_ = imp.jobRepo.UpdateProgress(ctx, jobID, 0, 0, "running")
 
-	total := imp.countVideoFiles(ctx, sourcePath)
-	if total == 0 {
-		_ = imp.jobRepo.UpdateProgress(ctx, jobID, 0, 0, "done")
+	// Stage 1: Build filesystem snapshot
+	rootNode, err := imp.buildSnapshot(ctx, sourcePath)
+	if err != nil {
+		_ = imp.jobRepo.UpdateError(ctx, jobID, fmt.Sprintf("snapshot error: %v", err))
 		return
 	}
+
+	// Stage 2: Classify nodes into typed candidates
+	walkCtx := &WalkContext{
+		ScanID:       uuid.New().String(),
+		LibraryID:    imp.libraryID,
+		SourceRoot:   sourcePath,
+		ClaimedPaths: make(map[string]PathClaim),
+	}
+	classResult := imp.classifyTree(ctx, rootNode, walkCtx)
+
+	// Stage 3: Parse metadata by candidate type
+	imp.parseCandidateMetadata(ctx, classResult.Candidates)
+
+	// Set total_items to final candidate count
+	total := len(classResult.Candidates)
 	_ = imp.jobRepo.UpdateProgress(ctx, jobID, total, 0, "running")
 
-	existing, _ := imp.mediaRepo.List(ctx, "")
-	existingPaths := make(map[string]bool)
-	for _, item := range existing {
-		existingPaths[item.FilePath] = true
+	// Stage 4: Reconcile candidates into DB writes
+	reconResult, err := imp.reconcileCandidates(ctx, classResult.Candidates)
+	if err != nil {
+		_ = imp.jobRepo.UpdateError(ctx, jobID, fmt.Sprintf("reconcile error: %v", err))
+		return
 	}
 
-	done := 0
-	var importErr error
-
-	// Recursively walk through all directories
-	imp.walkDir(ctx, sourcePath, func(path string, entry DirEntry) {
-		if !entry.IsDir {
-			return
-		}
-
-		tvshowNFOPath := imp.fs.Join(path, "tvshow.nfo")
-		if imp.fs.Exists(ctx, tvshowNFOPath) {
-			n, _, err := imp.processShowDir(ctx, path, existingPaths)
-			if err != nil {
-				importErr = err
-			}
-			done += n
-			_ = imp.jobRepo.UpdateProgress(ctx, jobID, total, done, "running")
-			return
-		}
-
-		movieNFO := imp.findMovieNFO(ctx, path)
-		if movieNFO != "" {
-			n, _, err := imp.processMovieDir(ctx, path, movieNFO, existingPaths)
-			if err != nil {
-				importErr = err
-			}
-			done += n
-			_ = imp.jobRepo.UpdateProgress(ctx, jobID, total, done, "running")
-			return
-		}
-
-		n, _ := imp.processDirAsMovie(ctx, path, existingPaths)
-		done += n
-		_ = imp.jobRepo.UpdateProgress(ctx, jobID, total, done, "running")
-	})
-
-	if importErr != nil {
-		_ = imp.jobRepo.UpdateError(ctx, jobID, importErr.Error())
-	} else {
-		_ = imp.jobRepo.UpdateProgress(ctx, jobID, total, done, "done")
-	}
+	// done_items = number of candidates that reached a terminal state
+	done := reconResult.DoneCandidates
+	_ = imp.jobRepo.UpdateProgress(ctx, jobID, total, done, "done")
 }
 
-// countVideoFiles counts all video files under sourcePath for progress tracking.
-func (imp *Importer) countVideoFiles(ctx context.Context, sourcePath string) int {
-	count := 0
-	imp.walkDir(ctx, sourcePath, func(path string, entry DirEntry) {
+// ── Stage 1: Filesystem Snapshot ──────────────────────────────────────────
+
+// buildSnapshot recursively reads the directory tree starting at rootPath
+// and returns a tree of FSNode objects.
+func (imp *Importer) buildSnapshot(ctx context.Context, rootPath string) (*FSNode, error) {
+	return imp.buildSnapshotRecursive(ctx, rootPath)
+}
+
+func (imp *Importer) buildSnapshotRecursive(ctx context.Context, dirPath string) (*FSNode, error) {
+	entries, err := imp.fs.ReadDir(ctx, dirPath)
+	if err != nil {
+		return nil, err
+	}
+
+	node := &FSNode{
+		Path:     dirPath,
+		Name:     baseName(dirPath),
+		Kind:     ImportNodeDir,
+		IsDir:    true,
+		Children: make([]*FSNode, 0, len(entries)),
+	}
+
+	for _, entry := range entries {
+		fullPath := imp.fs.Join(dirPath, entry.Name)
+
 		if entry.IsDir {
-			return
-		}
-		name := entry.Name
-		var ext string
-		if idx := strings.LastIndex(name, "."); idx >= 0 {
-			ext = strings.ToLower(name[idx:])
+			childNode, err := imp.buildSnapshotRecursive(ctx, fullPath)
+			if err != nil {
+				// Skip directories we can't read
+				continue
+			}
+			node.Children = append(node.Children, childNode)
 		} else {
-			ext = ""
+			nodeKind := imp.classifyNodeFile(entry.Name)
+			fileNode := &FSNode{
+				Path:  fullPath,
+				Name:  entry.Name,
+				Kind:  nodeKind,
+				IsDir: false,
+			}
+			node.Children = append(node.Children, fileNode)
 		}
-		if videoExtensions[ext] {
-			count++
-		}
-	})
-	return count
+	}
+
+	return node, nil
 }
 
-// walkDir recursively walks the directory tree using imp.fs.ReadDir.
-func (imp *Importer) walkDir(ctx context.Context, dir string, cb func(path string, entry DirEntry)) {
-	entries, err := imp.fs.ReadDir(ctx, dir)
+// classifyNodeFile determines the ImportNodeKind for a file based on its extension.
+func (imp *Importer) classifyNodeFile(name string) ImportNodeKind {
+	ext := ""
+	if idx := strings.LastIndex(name, "."); idx >= 0 {
+		ext = strings.ToLower(name[idx:])
+	}
+
+	switch ext {
+	case ".nfo":
+		return ImportNodeNFO
+	case ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp":
+		return ImportNodeImage
+	case ".srt", ".sub", ".ass", ".ssa", ".vtt":
+		return ImportNodeSubtitle
+	default:
+		if videoExtensions[ext] {
+			return ImportNodeVideo
+		}
+		return ImportNodeOther
+	}
+}
+
+// ── Stage 2: Classification ───────────────────────────────────────────────
+
+// classifyTree walks the FSNode tree and produces ImportCandidate objects.
+// It uses WalkContext to propagate parent semantics (show root, season number)
+// and to track claimed paths so no file is claimed by multiple candidates.
+func (imp *Importer) classifyTree(ctx context.Context, node *FSNode, walkCtx *WalkContext) *ClassificationResult {
+	result := &ClassificationResult{
+		Candidates:  make([]ImportCandidate, 0),
+		Rejected:    make([]RejectedItem, 0),
+		Unknown:     make([]ImportCandidate, 0),
+		ScannedDirs: 0,
+	}
+
+	walkCtx.CurrentPath = node.Path
+	walkCtx.Depth++
+
+	if !node.IsDir {
+		// Leaf file nodes are not classified directly;
+		// they are collected by their parent directory classifier.
+		return result
+	}
+
+	// Count this directory as scanned
+	result.ScannedDirs++
+
+	// Check if this directory is a show root (contains tvshow.nfo)
+	tvshowNFOPath := imp.fs.Join(node.Path, "tvshow.nfo")
+	if imp.fs.Exists(ctx, tvshowNFOPath) {
+		imp.classifyShowDir(ctx, node, walkCtx, result)
+		return result
+	}
+
+	// Check if this directory contains a movie NFO
+	movieNFOPath := imp.findMovieNFO(ctx, node.Path)
+	if movieNFOPath != "" {
+		imp.classifyMovieDir(ctx, node, movieNFOPath, walkCtx, result)
+		return result
+	}
+
+	// If we're inside a show context, look for season directories and episode files
+	if walkCtx.ParentKind == ImportEntityShow || walkCtx.ParentKind == ImportEntitySeason {
+		// Check if this is a season directory
+		if seasonDirPattern.MatchString(node.Name) {
+			imp.classifySeasonDir(ctx, node, walkCtx, result)
+			return result
+		}
+		// If we're inside a season, look for episode files
+		if walkCtx.ParentKind == ImportEntitySeason {
+			imp.classifyEpisodeDir(ctx, node, walkCtx, result)
+			return result
+		}
+	}
+
+	// Fallback: if this directory contains video files and is not inside a show,
+	// classify it as a movie with filename-derived metadata.
+	// This handles the case where a directory has a malformed NFO or no NFO.
+	if walkCtx.ParentKind == ImportEntityUnknown || walkCtx.ParentKind == "" {
+		hasVideo := false
+		for _, child := range node.Children {
+			if !child.IsDir && child.Kind == ImportNodeVideo {
+				hasVideo = true
+				break
+			}
+		}
+		if hasVideo {
+			imp.classifyMovieDirNoNFO(ctx, node, walkCtx, result)
+			return result
+		}
+	}
+
+	// For each child directory, recurse
+	for _, child := range node.Children {
+		if !child.IsDir {
+			continue
+		}
+		childResult := imp.classifyTree(ctx, child, walkCtx)
+		result.Candidates = append(result.Candidates, childResult.Candidates...)
+		result.Rejected = append(result.Rejected, childResult.Rejected...)
+		result.Unknown = append(result.Unknown, childResult.Unknown...)
+		result.ScannedDirs += childResult.ScannedDirs
+	}
+
+	return result
+}
+
+// classifyShowDir creates a show candidate and processes child directories for seasons/episodes.
+func (imp *Importer) classifyShowDir(ctx context.Context, node *FSNode, walkCtx *WalkContext, result *ClassificationResult) {
+	showID := uuid.New().String()
+
+	candidate := ImportCandidate{
+		ID:        showID,
+		LibraryID: imp.libraryID,
+		Kind:      ImportEntityShow,
+		RootPath:  node.Path,
+		NFOPath:   imp.fs.Join(node.Path, "tvshow.nfo"),
+		Confidence: 100,
+		Evidence: []ImportEvidence{
+			{Rule: "tvshow.nfo", Weight: 100, Message: "tvshow.nfo found"},
+		},
+	}
+	result.Candidates = append(result.Candidates, candidate)
+
+	// Claim the show directory
+	walkCtx.ClaimedPaths[node.Path] = PathClaim{
+		CandidateID: showID,
+		Kind:        ImportEntityShow,
+		Path:        node.Path,
+	}
+
+	// Process child directories as seasons
+	childWalkCtx := &WalkContext{
+		ScanID:       walkCtx.ScanID,
+		LibraryID:    walkCtx.LibraryID,
+		SourceRoot:   walkCtx.SourceRoot,
+		ParentKind:   ImportEntityShow,
+		ShowRootPath: node.Path,
+		ShowID:       showID,
+		ClaimedPaths: walkCtx.ClaimedPaths,
+	}
+
+	for _, child := range node.Children {
+		if !child.IsDir {
+			continue
+		}
+		childResult := imp.classifyTree(ctx, child, childWalkCtx)
+		result.Candidates = append(result.Candidates, childResult.Candidates...)
+		result.Rejected = append(result.Rejected, childResult.Rejected...)
+		result.Unknown = append(result.Unknown, childResult.Unknown...)
+		result.ScannedDirs += childResult.ScannedDirs
+	}
+}
+
+// classifyMovieDir creates a movie candidate from a directory with a movie NFO.
+func (imp *Importer) classifyMovieDir(ctx context.Context, node *FSNode, nfoPath string, walkCtx *WalkContext, result *ClassificationResult) {
+	// Find the video file in this directory
+	videoPath := imp.findVideoFileInDir(ctx, node.Path, "")
+	if videoPath == "" {
+		result.Rejected = append(result.Rejected, RejectedItem{
+			Path:   node.Path,
+			Type:   ImportEntityMovie,
+			Reason: "movie NFO found but no video file in directory",
+		})
+		return
+	}
+
+	// Check if the video path is already claimed
+	if _, claimed := walkCtx.ClaimedPaths[videoPath]; claimed {
+		return
+	}
+
+	candidate := ImportCandidate{
+		ID:          uuid.New().String(),
+		LibraryID:   imp.libraryID,
+		Kind:        ImportEntityMovie,
+		RootPath:    node.Path,
+		PrimaryPath: videoPath,
+		NFOPath:     nfoPath,
+		Confidence:  100,
+		Evidence: []ImportEvidence{
+			{Rule: "movie_nfo", Weight: 100, Message: "movie NFO found: " + nfoPath},
+		},
+	}
+	result.Candidates = append(result.Candidates, candidate)
+
+	// Claim the video file
+	walkCtx.ClaimedPaths[videoPath] = PathClaim{
+		CandidateID: candidate.ID,
+		Kind:        ImportEntityMovie,
+		Path:        videoPath,
+	}
+}
+
+// classifyMovieDirNoNFO creates a movie candidate from a directory with video files
+// but no valid NFO. The title is derived from the video filename.
+func (imp *Importer) classifyMovieDirNoNFO(ctx context.Context, node *FSNode, walkCtx *WalkContext, result *ClassificationResult) {
+	// Find the first video file in this directory
+	var videoPath string
+	for _, child := range node.Children {
+		if !child.IsDir && child.Kind == ImportNodeVideo {
+			videoPath = child.Path
+			break
+		}
+	}
+	if videoPath == "" {
+		return
+	}
+
+	// Check if the video path is already claimed
+	if _, claimed := walkCtx.ClaimedPaths[videoPath]; claimed {
+		return
+	}
+
+	candidate := ImportCandidate{
+		ID:          uuid.New().String(),
+		LibraryID:   imp.libraryID,
+		Kind:        ImportEntityMovie,
+		RootPath:    node.Path,
+		PrimaryPath: videoPath,
+		Confidence:  50,
+		Evidence: []ImportEvidence{
+			{Rule: "filename_fallback", Weight: 50, Message: "no valid NFO, using filename"},
+		},
+	}
+	result.Candidates = append(result.Candidates, candidate)
+
+	// Claim the video file
+	walkCtx.ClaimedPaths[videoPath] = PathClaim{
+		CandidateID: candidate.ID,
+		Kind:        ImportEntityMovie,
+		Path:        videoPath,
+	}
+}
+
+// classifySeasonDir creates season-level processing: scans child directories and files for episodes.
+func (imp *Importer) classifySeasonDir(ctx context.Context, node *FSNode, walkCtx *WalkContext, result *ClassificationResult) {
+	// Extract season number from directory name
+	seasonNum := imp.extractSeasonNumber(node.Name)
+
+	childWalkCtx := &WalkContext{
+		ScanID:        walkCtx.ScanID,
+		LibraryID:     walkCtx.LibraryID,
+		SourceRoot:    walkCtx.SourceRoot,
+		ParentKind:    ImportEntitySeason,
+		ShowRootPath:  walkCtx.ShowRootPath,
+		ShowID:        walkCtx.ShowID,
+		SeasonRootPath: node.Path,
+		SeasonNumber:  seasonNum,
+		ClaimedPaths:  walkCtx.ClaimedPaths,
+	}
+
+	// Process children: could be episode files directly or subdirectories with episodes
+	for _, child := range node.Children {
+		if child.IsDir {
+			// Recurse into subdirectories
+			childResult := imp.classifyTree(ctx, child, childWalkCtx)
+			result.Candidates = append(result.Candidates, childResult.Candidates...)
+			result.Rejected = append(result.Rejected, childResult.Rejected...)
+			result.Unknown = append(result.Unknown, childResult.Unknown...)
+			result.ScannedDirs += childResult.ScannedDirs
+		} else if child.Kind == ImportNodeVideo {
+			// Direct video file in season directory
+			if _, claimed := walkCtx.ClaimedPaths[child.Path]; claimed {
+				continue
+			}
+			epCandidate := imp.classifyEpisodeFile(ctx, child, childWalkCtx, result)
+			if epCandidate != nil {
+				result.Candidates = append(result.Candidates, *epCandidate)
+			}
+		}
+	}
+}
+
+// classifyEpisodeDir handles a directory inside a season that contains video files.
+func (imp *Importer) classifyEpisodeDir(ctx context.Context, node *FSNode, walkCtx *WalkContext, result *ClassificationResult) {
+	for _, child := range node.Children {
+		if child.IsDir {
+			childResult := imp.classifyTree(ctx, child, walkCtx)
+			result.Candidates = append(result.Candidates, childResult.Candidates...)
+			result.Rejected = append(result.Rejected, childResult.Rejected...)
+			result.Unknown = append(result.Unknown, childResult.Unknown...)
+			result.ScannedDirs += childResult.ScannedDirs
+		} else if child.Kind == ImportNodeVideo {
+			if _, claimed := walkCtx.ClaimedPaths[child.Path]; claimed {
+				continue
+			}
+			epCandidate := imp.classifyEpisodeFile(ctx, child, walkCtx, result)
+			if epCandidate != nil {
+				result.Candidates = append(result.Candidates, *epCandidate)
+			}
+		}
+	}
+}
+
+// classifyEpisodeFile creates an episode candidate from a video file node.
+func (imp *Importer) classifyEpisodeFile(ctx context.Context, node *FSNode, walkCtx *WalkContext, result *ClassificationResult) *ImportCandidate {
+	// Extract episode info from filename
+	season, episode := extractEpisodeInfo(node.Name)
+
+	// If we have a season context but the filename doesn't have season info, use context
+	if season == 0 && walkCtx.SeasonNumber != nil {
+		season = *walkCtx.SeasonNumber
+	}
+
+	// Look for a matching episode NFO in the same directory
+	epDir := filepath.Dir(node.Name)
+	if epDir == "." || epDir == "/" {
+		epDir = walkCtx.CurrentPath
+	}
+	nfoPath := imp.fs.Join(epDir, trimExt(node.Name)+".nfo")
+	if !imp.fs.Exists(ctx, nfoPath) {
+		// Also check the parent directory of the video file
+		nfoPath = ""
+	}
+
+	candidate := ImportCandidate{
+		ID:            uuid.New().String(),
+		LibraryID:     imp.libraryID,
+		Kind:          ImportEntityEpisode,
+		PrimaryPath:   node.Path,
+		NFOPath:       nfoPath,
+		ShowID:        walkCtx.ShowID,
+		SeasonNumber:  walkCtx.SeasonNumber,
+		EpisodeNumber: repository.IntPtr(episode),
+		Confidence:    80,
+		Evidence: []ImportEvidence{
+			{Rule: "episode_file", Weight: 80, Message: "video file with episode pattern"},
+		},
+	}
+
+	if nfoPath != "" {
+		candidate.Confidence = 100
+		candidate.Evidence = append(candidate.Evidence, ImportEvidence{
+			Rule:    "episode_nfo",
+			Weight:  100,
+			Message: "episode NFO found",
+		})
+	}
+
+	// Claim the video file
+	walkCtx.ClaimedPaths[node.Path] = PathClaim{
+		CandidateID: candidate.ID,
+		Kind:        ImportEntityEpisode,
+		Path:        node.Path,
+	}
+
+	return &candidate
+}
+
+// extractSeasonNumber parses the season number from a directory name like "Season 01".
+func (imp *Importer) extractSeasonNumber(name string) *int {
+	m := seasonDirPattern.FindStringSubmatch(name)
+	if m == nil {
+		return nil
+	}
+	// Extract digits
+	digits := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(name, "season"), "Season"))
+	digits = strings.TrimSpace(digits)
+	if n, err := strconv.Atoi(digits); err == nil {
+		return &n
+	}
+	return nil
+}
+
+// ── Stage 3: Metadata Parsing ─────────────────────────────────────────────
+
+// parseCandidateMetadata parses NFO files and enriches candidates with metadata.
+func (imp *Importer) parseCandidateMetadata(ctx context.Context, candidates []ImportCandidate) {
+	for i := range candidates {
+		c := &candidates[i]
+
+		switch c.Kind {
+		case ImportEntityShow:
+			imp.parseShowMetadata(ctx, c)
+		case ImportEntityMovie:
+			imp.parseMovieMetadata(ctx, c)
+		case ImportEntityEpisode:
+			imp.parseEpisodeMetadata(ctx, c)
+		}
+	}
+}
+
+// parseShowMetadata reads and parses the tvshow.nFO for a show candidate.
+// The parsed NFO is stored via the candidate's Evidence for later use in reconciliation.
+func (imp *Importer) parseShowMetadata(ctx context.Context, c *ImportCandidate) {
+	if c.NFOPath == "" {
+		return
+	}
+	f, err := imp.fs.Open(ctx, c.NFOPath)
 	if err != nil {
 		return
 	}
-	for _, entry := range entries {
-		fullPath := imp.fs.Join(dir, entry.Name)
-		cb(fullPath, entry)
-		if entry.IsDir {
-			imp.walkDir(ctx, fullPath, cb)
+	defer f.Close()
+
+	showNFO, err := ParseShowNFO(f)
+	if err != nil {
+		return
+	}
+
+	c.Evidence = append(c.Evidence, ImportEvidence{
+		Rule:    "show_nfo_parsed",
+		Weight:  100,
+		Message: fmt.Sprintf("show title: %s", showNFO.Title),
+	})
+	c.Confidence = 100
+	_ = showNFO
+}
+
+// parseMovieMetadata reads and parses the movie NFO for a movie candidate.
+func (imp *Importer) parseMovieMetadata(ctx context.Context, c *ImportCandidate) {
+	if c.NFOPath == "" {
+		return
+	}
+	f, err := imp.fs.Open(ctx, c.NFOPath)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	movieNFO, err := ParseMovieNFO(f)
+	if err != nil {
+		return
+	}
+
+	c.Evidence = append(c.Evidence, ImportEvidence{
+		Rule:    "movie_nfo_parsed",
+		Weight:  100,
+		Message: fmt.Sprintf("movie title: %s", movieNFO.Title),
+	})
+	c.Confidence = 100
+	_ = movieNFO
+}
+
+// parseEpisodeMetadata reads and parses the episode NFO for an episode candidate.
+func (imp *Importer) parseEpisodeMetadata(ctx context.Context, c *ImportCandidate) {
+	if c.NFOPath == "" {
+		return
+	}
+	f, err := imp.fs.Open(ctx, c.NFOPath)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	episodes, err := ParseEpisodeNFOs(f)
+	if err != nil || len(episodes) == 0 {
+		return
+	}
+
+	c.Evidence = append(c.Evidence, ImportEvidence{
+		Rule:    "episode_nfo_parsed",
+		Weight:  100,
+		Message: fmt.Sprintf("episode title: %s", episodes[0].Title),
+	})
+}
+
+// ── Stage 4: Reconciliation ───────────────────────────────────────────────
+
+// reconcileCandidates takes classified, metadata-parsed candidates and
+// creates or updates database records. It returns a ReconcileResult with
+// counts of accepted/rejected/unknown items.
+func (imp *Importer) reconcileCandidates(ctx context.Context, candidates []ImportCandidate) (*ReconcileResult, error) {
+	result := &ReconcileResult{
+		Accepted:        make([]ResolvedItem, 0),
+		Rejected:        make([]RejectedItem, 0),
+		Unknown:         make([]ImportCandidate, 0),
+		TotalCandidates: len(candidates),
+		DoneCandidates:  0,
+	}
+
+	for i := range candidates {
+		c := &candidates[i]
+
+		switch c.Kind {
+		case ImportEntityShow:
+			resolved, err := imp.reconcileShow(ctx, c)
+			if err != nil {
+				result.Rejected = append(result.Rejected, RejectedItem{
+					Path:   c.RootPath,
+					Type:   c.Kind,
+					Reason: err.Error(),
+				})
+			} else {
+				result.Accepted = append(result.Accepted, *resolved)
+			}
+
+		case ImportEntityMovie:
+			resolved, err := imp.reconcileMovie(ctx, c)
+			if err != nil {
+				result.Rejected = append(result.Rejected, RejectedItem{
+					Path:   c.PrimaryPath,
+					Type:   c.Kind,
+					Reason: err.Error(),
+				})
+			} else {
+				result.Accepted = append(result.Accepted, *resolved)
+			}
+
+		case ImportEntityEpisode:
+			resolved, err := imp.reconcileEpisode(ctx, c)
+			if err != nil {
+				result.Rejected = append(result.Rejected, RejectedItem{
+					Path:   c.PrimaryPath,
+					Type:   c.Kind,
+					Reason: err.Error(),
+				})
+			} else {
+				result.Accepted = append(result.Accepted, *resolved)
+			}
+
+		default:
+			result.Unknown = append(result.Unknown, *c)
+		}
+
+		result.DoneCandidates++
+	}
+
+	return result, nil
+}
+
+// reconcileShow creates or updates a show media item.
+func (imp *Importer) reconcileShow(ctx context.Context, c *ImportCandidate) (*ResolvedItem, error) {
+	nfoPath := imp.fs.Join(c.RootPath, "tvshow.nfo")
+	var showNFO *model.NFOTVShow
+
+	if imp.fs.Exists(ctx, nfoPath) {
+		f, err := imp.fs.Open(ctx, nfoPath)
+		if err == nil {
+			showNFO, err = ParseShowNFO(f)
+			f.Close()
+			if err != nil {
+				showNFO = nil
+			}
 		}
 	}
+
+	title := ""
+	overview := ""
+	var year int
+	var rating float64
+	var runtime int
+
+	if showNFO != nil {
+		title = showNFO.Title
+		overview = showNFO.Plot
+		year = showNFO.Year
+		rating = showNFO.Rating
+		runtime = showNFO.Runtime
+	}
+
+	if title == "" {
+		title = baseName(c.RootPath)
+	}
+
+	// Find poster/backdrop
+	nfoPoster := ""
+	nfoBackdrop := ""
+	if showNFO != nil {
+		nfoPoster = extractNFOPosterThumb(showNFO.Thumbs)
+		nfoBackdrop = extractNFOFanartPath(showNFO.Fanart)
+	}
+
+	base := baseName(c.RootPath)
+	var posterPath, backdropPath string
+	if _, ok := imp.fs.(*LocalImportFS); ok {
+		posterPath = FindPosterPath(c.RootPath, base, nfoPoster)
+		backdropPath = FindBackdropPath(c.RootPath, base, nfoBackdrop)
+	} else {
+		posterPath = nfoPoster
+		backdropPath = nfoBackdrop
+	}
+
+	// Look for existing show by library_id + root_path + type
+	existingID, _ := imp.mediaRepo.FindByRootPath(ctx, imp.libraryID, c.RootPath, "show")
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	showID := c.ID // Use candidate ID as default
+	action := ReconcileCreate
+	if existingID != "" {
+		showID = existingID
+		action = ReconcileUpdate
+	}
+
+	showItem := &model.MediaItem{
+		ID:             showID,
+		Type:           "show",
+		Title:          title,
+		Year:           year,
+		Overview:       overview,
+		Rating:         rating,
+		Duration:       runtime * 60,
+		FilePath:       "", // Show file_path must be empty
+		RootPath:       c.RootPath,
+		NFOPath:        c.NFOPath,
+		PosterPath:     posterPath,
+		BackdropPath:   backdropPath,
+		MetadataSource: "nfo",
+		ProviderID:     imp.providerID,
+		LibraryID:      imp.libraryID,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	if showNFO != nil {
+		applyShowNFOFields(showItem, showNFO)
+		// Re-apply our core fields to ensure correctness
+		showItem.FilePath = ""
+		showItem.RootPath = c.RootPath
+		showItem.NFOPath = c.NFOPath
+		showItem.MetadataSource = "nfo"
+	}
+
+	// Find logo
+	if logoPath := FindLogoPath(c.RootPath); logoPath != "" {
+		showItem.LogoPath = logoPath
+	}
+
+	if existingID != "" {
+		if err := imp.mediaRepo.Update(ctx, showItem); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := imp.mediaRepo.Create(ctx, showItem); err != nil {
+			return nil, err
+		}
+	}
+
+	return &ResolvedItem{
+		CandidateID: c.ID,
+		MediaID:     showID,
+		Kind:        ImportEntityShow,
+		Action:      action,
+		RootPath:    c.RootPath,
+		PrimaryPath: "",
+	}, nil
 }
+
+// reconcileMovie creates or updates a movie media item.
+func (imp *Importer) reconcileMovie(ctx context.Context, c *ImportCandidate) (*ResolvedItem, error) {
+	if c.PrimaryPath == "" {
+		return nil, fmt.Errorf("movie candidate has no video path")
+	}
+
+	videoPath := c.PrimaryPath
+
+	// Parse NFO if available
+	var title, overview string
+	var year int
+	var rating float64
+	var runtime int
+	var nfoPoster, nfoBackdrop string
+	var sortTitle string
+	var movieNFO *model.NFOMovie
+
+	if c.NFOPath != "" {
+		f, err := imp.fs.Open(ctx, c.NFOPath)
+		if err == nil {
+			movieNFO, err = ParseMovieNFO(f)
+			f.Close()
+			if err == nil && movieNFO != nil {
+				title = movieNFO.Title
+				overview = movieNFO.Plot
+				year = movieNFO.Year
+				rating = movieNFO.Rating
+				runtime = movieNFO.Runtime
+				sortTitle = movieNFO.SortTitle
+				nfoPoster = extractNFOPosterThumb(movieNFO.Thumbs)
+				nfoBackdrop = extractNFOFanartPath(movieNFO.Fanart)
+			}
+		}
+	}
+
+	// Fallback to filename-derived title if no NFO title
+	if title == "" {
+		title = trimExt(baseName(videoPath))
+		title = cleanTitle(title)
+	}
+
+	// Find poster/backdrop
+	base := trimExt(baseName(videoPath))
+	var posterPath, backdropPath string
+	if _, ok := imp.fs.(*LocalImportFS); ok {
+		posterPath = FindPosterPath(c.RootPath, base, nfoPoster)
+		backdropPath = FindBackdropPath(c.RootPath, base, nfoBackdrop)
+	} else {
+		posterPath = nfoPoster
+		backdropPath = nfoBackdrop
+	}
+
+	// Look for existing movie by library_id + primary_path + type
+	existingID, _ := imp.mediaRepo.FindExistingItem(ctx, imp.libraryID, videoPath, "movie")
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	movieID := c.ID // Use candidate ID as default
+	action := ReconcileCreate
+	if existingID != "" {
+		movieID = existingID
+		action = ReconcileUpdate
+	}
+
+	metadataSource := "nfo"
+	if c.NFOPath == "" {
+		metadataSource = "filename"
+	}
+
+	movieItem := &model.MediaItem{
+		ID:             movieID,
+		Type:           "movie",
+		Title:          title,
+		SortTitle:      sortTitle,
+		Year:           year,
+		Overview:       overview,
+		Rating:         rating,
+		Duration:       runtime * 60,
+		FilePath:       videoPath,    // Movie file_path = actual video file
+		PrimaryPath:    videoPath,    // Movie primary_path = actual video file
+		RootPath:       c.RootPath,
+		NFOPath:        c.NFOPath,
+		PosterPath:     posterPath,
+		BackdropPath:   backdropPath,
+		MetadataSource: metadataSource,
+		ProviderID:     imp.providerID,
+		LibraryID:      imp.libraryID,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	if movieNFO != nil {
+		applyMovieNFOFields(movieItem, movieNFO)
+		// Re-apply our core fields after NFO processing to ensure correctness
+		movieItem.Title = title
+		movieItem.FilePath = videoPath
+		movieItem.PrimaryPath = videoPath
+		movieItem.RootPath = c.RootPath
+		movieItem.NFOPath = c.NFOPath
+		movieItem.MetadataSource = metadataSource
+	}
+
+	// Find logo
+	if logoPath := FindLogoPath(c.RootPath); logoPath != "" {
+		movieItem.LogoPath = logoPath
+	}
+
+	if existingID != "" {
+		if err := imp.mediaRepo.Update(ctx, movieItem); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := imp.mediaRepo.Create(ctx, movieItem); err != nil {
+			return nil, err
+		}
+	}
+
+	return &ResolvedItem{
+		CandidateID: c.ID,
+		MediaID:     movieID,
+		Kind:        ImportEntityMovie,
+		Action:      action,
+		RootPath:    c.RootPath,
+		PrimaryPath: videoPath,
+	}, nil
+}
+
+// reconcileEpisode creates or updates an episode media item.
+func (imp *Importer) reconcileEpisode(ctx context.Context, c *ImportCandidate) (*ResolvedItem, error) {
+	if c.PrimaryPath == "" {
+		return nil, fmt.Errorf("episode candidate has no video path")
+	}
+
+	videoPath := c.PrimaryPath
+	baseNameNoExt := trimExt(baseName(videoPath))
+
+	// Extract season/episode from filename
+	season, episode := extractEpisodeInfo(baseName(videoPath))
+
+	// Resolve the actual show DB ID from the show root path
+	showID := c.ShowID
+	if c.ShowID != "" && c.SeasonNumber != nil {
+		// Try to find the show by root_path to get the stable DB ID
+		existingShowID, _ := imp.mediaRepo.FindByRootPath(ctx, imp.libraryID, imp.getShowRootPath(c), "show")
+		if existingShowID != "" {
+			showID = existingShowID
+		}
+	}
+
+	// Look for episode NFO
+	epTitle := baseNameNoExt
+	var epOverview string
+	var epRating float64
+	var epRuntime int
+	var nfoThumb string
+	var nfoSeason, nfoEpisode int
+
+	// Check for NFO: first try same-name NFO in same directory
+	epDir := filepath.Dir(videoPath)
+	epNFOPath := imp.fs.Join(epDir, baseNameNoExt+".nfo")
+
+	if imp.fs.Exists(ctx, epNFOPath) {
+		if nf, err := imp.fs.Open(ctx, epNFOPath); err == nil {
+			episodes, err := ParseEpisodeNFOs(nf)
+			nf.Close()
+			if err == nil && len(episodes) > 0 {
+				epNFO := episodes[0]
+				epTitle = epNFO.Title
+				epOverview = epNFO.Plot
+				epRating = epNFO.Rating
+				epRuntime = epNFO.Runtime
+				nfoThumb = extractNFOEpisodeThumb(epNFO.Thumbs)
+				if epNFO.Season > 0 {
+					nfoSeason = epNFO.Season
+				}
+				if epNFO.Episode > 0 {
+					nfoEpisode = epNFO.Episode
+				}
+			}
+		}
+	}
+
+	if epTitle == "" {
+		epTitle = baseNameNoExt
+	}
+
+	// Use NFO season/episode if available
+	if nfoSeason > 0 {
+		season = nfoSeason
+	}
+	if nfoEpisode > 0 {
+		episode = nfoEpisode
+	}
+
+	var thumbPath string
+	if _, ok := imp.fs.(*LocalImportFS); ok {
+		thumbPath = FindEpisodeThumbnailPath(epDir, baseNameNoExt, nfoThumb)
+	} else {
+		thumbPath = nfoThumb
+	}
+
+	// Look for existing episode by library_id + primary_path + type
+	existingID, _ := imp.mediaRepo.FindExistingItem(ctx, imp.libraryID, videoPath, "episode")
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	epID := c.ID // Use candidate ID as default
+	action := ReconcileCreate
+	if existingID != "" {
+		epID = existingID
+		action = ReconcileUpdate
+	}
+
+	epItem := &model.MediaItem{
+		ID:             epID,
+		Type:           "episode",
+		Title:          epTitle,
+		Overview:       epOverview,
+		Rating:         epRating,
+		Duration:       epRuntime * 60,
+		FilePath:       videoPath, // Episode file_path = actual video file (no double-nesting)
+		PrimaryPath:    videoPath, // Episode primary_path = actual video file
+		PosterPath:     thumbPath,
+		BackdropPath:   thumbPath,
+		ParentID:       showID, // Use resolved show DB ID, not candidate ID
+		Season:         repository.IntPtr(season),
+		Episode:        repository.IntPtr(episode),
+		MetadataSource: "nfo",
+		ProviderID:     imp.providerID,
+		LibraryID:      imp.libraryID,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	// Apply enhanced NFO fields if NFO exists
+	if imp.fs.Exists(ctx, epNFOPath) {
+		if nf, err := imp.fs.Open(ctx, epNFOPath); err == nil {
+			episodes, err := ParseEpisodeNFOs(nf)
+			nf.Close()
+			if err == nil && len(episodes) > 0 {
+				applyEpisodeNFOFields(epItem, &episodes[0])
+			}
+		}
+	}
+
+	if existingID != "" {
+		if err := imp.mediaRepo.Update(ctx, epItem); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := imp.mediaRepo.Create(ctx, epItem); err != nil {
+			return nil, err
+		}
+	}
+
+	return &ResolvedItem{
+		CandidateID: c.ID,
+		MediaID:     epID,
+		Kind:        ImportEntityEpisode,
+		Action:      action,
+		RootPath:    "",
+		PrimaryPath: videoPath,
+	}, nil
+}
+
+// getShowRootPath returns the show root path for an episode candidate.
+// It walks up from the episode's directory to find the show root.
+func (imp *Importer) getShowRootPath(c *ImportCandidate) string {
+	// The episode's video path is in a season directory inside the show root.
+	// We need to find the show root by looking for tvshow.nfo in parent directories.
+	videoPath := c.PrimaryPath
+	if videoPath == "" {
+		return ""
+	}
+
+	dir := filepath.Dir(videoPath)
+	for dir != "" && dir != "/" && dir != "." {
+		tvshowPath := imp.fs.Join(dir, "tvshow.nfo")
+		if imp.fs.Exists(context.Background(), tvshowPath) {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
+}
+
+// buildRejectWarnings converts rejected items to warning strings.
+func (imp *Importer) buildRejectWarnings(rejected []RejectedItem) []string {
+	warnings := make([]string, 0, len(rejected))
+	for _, r := range rejected {
+		warnings = append(warnings, fmt.Sprintf("%s: %s", r.Path, r.Reason))
+	}
+	return warnings
+}
+
+// ── Utility functions (preserved from original) ───────────────────────────
 
 // stringsToJSON serializes a string slice to JSON.
 func stringsToJSON(ss []string) string {
@@ -524,364 +1443,6 @@ func applyEpisodeNFOFields(item *model.MediaItem, nfoEp *model.NFOEpisode) {
 	}
 }
 
-// processShowDir handles a TV show directory containing tvshow.nfo.
-// Returns (createdCount, warnings, error).
-//
-// Dedup strategy: before generating a new UUID, look up an existing show row
-// by (library_id, file_path, type='show'). If found, reuse its ID and UPDATE
-// the row with fresh NFO data. This keeps the show ID stable across re-imports
-// so episodes' parent_id foreign keys remain valid.
-func (imp *Importer) processShowDir(ctx context.Context, showDirPath string, existingPaths map[string]bool) (int, []string, error) {
-	var warnings []string
-	showNFOPath := imp.fs.Join(showDirPath, "tvshow.nfo")
-
-	f, err := imp.fs.Open(ctx, showNFOPath)
-	if err != nil {
-		return 0, warnings, err
-	}
-	defer f.Close()
-
-	showNFO, err := ParseShowNFO(f)
-	if err != nil {
-		return 0, warnings, err
-	}
-
-	title := showNFO.Title
-	if title == "" {
-		title = baseName(showDirPath)
-	}
-
-	overview := showNFO.Plot
-
-	nfoPoster := extractNFOPosterThumb(showNFO.Thumbs)
-	nfoBackdrop := extractNFOFanartPath(showNFO.Fanart)
-
-	base := baseName(showDirPath)
-
-	var posterPath, backdropPath string
-	if _, ok := imp.fs.(*LocalImportFS); ok {
-		posterPath = FindPosterPath(showDirPath, base, nfoPoster)
-		backdropPath = FindBackdropPath(showDirPath, base, nfoBackdrop)
-	} else {
-		posterPath = nfoPoster
-		backdropPath = nfoBackdrop
-	}
-
-	// DEDUP: look for an existing show with the same library_id + file_path + type
-	existingShowID, _ := imp.mediaRepo.FindExistingItem(ctx, imp.libraryID, showDirPath, "show")
-
-	showID := uuid.New().String()
-	if existingShowID != "" {
-		showID = existingShowID
-	}
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	showItem := &model.MediaItem{
-		ID:             showID,
-		Type:           "show",
-		Title:          title,
-		Year:           showNFO.Year,
-		Overview:       overview,
-		Rating:         showNFO.Rating,
-		Duration:       showNFO.Runtime * 60,
-		FilePath:       showDirPath,
-		PosterPath:     posterPath,
-		BackdropPath:   backdropPath,
-		MetadataSource: "nfo",
-		ProviderID:     imp.providerID,
-		LibraryID:      imp.libraryID,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	}
-	applyShowNFOFields(showItem, showNFO)
-
-	// Find logo.png
-	if logoPath := FindLogoPath(showDirPath); logoPath != "" {
-		showItem.LogoPath = logoPath
-	}
-
-	created := 0
-	if existingShowID != "" {
-		// Reuse existing row — UPDATE with fresh NFO data
-		if err := imp.mediaRepo.Update(ctx, showItem); err != nil {
-			return 0, warnings, err
-		}
-		// created stays 0 — no new row inserted
-	} else {
-		// New show — INSERT
-		if err := imp.mediaRepo.Create(ctx, showItem); err != nil {
-			return 0, warnings, err
-		}
-		created = 1
-	}
-
-	entries, err := imp.fs.ReadDir(ctx, showDirPath)
-	if err != nil {
-		return created, warnings, nil
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir {
-			continue
-		}
-		seasonDirPath := imp.fs.Join(showDirPath, entry.Name)
-
-		n, err := imp.processEpisodeFilesInDir(ctx, seasonDirPath, showID, existingPaths)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: %v", entry.Name, err))
-		}
-		// Only count episode as "imported" if it was actually inserted (n > 0)
-		created += n
-	}
-
-	return created, warnings, nil
-}
-
-// processEpisodeFilesInDir scans a directory for video files and creates episode items.
-func (imp *Importer) processEpisodeFilesInDir(ctx context.Context, dirPath, showID string, existingPaths map[string]bool) (int, error) {
-	created := 0
-
-	// Recursively walk through all directories
-	imp.walkDir(ctx, dirPath, func(path string, entry DirEntry) {
-		if entry.IsDir {
-			return
-		}
-
-		name := entry.Name
-		var ext string
-		if idx := strings.LastIndex(name, "."); idx >= 0 {
-			ext = strings.ToLower(name[idx:])
-		}
-		if !videoExtensions[ext] {
-			return
-		}
-
-		videoPath := imp.fs.Join(path, name)
-		if existingPaths[videoPath] {
-			return
-		}
-
-		baseNameNoExt := trimExt(name)
-		season, episode := extractEpisodeInfo(name)
-
-		epNFOPath := imp.fs.Join(path, baseNameNoExt+".nfo")
-		var epTitle, epOverview string
-		var epRating float64
-		var epRuntime int
-		var nfoThumb string
-
-		if imp.fs.Exists(ctx, epNFOPath) {
-			if nf, err := imp.fs.Open(ctx, epNFOPath); err == nil {
-				episodes, err := ParseEpisodeNFOs(nf)
-				nf.Close()
-				if err == nil && len(episodes) > 0 {
-					epNFO := episodes[0]
-					epTitle = epNFO.Title
-					epOverview = epNFO.Plot
-					epRating = epNFO.Rating
-					epRuntime = epNFO.Runtime
-					nfoThumb = extractNFOEpisodeThumb(epNFO.Thumbs)
-					if epNFO.Season > 0 {
-						season = epNFO.Season
-					}
-					if epNFO.Episode > 0 {
-						episode = epNFO.Episode
-					}
-				}
-			}
-		}
-
-		if epTitle == "" {
-			epTitle = baseNameNoExt
-		}
-
-		var thumbPath string
-		if _, ok := imp.fs.(*LocalImportFS); ok {
-			thumbPath = FindEpisodeThumbnailPath(path, baseNameNoExt, nfoThumb)
-		} else {
-			thumbPath = nfoThumb
-		}
-
-		now := time.Now().UTC().Format(time.RFC3339)
-		epItem := &model.MediaItem{
-			ID:             uuid.New().String(),
-			Type:           "episode",
-			Title:          epTitle,
-			Overview:       epOverview,
-			Rating:         epRating,
-			Duration:       epRuntime * 60,
-			FilePath:       videoPath,
-			PosterPath:     thumbPath,
-			BackdropPath:   thumbPath,
-			ParentID:       showID,
-			Season:         repository.IntPtr(season),
-			Episode:        repository.IntPtr(episode),
-			MetadataSource: "nfo",
-			ProviderID:     imp.providerID,
-			LibraryID:      imp.libraryID,
-			CreatedAt:      now,
-			UpdatedAt:      now,
-		}
-
-		// Apply enhanced fields from NFO if available
-		if imp.fs.Exists(ctx, epNFOPath) {
-			if nf, err := imp.fs.Open(ctx, epNFOPath); err == nil {
-				episodes, err := ParseEpisodeNFOs(nf)
-				nf.Close()
-				if err == nil && len(episodes) > 0 {
-					applyEpisodeNFOFields(epItem, &episodes[0])
-				}
-			}
-		}
-
-		if err := imp.mediaRepo.Create(ctx, epItem); err != nil {
-			// Don't stop processing on error, just log it
-			// We can't return error from callback, so we'll just skip
-			return
-		}
-		created++
-	})
-
-	return created, nil
-}
-
-// processMovieDir handles a directory with a movie NFO file.
-// Returns (createdCount, warnings, error).
-func (imp *Importer) processMovieDir(ctx context.Context, dirPath, nfoPath string, existingPaths map[string]bool) (int, []string, error) {
-	var warnings []string
-	f, err := imp.fs.Open(ctx, nfoPath)
-	if err != nil {
-		return 0, warnings, err
-	}
-	defer f.Close()
-
-	movieNFO, err := ParseMovieNFO(f)
-	if err != nil {
-		return 0, warnings, err
-	}
-
-	title := movieNFO.Title
-	if title == "" {
-		title = trimExt(baseName(nfoPath))
-	}
-
-	overview := movieNFO.Plot
-
-	videoPath := imp.findVideoFileInDir(ctx, dirPath, title)
-	if videoPath == "" {
-		return 0, warnings, nil
-	}
-	if existingPaths[videoPath] {
-		return 0, warnings, nil
-	}
-
-	nfoPoster := extractNFOPosterThumb(movieNFO.Thumbs)
-	nfoBackdrop := extractNFOFanartPath(movieNFO.Fanart)
-	base := trimExt(baseName(nfoPath))
-
-	var posterPath, backdropPath string
-	if _, ok := imp.fs.(*LocalImportFS); ok {
-		posterPath = FindPosterPath(dirPath, base, nfoPoster)
-		backdropPath = FindBackdropPath(dirPath, base, nfoBackdrop)
-	} else {
-		posterPath = nfoPoster
-		backdropPath = nfoBackdrop
-	}
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	movieItem := &model.MediaItem{
-		ID:             uuid.New().String(),
-		Type:           "movie",
-		Title:          title,
-		SortTitle:      movieNFO.SortTitle,
-		Year:           movieNFO.Year,
-		Overview:       overview,
-		Rating:         movieNFO.Rating,
-		Duration:       movieNFO.Runtime * 60,
-		FilePath:       videoPath,
-		PosterPath:     posterPath,
-		BackdropPath:   backdropPath,
-		MetadataSource: "nfo",
-		ProviderID:     imp.providerID,
-		LibraryID:      imp.libraryID,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	}
-	applyMovieNFOFields(movieItem, movieNFO)
-	// Find logo.png
-	if logoPath := FindLogoPath(dirPath); logoPath != "" {
-		movieItem.LogoPath = logoPath
-	}
-
-	if err := imp.mediaRepo.Create(ctx, movieItem); err != nil {
-		return 0, warnings, err
-	}
-	return 1, warnings, nil
-}
-
-// processDirAsMovie handles a directory with video files but no NFO.
-// Returns (createdCount, warnings).
-func (imp *Importer) processDirAsMovie(ctx context.Context, dirPath string, existingPaths map[string]bool) (int, []string) {
-	var warnings []string
-	entries, err := imp.fs.ReadDir(ctx, dirPath)
-	if err != nil {
-		return 0, warnings
-	}
-
-	var videoFiles []string
-	for _, entry := range entries {
-		if entry.IsDir {
-			continue
-		}
-		name := entry.Name
-		var ext string
-		if idx := strings.LastIndex(name, "."); idx >= 0 {
-			ext = strings.ToLower(name[idx:])
-		}
-		if videoExtensions[ext] {
-			videoFiles = append(videoFiles, entry.Name)
-		}
-	}
-
-	if len(videoFiles) == 0 {
-		return 0, warnings
-	}
-
-	videoPath := imp.fs.Join(dirPath, videoFiles[0])
-	if existingPaths[videoPath] {
-		return 0, warnings
-	}
-
-	title := trimExt(videoFiles[0])
-	title = cleanTitle(title)
-
-	base := trimExt(videoFiles[0])
-	var posterPath string
-	if _, ok := imp.fs.(*LocalImportFS); ok {
-		posterPath = FindPosterPath(dirPath, base, "")
-	}
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	movieItem := &model.MediaItem{
-		ID:             uuid.New().String(),
-		Type:           "movie",
-		Title:          title,
-		FilePath:       videoPath,
-		PosterPath:     posterPath,
-		MetadataSource: "filename",
-		ProviderID:     imp.providerID,
-		LibraryID:      imp.libraryID,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	}
-
-	if err := imp.mediaRepo.Create(ctx, movieItem); err != nil {
-		warnings = append(warnings, fmt.Sprintf("create failed: %v", err))
-		return 0, warnings
-	}
-	return 1, warnings
-}
-
 // findMovieNFO looks for a .nfo file in dir that contains a <movie> root element.
 // It prefers "movie.nfo" (the Kodi/Jellyfin standard name), and only falls back to
 // other .nfo files if movie.nfo does not exist or fails to parse.
@@ -903,7 +1464,9 @@ func (imp *Importer) findMovieNFO(ctx context.Context, dir string) string {
 				var movie model.NFOMovie
 				err = xml.NewDecoder(nf).Decode(&movie)
 				nf.Close()
-				if err == nil && movie.Title != "" {
+				if err == nil {
+					// Accept movie.nfo even with empty title;
+					// reconciler will fall back to filename.
 					return path
 				}
 			}

@@ -27,7 +27,7 @@ func NewMediaRepository(db *DB) *MediaRepository {
 // MediaColumns is the canonical column list for media_items SELECT queries.
 // Exported so handlers can build dynamic queries without hardcoding column names.
 const MediaColumns = `id, type, title, sort_title, year, overview, rating, duration,
-		file_path, poster_path, backdrop_path, parent_id, season, episode,
+		file_path, root_path, primary_path, nfo_path, poster_path, backdrop_path, parent_id, season, episode,
 		metadata_source, provider_id, library_id, status, created_at, updated_at,
 		mpaa, genres, studios, actors, unique_ids, premiered, outline, tagline,
 		countries, directors, credits, tags, set_name, set_overview, video_codec,
@@ -39,7 +39,7 @@ const MediaColumns = `id, type, title, sort_title, year, overview, rating, durat
 const mediaColumns = MediaColumns
 
 const mediaInsertColumns = `(id, type, title, sort_title, year, overview, rating, duration,
-		file_path, poster_path, backdrop_path, parent_id, season, episode,
+		file_path, root_path, primary_path, nfo_path, poster_path, backdrop_path, parent_id, season, episode,
 		metadata_source, provider_id, library_id, status, created_at, updated_at,
 		mpaa, genres, studios, actors, unique_ids, premiered, outline, tagline,
 		countries, directors, credits, tags, set_name, set_overview, video_codec,
@@ -48,12 +48,12 @@ const mediaInsertColumns = `(id, type, title, sort_title, year, overview, rating
 		collection_number, end_date, release_date, display_order, original_title,
 		user_rating, date_added, last_played, playcount)`
 
-const mediaInsertPlaceholders = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+const mediaInsertPlaceholders = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 func scanMediaItem(rows *sql.Rows, m *model.MediaItem) error {
 	var season, episode int
 	if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year,
-		&m.Overview, &m.Rating, &m.Duration, &m.FilePath, &m.PosterPath,
+		&m.Overview, &m.Rating, &m.Duration, &m.FilePath, &m.RootPath, &m.PrimaryPath, &m.NFOPath, &m.PosterPath,
 		&m.BackdropPath, &m.ParentID, &season, &episode,
 		&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.Status, &m.CreatedAt, &m.UpdatedAt,
 		&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
@@ -73,7 +73,7 @@ func scanMediaItem(rows *sql.Rows, m *model.MediaItem) error {
 func scanMediaRow(row *sql.Row, m *model.MediaItem) error {
 	var season, episode int
 	err := row.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year, &m.Overview,
-		&m.Rating, &m.Duration, &m.FilePath, &m.PosterPath, &m.BackdropPath,
+		&m.Rating, &m.Duration, &m.FilePath, &m.RootPath, &m.PrimaryPath, &m.NFOPath, &m.PosterPath, &m.BackdropPath,
 		&m.ParentID, &season, &episode, &m.MetadataSource, &m.ProviderID, &m.LibraryID,
 		&m.Status, &m.CreatedAt, &m.UpdatedAt,
 		&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
@@ -154,7 +154,7 @@ func (r *MediaRepository) Create(ctx context.Context, m *model.MediaItem) error 
 		`+mediaInsertColumns+`
 		VALUES `+mediaInsertPlaceholders,
 		m.ID, m.Type, m.Title, m.SortTitle, m.Year, m.Overview, m.Rating,
-		m.Duration, m.FilePath, m.PosterPath, m.BackdropPath, m.ParentID,
+		m.Duration, m.FilePath, m.RootPath, m.PrimaryPath, m.NFOPath, m.PosterPath, m.BackdropPath, m.ParentID,
 		season, episode, m.MetadataSource, m.ProviderID, m.LibraryID, m.Status,
 		m.CreatedAt, m.UpdatedAt,
 		m.MPAA, m.Genres, m.Studios, m.Actors, m.UniqueIDs, m.Premiered,
@@ -185,7 +185,7 @@ func (r *MediaRepository) Update(ctx context.Context, m *model.MediaItem) error 
 
 	_, err := r.db.ExecContext(ctx, `UPDATE media_items SET
 		title = ?, sort_title = ?, year = ?, overview = ?, rating = ?,
-		duration = ?, file_path = ?, poster_path = ?, backdrop_path = ?,
+		duration = ?, file_path = ?, root_path = ?, primary_path = ?, nfo_path = ?, poster_path = ?, backdrop_path = ?,
 		parent_id = ?, season = ?, episode = ?, metadata_source = ?,
 		provider_id = ?, library_id = ?, updated_at = ?,
 		mpaa = ?, genres = ?, studios = ?, actors = ?, unique_ids = ?,
@@ -199,7 +199,7 @@ func (r *MediaRepository) Update(ctx context.Context, m *model.MediaItem) error 
 		last_played = ?, playcount = ?
 		WHERE id = ?`,
 		m.Title, m.SortTitle, m.Year, m.Overview, m.Rating,
-		m.Duration, m.FilePath, m.PosterPath, m.BackdropPath,
+		m.Duration, m.FilePath, m.RootPath, m.PrimaryPath, m.NFOPath, m.PosterPath, m.BackdropPath,
 		m.ParentID, season, episode, m.MetadataSource,
 		m.ProviderID, m.LibraryID, m.UpdatedAt,
 		m.MPAA, m.Genres, m.Studios, m.Actors, m.UniqueIDs,
@@ -222,6 +222,21 @@ func (r *MediaRepository) FindExistingItem(ctx context.Context, libraryID, fileP
 	err := r.db.QueryRowContext(ctx,
 		"SELECT id FROM media_items WHERE library_id = ? AND file_path = ? AND type = ?",
 		libraryID, filePath, mediaType,
+	).Scan(&id)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// FindByRootPath returns the ID of a media item matching the given
+// library_id, root_path, and type. Returns empty string if not found.
+// Used for show lookups where file_path is empty and root_path is the show directory.
+func (r *MediaRepository) FindByRootPath(ctx context.Context, libraryID, rootPath, mediaType string) (string, error) {
+	var id string
+	err := r.db.QueryRowContext(ctx,
+		"SELECT id FROM media_items WHERE library_id = ? AND root_path = ? AND type = ?",
+		libraryID, rootPath, mediaType,
 	).Scan(&id)
 	if err != nil {
 		return "", err

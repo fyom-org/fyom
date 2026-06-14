@@ -151,7 +151,7 @@ type NFOMovie struct {
 
     UniqueIDs        []NFOUniqueID `xml:"uniqueid"`
 
-    ImdbID           string        `xml:"imdb_id"`
+    ImdbID           string        `xml:"imdbid"`
     TmdbID           string        `xml:"tmdbid"`
     TvdbID           string        `xml:"tvdbid"`
     LegacyID         string        `xml:"id"`
@@ -191,10 +191,10 @@ type NFOTVShow struct {
 	Thumbs        []NFOThumb    `xml:"thumb"`
 	Fanart        *NFOFanart    `xml:"fanart,omitempty"`
 	UniqueIDs     []NFOUniqueID `xml:"uniqueid"`
-	ImdbID        string        `xml:"imdb_id"`  // old: <imdb_id>tt17158756</imdb_id>
-	TmdbID        string        `xml:"tmdbid"`   // old: <tmdbid>119100</tmdbid>
-	TvdbID        string        `xml:"tvdbid"`   // old: <tvdbid>413522</tvdbid>
-	LegacyID      string        `xml:"id"`       // very old: <id>413522</id> (usually TVDb)
+	ImdbID        string        `xml:"imdbid"`  // old: <imdbid>tt17158756</imdbid>
+	TmdbID        string        `xml:"tmdbid"`  // old: <tmdbid>119100</tmdbid>
+	TvdbID        string        `xml:"tvdbid"`  // old: <tvdbid>413522</tvdbid>
+	LegacyID      string        `xml:"id"`      // very old: <id>413522</id> (usually TVDb)
 	FileName      string        `xml:"-"`
 }
 
@@ -223,7 +223,7 @@ type NFOEpisode struct {
 	Actors         []NFOActor    `xml:"actor"`
 	Thumbs         []NFOThumb    `xml:"thumb"`
 	UniqueIDs      []NFOUniqueID `xml:"uniqueid"`
-	ImdbID         string        `xml:"imdb_id"` // old: <imdb_id>tt1234567</imdb_id>
+	ImdbID         string        `xml:"imdbid"` // old: <imdbid>tt1234567</imdbid>
 	TmdbID         string        `xml:"tmdbid"`  // old: <tmdbid>12345</tmdbid>
 	TvdbID         string        `xml:"tvdbid"`  // old: <tvdbid>12345</tvdbid>
 	LegacyID       string        `xml:"id"`      // very old: <id>12345</id>

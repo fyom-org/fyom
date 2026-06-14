@@ -56,6 +56,10 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	reg.Register(provider.NewLocalProvider(signer))
 
 	providerRepo := repository.NewProviderRepository(db)
+	// Ensure local provider exists in DB (defense in addition to migration)
+	if err := providerRepo.EnsureLocalProvider(context.Background()); err != nil {
+		logger.Warn("failed to ensure local provider", "err", err)
+	}
 	if records, err := providerRepo.ListEnabled(context.Background()); err != nil {
 		logger.Warn("failed to load providers from database", "err", err)
 	} else {

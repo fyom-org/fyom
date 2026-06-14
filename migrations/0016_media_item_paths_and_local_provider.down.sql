@@ -1,0 +1,4 @@
+-- Down migration for 0016
+-- Note: SQLite does not support DROP COLUMN in older versions.
+-- We leave the columns in place (they have DEFAULT '' so they are safe).
+-- We do NOT delete the local provider row to avoid FK violations.

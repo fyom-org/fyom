@@ -76,11 +76,11 @@ func TestMigration_EmptyToLatest(t *testing.T) {
 	assert.True(t, columns["video_codec"], "video_codec column should exist")
 	assert.True(t, columns["logo_path"], "logo_path column should exist")
 
-	// Verify schema_migrations table has all 15 migrations applied
+	// Verify schema_migrations table has all 16 migrations applied
 	var count int
 	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, 15, count, "all 15 migrations should be applied")
+	assert.Equal(t, 16, count, "all 16 migrations should be applied")
 }
 
 // TestMigration_PrePhase8ToLatest simulates a database at schema version 0011
@@ -136,7 +136,7 @@ func TestMigration_PrePhase8ToLatest(t *testing.T) {
 		"test-1", "movie", "Test Movie", 2020, "/test.mkv", "filename")
 	require.NoError(t, err)
 
-	// Now open via the normal path — this should run remaining migrations (0012-0015)
+	// Now open via the normal path — this should run remaining migrations (0012-0016)
 	sqlDB.Close()
 	db, err := Open(dbPath, 5, 2, 60)
 	require.NoError(t, err)
@@ -160,11 +160,11 @@ func TestMigration_PrePhase8ToLatest(t *testing.T) {
 	assert.Equal(t, "", language, "language should default to empty string")
 	assert.Equal(t, "", countryCode, "country_code should default to empty string")
 
-	// Verify schema_migrations has all 15 entries
+	// Verify schema_migrations has all 16 entries
 	var count int
 	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, 15, count, "all 15 migrations should be applied")
+	assert.Equal(t, 16, count, "all 16 migrations should be applied")
 }
 
 // padInt zero-pads an integer to 4 digits for migration filename matching.
