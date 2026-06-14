@@ -287,11 +287,6 @@ by deep, Kodi-compliant metadata.
       immutable caching now applies only to hashed files under `assets/`,
       preventing accidental long-term caching of `index.html`.
 
-- [x] **NFO file selection** —
-      `findMovieNFO()` prefers `movie.nfo`
-      over per-episode NFO files that may coexist
-      in the same directory.
-
 - [x] **auth_test.go build fix** —
       added missing `libPermRepo` argument
       to `NewAuthService`.
