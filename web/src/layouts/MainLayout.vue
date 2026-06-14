@@ -91,7 +91,7 @@ onMounted(async () => {
   try {
     const res = await request.get('/libraries');
     libraries.value = res.data || [];
-  } catch
+  } catch {
     // ignore
   }
 });
