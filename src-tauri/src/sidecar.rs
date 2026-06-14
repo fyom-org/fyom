@@ -95,10 +95,19 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
     let db_path = PathBuf::from(state.desktop_db_path.as_str());
 
     tracing::info!("Desktop sidecar starting");
-    tracing::info!("  app_exe_dir: {}", db_path.parent().unwrap_or(std::path::Path::new("")).display());
+    tracing::info!(
+        "  app_exe_dir: {}",
+        db_path
+            .parent()
+            .unwrap_or(std::path::Path::new(""))
+            .display()
+    );
     tracing::info!("  db_path:     {}", db_path.display());
     tracing::info!("  sidecar_bin: {}", binary_path.display());
-    tracing::info!("  args:        --sidecar --db-path {} --log-level info", db_path.display());
+    tracing::info!(
+        "  args:        --sidecar --db-path {} --log-level info",
+        db_path.display()
+    );
 
     // Spawn the sidecar process
     let mut child = Command::new(&binary_path)
@@ -146,6 +155,7 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
 
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();
+    let mut ready_emitted = false;
 
     loop {
         // Check overall timeout
@@ -180,6 +190,12 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
 
                 // Check for readiness token
                 if let Some(api_url) = parse_ready_line(&line) {
+                    if ready_emitted {
+                        // Already emitted ready event, skip but continue reading stdout
+                        continue;
+                    }
+
+                    ready_emitted = true;
                     tracing::info!("FYOM_READY received: {}", api_url);
                     tracing::info!("  db_path:    {}", db_path.display());
 
@@ -217,7 +233,9 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
                         }
                     });
 
-                    return Ok(());
+                    // Continue reading stdout instead of returning
+                    // This ensures we don't miss any subsequent output from the sidecar
+                    continue;
                 }
             }
             Ok(Ok(None)) => {
