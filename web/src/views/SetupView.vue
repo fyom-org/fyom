@@ -26,27 +26,6 @@
           </label>
         </div>
 
-        <div class="toggle-row" style="margin-top: 16px">
-          <label class="toggle-label">
-            <input v-model="createLibrary" type="checkbox" />
-            <span>Create a media library</span>
-          </label>
-        </div>
-
-        <div class="library-fields" v-if="createLibrary">
-          <div class="field">
-            <label>Library Name</label>
-            <input v-model="libraryName" type="text" placeholder="My Library" />
-          </div>
-          <div class="field">
-            <label>Media Path</label>
-            <input v-model="librarySourcePath" type="text"
-                   placeholder="/path/to/your/media" />
-          </div>
-          <p class="hint">Point to the root directory containing your movies and TV shows.
-            You can add more libraries later from the admin panel.</p>
-        </div>
-
         <p v-if="error" class="error">{{ error }}</p>
         <button type="submit" class="submit-btn" :disabled="loading">
           {{ loading ? 'Setting up...' : 'Complete Setup' }}
@@ -66,9 +45,6 @@ const username = ref('');
 const password = ref('');
 const confirmPassword = ref('');
 const allowRegistration = ref(false);
-const createLibrary = ref(true);
-const libraryName = ref('My Library');
-const librarySourcePath = ref('');
 const error = ref('');
 const loading = ref(false);
 
@@ -98,22 +74,7 @@ async function submit() {
     });
     localStorage.setItem('token', loginRes.data.access_token);
 
-    // Step 3: Create first library (if enabled)
-    if (createLibrary.value && librarySourcePath.value) {
-      try {
-        await request.post('/admin/libraries', {
-          name: libraryName.value || 'My Library',
-          type: 'mixed',
-          provider_id: 'local',
-          source_path: librarySourcePath.value,
-          metadata_source: 'nfo',
-        });
-      } catch (e) {
-        console.warn('Failed to create library during setup:', e);
-      }
-    }
-
-    // Step 4: Navigate to dashboard
+    // Step 3: Navigate to dashboard
     router.push('/');
   } catch (e: unknown) {
     const err = e as { response?: { data?: { message?: string } } };
