@@ -9,7 +9,7 @@
       @mouseleave="onLeave"
     >
       <div class="poster-wrap">
-        <img v-if="item.poster_url" :src="item.poster_url" :alt="item.title" loading="lazy" />
+        <img v-if="posterUrl" :src="posterUrl" :alt="item.title" loading="lazy" />
         <div v-else class="poster-fallback">{{ item.title?.[0] ?? '?' }}</div>
         <div
           class="status-icon"
@@ -52,6 +52,7 @@ import {
   STATUS_WATCHED,
   STATUS_DROPPED,
 } from '@/api/library';
+import { resolveResourceUrl } from '@/lib/runtime/resource';
 
 const props = defineProps<{
   item: {
@@ -72,6 +73,10 @@ const emit = defineEmits<{
 
 const router = useRouter();
 const hovered = ref(false);
+
+// Normalize poster URL for the current runtime (browser vs Tauri).
+const posterUrl = computed(() => resolveResourceUrl(props.item.poster_url));
+
 const onHover = () => {
   hovered.value = true;
 };

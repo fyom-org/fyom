@@ -2,8 +2,8 @@
   <div v-if="item" class="detail-view media-detail">
     <div class="backdrop">
       <img
-        v-if="!backdropFailed && item.backdrop_url"
-        :src="item.backdrop_url"
+        v-if="!backdropFailed && backdropUrl"
+        :src="backdropUrl"
         @error="backdropFailed = true"
       />
       <div class="backdrop-overlay"></div>
@@ -19,16 +19,16 @@
       <router-link to="/library" class="back-link">&#8592; Back to Library</router-link>
 
       <div class="main-row">
-        <img v-if="item.poster_url" class="poster" :src="item.poster_url" />
+        <img v-if="posterUrl" class="poster" :src="posterUrl" />
 
         <div class="meta">
           <img
-            v-if="item.logo_url && !logoFailed"
+            v-if="logoUrl && !logoFailed"
             class="logo-image"
-            :src="item.logo_url"
+            :src="logoUrl"
             @error="logoFailed = true"
           />
-          <h1 class="title" :class="{ 'with-logo': item.logo_url && !logoFailed }">
+          <h1 class="title" :class="{ 'with-logo': logoUrl && !logoFailed }">
             {{ item.title }}
           </h1>
           <p class="tagline" v-if="item.tagline">{{ item.tagline }}</p>
@@ -207,6 +207,7 @@ import { useRoute } from 'vue-router';
 import { getMediaDetail, setMediaStatus } from '@/api/library';
 import request from '@/api/request';
 import EpisodeList from '@/components/EpisodeList.vue';
+import { resolveResourceUrl } from '@/lib/runtime/resource';
 
 const route = useRoute();
 const item = ref<any>(null);
@@ -215,6 +216,11 @@ const backdropFailed = ref(false);
 const logoFailed = ref(false);
 const progress = ref<any>(null);
 const userStatus = ref('none');
+
+// Normalize resource URLs for the current runtime (browser vs Tauri).
+const posterUrl = computed(() => resolveResourceUrl(item.value?.poster_url));
+const backdropUrl = computed(() => resolveResourceUrl(item.value?.backdrop_url));
+const logoUrl = computed(() => resolveResourceUrl(item.value?.logo_url));
 
 const overviewExpanded = ref(false);
 const overviewNeedsExpand = ref(false);
