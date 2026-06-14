@@ -64,6 +64,10 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 		logger.Warn("failed to load providers from database", "err", err)
 	} else {
 		for _, rec := range records {
+			// Skip 'local' — already registered in-memory above
+			if rec.ID == "local" {
+				continue
+			}
 			p, err := provider.FromRecord(rec, signer)
 			if err != nil {
 				logger.Warn("skipping provider", "provider_id", rec.ID, "err", err)
