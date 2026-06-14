@@ -234,7 +234,7 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
 
     loop {
         // Check if we received the ready signal
-        if *ready_notify.notified() {
+        if ready_notify.notified().into_inner() {
             // Get the API URL
             let api_url = ready_api_url
                 .get()
