@@ -7,6 +7,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 
+use crate::AppState;
 use crate::MAIN_WINDOW_LABEL;
 
 /// Setup the system tray with Show and Quit menu items.
@@ -27,6 +28,11 @@ pub fn setup_tray<R: Runtime>(app: &tauri::App<R>) -> Result<()> {
             }
             "quit" => {
                 tracing::info!("Quit requested from tray");
+                // Mark exit intent before quitting so the RunEvent handler
+                // can distinguish this from a window close.
+                if let Some(state) = app.try_state::<AppState>() {
+                    state.mark_exit_intent();
+                }
                 app.exit(0);
             }
             _ => {}

@@ -13,18 +13,16 @@ pub fn setup_main_window<R: Runtime>(_app: &tauri::App<R>) -> Result<()> {
 }
 
 /// Configure the window to hide to tray instead of closing.
-/// This is called from the window event handler.
-#[allow(dead_code)]
+/// Returns true if the close was intercepted (hidden to tray).
 pub fn on_window_close_requested<R: Runtime>(
     app: &AppHandle<R>,
-    // The tauri Window is obtained from the AppHandle using MAIN_WINDOW_LABEL
 ) -> bool {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
         if let Err(e) = window.hide() {
             tracing::error!("Failed to hide window: {}", e);
             return false; // Allow close if hide fails
         }
-        return true; // Prevent close
+        return true; // Close intercepted
     }
     false
 }

@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::state::SidecarState;
 use tauri::Emitter;
+use tauri::Manager;
 
 pub const MAIN_WINDOW_LABEL: &str = "main";
 pub const SIDECAR_READY_EVENT: &str = "fyom-sidecar-ready";
@@ -21,6 +22,7 @@ const SIDECAR_STARTUP_TIMEOUT_SECS: u64 = 30;
 pub struct AppState {
     pub sidecar_state: Arc<SidecarState>,
     pub shutdown_started: Arc<AtomicBool>,
+    pub exit_intent: Arc<AtomicBool>,
     pub desktop_db_path: Arc<String>,
 }
 
@@ -29,6 +31,7 @@ impl Default for AppState {
         Self {
             sidecar_state: Arc::new(SidecarState::default()),
             shutdown_started: Arc::new(AtomicBool::new(false)),
+            exit_intent: Arc::new(AtomicBool::new(false)),
             desktop_db_path: Arc::new(String::new()),
         }
     }
@@ -41,6 +44,17 @@ impl AppState {
 
     pub fn is_shutting_down(&self) -> bool {
         self.shutdown_started.load(Ordering::SeqCst)
+    }
+
+    /// Mark that the user intentionally wants to quit the app
+    /// (e.g. tray Quit menu). This distinguishes real exit from
+    /// window close (hide-to-tray).
+    pub fn mark_exit_intent(&self) {
+        self.exit_intent.store(true, Ordering::SeqCst);
+    }
+
+    pub fn has_exit_intent(&self) -> bool {
+        self.exit_intent.load(Ordering::SeqCst)
     }
 }
 
@@ -100,13 +114,30 @@ pub fn run() {
 
     // Handle app run events
     app.run(|app_handle, event| {
-        if let tauri::RunEvent::ExitRequested { api, .. } = event {
-            // Prevent default exit behavior, we handle quit via tray
-            api.prevent_exit();
-            let app_handle = app_handle.clone();
-            tauri::async_runtime::spawn(async move {
-                let _ = commands::request_quit(app_handle).await;
-            });
+        match event {
+            tauri::RunEvent::ExitRequested { api, .. } => {
+                // Check if this is a real app exit (e.g. tray Quit) or just
+                // a window close (should hide to tray).
+                let has_exit_intent = app_handle
+                    .try_state::<AppState>()
+                    .map(|s| s.has_exit_intent())
+                    .unwrap_or(false);
+                if has_exit_intent {
+                    // Real exit: allow the default exit behavior after shutdown.
+                    // The shutdown itself is handled by request_quit() which was
+                    // called by the tray quit handler.
+                    tracing::info!("Exit requested with intent, allowing app exit");
+                } else {
+                    // Window close without exit intent: hide to tray, don't exit.
+                    api.prevent_exit();
+                    tracing::debug!("Exit requested without intent, hiding to tray");
+                }
+            }
+            tauri::RunEvent::Exit => {
+                // Final cleanup on actual exit.
+                tracing::info!("App exiting");
+            }
+            _ => {}
         }
     });
 }

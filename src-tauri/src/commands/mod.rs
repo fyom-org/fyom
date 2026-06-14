@@ -25,15 +25,22 @@ pub async fn hide_window(app: AppHandle) -> Result<(), String> {
 /// Request quit the application (async-safe version for spawning).
 /// Idempotent: only the first call performs real shutdown.
 pub async fn request_quit(app: AppHandle) -> Result<(), String> {
-    // Idempotency guard: if shutdown is already in progress, return immediately.
     let state: State<'_, AppState> = app.state();
+
+    // Guard: only proceed if exit was intentionally requested.
+    if !state.has_exit_intent() {
+        tracing::debug!("request_quit called without exit_intent, ignoring");
+        return Ok(());
+    }
+
+    // Idempotency guard: if shutdown is already in progress, return immediately.
     if state.is_shutting_down() {
         tracing::debug!("Shutdown already in progress, skipping duplicate request_quit");
         return Ok(());
     }
     state.mark_shutdown();
 
-    // Shutdown sidecar (only the first call reaches here).
+    // Shutdown sidecar (only the first intentional call reaches here).
     sidecar::shutdown_sidecar(&app, &state)
         .await
         .map_err(|e| e.to_string())?;
