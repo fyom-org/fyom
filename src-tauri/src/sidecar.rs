@@ -17,6 +17,12 @@ use crate::{SIDECAR_ERROR_EVENT, SIDECAR_READY_EVENT, SIDECAR_STARTUP_TIMEOUT_SE
 /// The expected readiness token emitted by the Go sidecar on stdout.
 const READY_TOKEN: &str = "FYOM_READY";
 
+/// Maximum number of /readyz retry attempts
+const READYZ_MAX_RETRIES: u32 = 3;
+
+/// Delay between /readyz retry attempts
+const READYZ_RETRY_DELAY_MS: u64 = 100;
+
 /// Parse a readiness line from the sidecar stdout.
 ///
 /// Expected format: `FYOM_READY http://127.0.0.1:27403`
@@ -79,9 +85,58 @@ fn find_sidecar_binary() -> Result<PathBuf> {
     anyhow::bail!("fyom sidecar binary not found. Build it with: task sidecar (or set FYOM_BIN)")
 }
 
+/// Confirm sidecar readiness by calling /readyz with bounded retries.
+async fn confirm_readyz_with_retries(api_url: &str) -> Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()?;
+
+    let url = format!("{}/readyz", api_url);
+
+    for attempt in 1..=READYZ_MAX_RETRIES {
+        match client.get(&url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::info!(
+                    "/readyz confirmed OK (attempt {}/{})",
+                    attempt,
+                    READYZ_MAX_RETRIES
+                );
+                return Ok(());
+            }
+            Ok(resp) => {
+                tracing::warn!(
+                    "/readyz returned status: {} (attempt {}/{})",
+                    resp.status(),
+                    attempt,
+                    READYZ_MAX_RETRIES
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "/readyz request failed: {} (attempt {}/{})",
+                    e,
+                    attempt,
+                    READYZ_MAX_RETRIES
+                );
+            }
+        }
+
+        if attempt < READYZ_MAX_RETRIES {
+            tokio::time::sleep(Duration::from_millis(READYZ_RETRY_DELAY_MS)).await;
+        }
+    }
+
+    // All retries exhausted
+    anyhow::bail!(
+        "/readyz confirmation failed after {} attempts",
+        READYZ_MAX_RETRIES
+    )
+}
+
 /// Bootstrap the Go sidecar process.
 ///
-/// Spawns the sidecar, waits for the FYOM_READY signal, then confirms /readyz.
+/// Spawns the sidecar, starts background drain tasks, waits for FYOM_READY signal,
+/// confirms readiness via /readyz, and returns when sidecar is ready.
 /// The main window should remain hidden until this succeeds.
 pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Result<()> {
     let sidecar_state = &state.sidecar_state;
@@ -91,8 +146,6 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
         .map_err(|e| anyhow::anyhow!("Failed to locate sidecar binary: {}", e))?;
 
     // Use the desktop DB path resolved by the main app in lib.rs.
-    // This guarantees the path is based on the main app executable directory,
-    // not the sidecar binary directory.
     let db_path = PathBuf::from(state.desktop_db_path.as_str());
 
     tracing::info!("Desktop sidecar starting");
@@ -141,64 +194,73 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
         .take()
         .ok_or_else(|| anyhow::anyhow!("Failed to capture sidecar stderr"))?;
 
-    // Create channels for communication
+    // Create channel for readiness notification
     let (ready_tx, mut ready_rx) = mpsc::channel::<String>(1);
+
+    // Create channel for kill signal
     let (kill_tx, mut kill_rx) = mpsc::channel::<()>(1);
 
-    // Spawn a background task to drain stdout/stderr and detect FYOM_READY
-    // This task owns the child process
+    // Spawn a background task to drain stdout and detect FYOM_READY
+    // This task owns the child process and stdout reader
     tauri::async_runtime::spawn(async move {
+        tracing::info!("[sidecar-drain] stdout drain task started");
+
         let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
         let mut ready_emitted = false;
 
         // Spawn stderr drain in background
         tauri::async_runtime::spawn(async move {
+            tracing::info!("[sidecar-drain] stderr drain task started");
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                tracing::info!(target: "sidecar", "{}", line);
+                tracing::info!(target: "sidecar", "[stderr] {}", line);
             }
+            tracing::info!("[sidecar-drain] stderr drain task ended");
         });
 
         // Monitor child process exit and kill signals
         tauri::async_runtime::spawn(async move {
+            tracing::info!("[sidecar-drain] process monitor task started");
             tokio::select! {
                 status = child.wait() => {
                     match status {
                         Ok(status) if !status.success() => {
-                            tracing::warn!("Sidecar exited with non-zero status: {:?}", status);
+                            tracing::warn!("[sidecar-drain] Sidecar exited with non-zero status: {:?}", status);
                         }
                         Err(e) => {
-                            tracing::error!("Sidecar wait error: {}", e);
+                            tracing::error!("[sidecar-drain] Sidecar wait error: {}", e);
                         }
-                        _ => tracing::info!("Sidecar exited normally"),
+                        _ => tracing::info!("[sidecar-drain] Sidecar exited normally"),
                     }
                 }
                 _ = kill_rx.recv() => {
-                    // Kill signal received, try to kill the child
+                    tracing::info!("[sidecar-drain] Kill signal received, killing sidecar");
                     let _ = child.kill().await;
                 }
             }
+            tracing::info!("[sidecar-drain] process monitor task ended");
         });
 
-        // Read stdout lines
+        // Read stdout lines and detect readiness
         loop {
             match tokio::time::timeout(Duration::from_millis(200), lines.next_line()).await {
                 Ok(Ok(Some(line))) => {
-                    tracing::debug!(target: "sidecar", "stdout: {}", line);
+                    tracing::debug!(target: "sidecar", "[stdout] {}", line);
 
                     // Check for readiness token
                     if let Some(api_url) = parse_ready_line(&line) {
                         if ready_emitted {
-                            // Already emitted ready event, skip but continue reading stdout
+                            // Already emitted ready event, skip but continue draining
                             continue;
                         }
 
                         ready_emitted = true;
-                        tracing::info!("FYOM_READY received: {}", api_url);
+                        tracing::info!("[sidecar-drain] FYOM_READY received: {}", api_url);
 
                         // Send the API URL through the channel
+                        // This is a one-time signal, channel capacity is 1
                         let _ = ready_tx.send(api_url).await;
 
                         // Continue reading stdout to drain the pipe
@@ -207,11 +269,11 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
                 }
                 Ok(Ok(None)) => {
                     // EOF on stdout — process may have exited
-                    tracing::error!("Sidecar stdout closed unexpectedly");
+                    tracing::error!("[sidecar-drain] Sidecar stdout closed unexpectedly");
                     break;
                 }
                 Ok(Err(e)) => {
-                    tracing::error!("Error reading sidecar stdout: {}", e);
+                    tracing::error!("[sidecar-drain] Error reading sidecar stdout: {}", e);
                     break;
                 }
                 Err(_) => {
@@ -220,6 +282,7 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
                 }
             }
         }
+        tracing::info!("[sidecar-drain] stdout drain task ended");
     });
 
     // Wait for ready notification with timeout
@@ -230,13 +293,20 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
         // Check if we received the ready signal
         match tokio::time::timeout(Duration::from_millis(0), ready_rx.recv()).await {
             Ok(Some(api_url)) => {
-                tracing::info!("  db_path:    {}", db_path.display());
+                tracing::info!("[bootstrap] FYOM_READY received, confirming /readyz...");
 
-                // Confirm readiness with /readyz
-                if let Err(e) = confirm_readyz(&api_url).await {
-                    tracing::warn!("/readyz confirmation failed: {}", e);
-                    // Don't fail — the sidecar emitted FYOM_READY so it's likely fine
+                // Confirm readiness with /readyz using bounded retries
+                if let Err(e) = confirm_readyz_with_retries(&api_url).await {
+                    tracing::error!("[bootstrap] /readyz confirmation failed: {}", e);
+                    // Even if /readyz fails, if we got FYOM_READY, the sidecar is likely ready
+                    // But we treat this as a failure for strict readiness confirmation
+                    let msg = format!("Sidecar ready but /readyz failed: {}", e);
+                    sidecar_state.set_error(msg.clone());
+                    let _ = app.emit(SIDECAR_ERROR_EVENT, msg);
+                    anyhow::bail!("{}", msg);
                 }
+
+                tracing::info!("[bootstrap] /readyz confirmed OK");
 
                 // Store the API base URL
                 let api_base_url = format!("{}/api/v1", api_url);
@@ -245,13 +315,15 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
                 // Emit readiness event to the frontend
                 let _ = app.emit(SIDECAR_READY_EVENT, api_url.clone());
 
+                tracing::info!("[bootstrap] Sidecar bootstrap completed successfully");
+
                 // Bootstrap completed successfully
                 return Ok(());
             }
             Ok(None) => {
-                // Channel closed, sidecar probably exited
+                // Channel closed, sidecar probably exited before emitting FYOM_READY
                 let msg = "Sidecar exited without emitting FYOM_READY".to_string();
-                tracing::error!("{}", msg);
+                tracing::error!("[bootstrap] {}", msg);
                 sidecar_state.set_error(msg.clone());
                 let _ = app.emit(SIDECAR_ERROR_EVENT, msg.clone());
                 anyhow::bail!("{}", msg);
@@ -269,7 +341,7 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
                 "Sidecar startup timed out after {}s (pid={})",
                 SIDECAR_STARTUP_TIMEOUT_SECS, child_id
             );
-            tracing::error!("{}", msg);
+            tracing::error!("[bootstrap] {}", msg);
             sidecar_state.set_error(msg.clone());
             let _ = app.emit(SIDECAR_ERROR_EVENT, msg.clone());
             anyhow::bail!("{}", msg);
@@ -277,23 +349,6 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
 
         // Short sleep to avoid busy waiting
         tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
-/// Confirm sidecar readiness by calling /readyz.
-async fn confirm_readyz(api_url: &str) -> Result<()> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()?;
-
-    let url = format!("{}/readyz", api_url);
-    let resp = client.get(&url).send().await?;
-
-    if resp.status().is_success() {
-        tracing::info!("/readyz confirmed OK");
-        Ok(())
-    } else {
-        anyhow::bail!("/readyz returned status: {}", resp.status())
     }
 }
 
