@@ -58,9 +58,17 @@ func (imp *Importer) classifyTree(ctx context.Context, node *FSNode, walkCtx *Wa
 		}
 	}
 
+	// Check if this directory is a transparent container (grouping/wrapper directory).
+	// A container has subdirectories but is not itself a media root.
+	// We must recurse into it to find nested media entities.
+	if imp.isTransparentContainer(node, walkCtx) {
+		imp.classifyContainerDir(ctx, node, walkCtx, result)
+		return result
+	}
+
 	// Fallback: if this directory contains video files and is not inside a show,
 	// classify it as a movie with filename-derived metadata.
-	if walkCtx.ParentKind == ImportEntityUnknown || walkCtx.ParentKind == "" {
+	if walkCtx.ParentKind == ImportEntityUnknown || walkCtx.ParentKind == "" || walkCtx.ParentKind == ImportEntityContainer {
 		hasVideo := false
 		for _, child := range node.Children {
 			if !child.IsDir && child.Kind == ImportNodeVideo {
@@ -89,8 +97,64 @@ func (imp *Importer) classifyTree(ctx context.Context, node *FSNode, walkCtx *Wa
 	return result
 }
 
+// isTransparentContainer returns true if the directory is a grouping/wrapper
+// container that should be traversed transparently rather than classified as a
+// media root. A container has subdirectories but no direct indication of being
+// a movie/show root (no NFO, no direct video files at this level).
+func (imp *Importer) isTransparentContainer(node *FSNode, walkCtx *WalkContext) bool {
+	// Must have subdirectories to be a container
+	hasSubdirs := false
+	hasDirectVideo := false
+	for _, child := range node.Children {
+		if child.IsDir {
+			hasSubdirs = true
+		} else if child.Kind == ImportNodeVideo {
+			hasDirectVideo = true
+		}
+	}
+	// A container has subdirectories and no direct video files
+	// (direct video files would make it a movie-fallback candidate)
+	return hasSubdirs && !hasDirectVideo
+}
+
+// classifyContainerDir handles a transparent grouping/container directory.
+// It recurses into children without creating any media candidate for the container itself.
+func (imp *Importer) classifyContainerDir(ctx context.Context, node *FSNode, walkCtx *WalkContext, result *ClassificationResult) {
+	// Propagate container context to children
+	childWalkCtx := &WalkContext{
+		ScanID:       walkCtx.ScanID,
+		LibraryID:    walkCtx.LibraryID,
+		SourceRoot:   walkCtx.SourceRoot,
+		ParentKind:   ImportEntityContainer,
+		ShowRootPath: walkCtx.ShowRootPath,
+		ShowID:       walkCtx.ShowID,
+		ClaimedPaths: walkCtx.ClaimedPaths,
+	}
+
+	for _, child := range node.Children {
+		if !child.IsDir {
+			continue
+		}
+		childResult := imp.classifyTree(ctx, child, childWalkCtx)
+		result.Candidates = append(result.Candidates, childResult.Candidates...)
+		result.Rejected = append(result.Rejected, childResult.Rejected...)
+		result.Unknown = append(result.Unknown, childResult.Unknown...)
+		result.ScannedDirs += childResult.ScannedDirs
+	}
+}
+
 // classifyShowDir creates a show candidate and processes child directories for seasons/episodes.
 func (imp *Importer) classifyShowDir(ctx context.Context, node *FSNode, walkCtx *WalkContext, result *ClassificationResult) {
+	// Enforce library type policy: movie-only libraries don't import shows
+	if imp.libraryType == "movie" {
+		result.Rejected = append(result.Rejected, RejectedItem{
+			Path:   node.Path,
+			Type:   ImportEntityShow,
+			Reason: "show rejected in movie-only library",
+		})
+		return
+	}
+
 	showID := uuid.New().String()
 
 	candidate := ImportCandidate{
@@ -137,6 +201,16 @@ func (imp *Importer) classifyShowDir(ctx context.Context, node *FSNode, walkCtx 
 
 // classifyMovieDir creates a movie candidate from a directory with a movie NFO.
 func (imp *Importer) classifyMovieDir(ctx context.Context, node *FSNode, nfoPath string, walkCtx *WalkContext, result *ClassificationResult) {
+	// Enforce library type policy: show-only libraries don't import movies
+	if imp.libraryType == "show" {
+		result.Rejected = append(result.Rejected, RejectedItem{
+			Path:   node.Path,
+			Type:   ImportEntityMovie,
+			Reason: "movie rejected in show-only library",
+		})
+		return
+	}
+
 	videoPath := imp.findVideoFileInDir(ctx, node.Path, "")
 	if videoPath == "" {
 		result.Rejected = append(result.Rejected, RejectedItem{
@@ -175,6 +249,16 @@ func (imp *Importer) classifyMovieDir(ctx context.Context, node *FSNode, nfoPath
 // classifyMovieDirNoNFO creates a movie candidate from a directory with video files
 // but no valid NFO. The title is derived from the video filename.
 func (imp *Importer) classifyMovieDirNoNFO(ctx context.Context, node *FSNode, walkCtx *WalkContext, result *ClassificationResult) {
+	// Enforce library type policy: show-only libraries don't import movies
+	if imp.libraryType == "show" {
+		result.Rejected = append(result.Rejected, RejectedItem{
+			Path:   node.Path,
+			Type:   ImportEntityMovie,
+			Reason: "movie rejected in show-only library",
+		})
+		return
+	}
+
 	var videoPath string
 	for _, child := range node.Children {
 		if !child.IsDir && child.Kind == ImportNodeVideo {

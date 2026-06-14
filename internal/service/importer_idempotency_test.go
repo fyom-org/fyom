@@ -122,7 +122,7 @@ func createImporterTestLibrary(t *testing.T, db *repository.DB, sourcePath strin
 	t.Helper()
 	lib := &model.Library{
 		Name:           "Test Library",
-		Type:           "movie",
+		Type:           "mixed",
 		SourcePath:     sourcePath,
 		ProviderID:     "local",
 		MetadataSource: "nfo",

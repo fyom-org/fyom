@@ -4,12 +4,13 @@ package service
 type ImportEntityKind string
 
 const (
-	ImportEntityUnknown ImportEntityKind = "unknown"
-	ImportEntityMovie   ImportEntityKind = "movie"
-	ImportEntityShow    ImportEntityKind = "show"
-	ImportEntitySeason  ImportEntityKind = "season"
-	ImportEntityEpisode ImportEntityKind = "episode"
-	ImportEntityExtra   ImportEntityKind = "extra"
+	ImportEntityUnknown     ImportEntityKind = "unknown"
+	ImportEntityContainer   ImportEntityKind = "container"
+	ImportEntityMovie       ImportEntityKind = "movie"
+	ImportEntityShow        ImportEntityKind = "show"
+	ImportEntitySeason      ImportEntityKind = "season"
+	ImportEntityEpisode     ImportEntityKind = "episode"
+	ImportEntityExtra       ImportEntityKind = "extra"
 )
 
 // ImportNodeKind represents the type of a filesystem node.
