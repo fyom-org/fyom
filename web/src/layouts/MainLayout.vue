@@ -33,8 +33,8 @@
         </div>
       </aside>
       <div
-        class="sidebar-overlay"
         v-if="isMobile && sidebarOpen"
+        class="sidebar-overlay"
         @click="sidebarOpen = false"
       ></div>
       <!-- Floating sidebar toggle button (always visible) -->
