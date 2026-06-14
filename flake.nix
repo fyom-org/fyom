@@ -112,12 +112,11 @@
         );
 
         linuxShellHook = lib.optionalString pkgs.stdenv.isLinux ''
+          export FYOM_BIN="build/fyom"
+          export RUST_BACKTRACE="1"
           export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
-
           export LD_LIBRARY_PATH="${lib.makeLibraryPath linuxRuntimeLibs}:$LD_LIBRARY_PATH"
-
           export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.adwaita-icon-theme}/share:$XDG_DATA_DIRS"
-
           export GIO_EXTRA_MODULES="${pkgs.dconf.lib}/lib/gio/modules"
         '';
 

@@ -92,7 +92,7 @@ tasks:
     desc: "Run Tauri desktop dev mode (requires sidecar binary)"
     deps: [sidecar]
     cmds:
-      - cd src-tauri && FYOM_BIN=../build/fyom cargo-tauri dev
+      - cd src-tauri && FYOM_BIN=../build/fyom RUST_LOG=debug cargo-tauri dev
 
   build:desktop:
     desc: "Build Tauri desktop app bundle"
