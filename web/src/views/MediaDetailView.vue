@@ -152,10 +152,6 @@
             ← Back to Show
           </router-link>
         </div>
-        <h2 class="episode-detail-number">
-          <span v-if="item.season"> S{{ String(item.season).padStart(2, '0') }} </span>
-          <span v-if="item.episode"> E{{ String(item.episode).padStart(2, '0') }} </span>
-        </h2>
         <div class="episode-detail-meta">
           <h2 class="episode-detail-number">
             <span v-if="item.season"> S{{ String(item.season).padStart(2, '0') }} </span>
