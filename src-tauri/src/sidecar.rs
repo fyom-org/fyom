@@ -4,12 +4,14 @@
 
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::{Notify, OnceCell};
 
 use crate::{SIDECAR_ERROR_EVENT, SIDECAR_READY_EVENT, SIDECAR_STARTUP_TIMEOUT_SECS};
 
@@ -140,47 +142,126 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
         .take()
         .ok_or_else(|| anyhow::anyhow!("Failed to capture sidecar stderr"))?;
 
-    // Spawn a task to log stderr
+    // Create a notify to signal when sidecar is ready
+    let ready_notify = Arc::new(Notify::new());
+    let ready_api_url = Arc::new(OnceCell::new());
+
+    // Clone for use in the background task
+    let ready_notify_clone = ready_notify.clone();
+    let ready_api_url_clone = ready_api_url.clone();
+    let app_clone = app.clone();
+    let state_clone = state.clone();
+
+    // Spawn a background task to drain stdout/stderr and detect FYOM_READY
     tauri::async_runtime::spawn(async move {
-        let reader = BufReader::new(stderr);
+        let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            tracing::info!(target: "sidecar", "{}", line);
+        let mut ready_emitted = false;
+
+        // Also spawn stderr drain in background
+        let stderr_app = app_clone.clone();
+        tauri::async_runtime::spawn(async move {
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                tracing::info!(target: "sidecar", "{}", line);
+            }
+        });
+
+        // Monitor child process exit
+        let child_app = app_clone.clone();
+        tauri::async_runtime::spawn(async move {
+            match child.wait().await {
+                Ok(status) if !status.success() => {
+                    tracing::warn!("Sidecar exited with non-zero status: {:?}", status);
+                    let _ = child_app
+                        .emit(SIDECAR_ERROR_EVENT, format!("Sidecar exited: {:?}", status));
+                }
+                Err(e) => {
+                    tracing::error!("Sidecar wait error: {}", e);
+                    let _ = child_app.emit(SIDECAR_ERROR_EVENT, format!("Sidecar error: {}", e));
+                }
+                _ => tracing::info!("Sidecar exited normally"),
+            }
+        });
+
+        // Read stdout lines
+        loop {
+            match tokio::time::timeout(Duration::from_millis(200), lines.next_line()).await {
+                Ok(Ok(Some(line))) => {
+                    tracing::debug!(target: "sidecar", "stdout: {}", line);
+
+                    // Check for readiness token
+                    if let Some(api_url) = parse_ready_line(&line) {
+                        if ready_emitted {
+                            // Already emitted ready event, skip but continue reading stdout
+                            continue;
+                        }
+
+                        ready_emitted = true;
+                        tracing::info!("FYOM_READY received: {}", api_url);
+
+                        // Store the API URL for the main task to use
+                        ready_api_url_clone.set(api_url.clone()).ok();
+
+                        // Notify that sidecar is ready
+                        ready_notify_clone.notify_one();
+
+                        // Continue reading stdout to drain the pipe
+                        continue;
+                    }
+                }
+                Ok(Ok(None)) => {
+                    // EOF on stdout — process may have exited
+                    tracing::error!("Sidecar stdout closed unexpectedly");
+                    break;
+                }
+                Ok(Err(e)) => {
+                    tracing::error!("Error reading sidecar stdout: {}", e);
+                    break;
+                }
+                Err(_) => {
+                    // Timeout — continue looping
+                    continue;
+                }
+            }
         }
     });
 
-    // Wait for FYOM_READY on stdout, with timeout
+    // Wait for ready notification with timeout
     let deadline = Duration::from_secs(SIDECAR_STARTUP_TIMEOUT_SECS);
     let start = Instant::now();
 
-    let reader = BufReader::new(stdout);
-    let mut lines = reader.lines();
-    let mut ready_emitted = false;
-
-    // Spawn a background task to monitor the child process
-    // We do this before the loop to avoid ownership issues
-    let app_handle_for_monitoring = app.clone();
-    tauri::async_runtime::spawn(async move {
-        match child.wait().await {
-            Ok(status) if !status.success() => {
-                tracing::warn!("Sidecar exited with non-zero status: {:?}", status);
-                let _ = app_handle_for_monitoring
-                    .emit(SIDECAR_ERROR_EVENT, format!("Sidecar exited: {:?}", status));
-            }
-            Err(e) => {
-                tracing::error!("Sidecar wait error: {}", e);
-                let _ = app_handle_for_monitoring
-                    .emit(SIDECAR_ERROR_EVENT, format!("Sidecar error: {}", e));
-            }
-            _ => tracing::info!("Sidecar exited normally"),
-        }
-    });
-
     loop {
-        // Check overall timeout
+        // Check if we received the ready signal
+        if ready_notify.is_notified() {
+            // Get the API URL
+            let api_url = ready_api_url
+                .get()
+                .ok_or_else(|| anyhow::anyhow!("Ready signal received but no API URL stored"))?;
+
+            tracing::info!("  db_path:    {}", db_path.display());
+
+            // Confirm readiness with /readyz
+            if let Err(e) = confirm_readyz(api_url).await {
+                tracing::warn!("/readyz confirmation failed: {}", e);
+                // Don't fail — the sidecar emitted FYOM_READY so it's likely fine
+            }
+
+            // Store the API base URL
+            let api_base_url = format!("{}/api/v1", api_url);
+            sidecar_state.set_ready(api_base_url.clone());
+
+            // Emit readiness event to the frontend
+            let _ = app.emit(SIDECAR_READY_EVENT, api_url.to_string());
+
+            // Bootstrap completed successfully
+            return Ok(());
+        }
+
+        // Check timeout
         if start.elapsed() > deadline {
-            // We can't kill the child here since it was moved to the background task
-            // But we can still report the timeout
+            let _ = child.kill().await;
             let msg = format!(
                 "Sidecar startup timed out after {}s (pid={})",
                 SIDECAR_STARTUP_TIMEOUT_SECS, child_id
@@ -191,70 +272,9 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
             anyhow::bail!("{}", msg);
         }
 
-        // We can't use child.try_wait() here since child was moved to the background task
-        // Instead, we rely on the background task to monitor process exit
-        // and just continue reading stdout
-
-        // Try to read next line with a short timeout
-        match tokio::time::timeout(Duration::from_millis(200), lines.next_line()).await {
-            Ok(Ok(Some(line))) => {
-                tracing::debug!(target: "sidecar", "stdout: {}", line);
-
-                // Check for readiness token
-                if let Some(api_url) = parse_ready_line(&line) {
-                    if ready_emitted {
-                        // Already emitted ready event, skip but continue reading stdout
-                        continue;
-                    }
-
-                    ready_emitted = true;
-                    tracing::info!("FYOM_READY received: {}", api_url);
-                    tracing::info!("  db_path:    {}", db_path.display());
-
-                    // Confirm readiness with /readyz
-                    if let Err(e) = confirm_readyz(&api_url).await {
-                        tracing::warn!("/readyz confirmation failed: {}", e);
-                        // Don't fail — the sidecar emitted FYOM_READY so it's likely fine
-                    }
-
-                    // Store the API base URL
-                    let api_base_url = format!("{}/api/v1", api_url);
-                    let full_url = api_url.clone();
-                    sidecar_state.set_ready(api_base_url);
-
-                    // Emit readiness event to the frontend
-                    let _ = app.emit(SIDECAR_READY_EVENT, full_url);
-
-                    // Continue reading stdout instead of returning
-                    // This ensures we don't miss any subsequent output from the sidecar
-                    continue;
-                }
-            }
-            Ok(Ok(None)) => {
-                // EOF on stdout — process may have exited
-                tracing::error!("Sidecar stdout closed unexpectedly");
-                break;
-            }
-            Ok(Err(e)) => {
-                tracing::error!("Error reading sidecar stdout: {}", e);
-                break;
-            }
-            Err(_) => {
-                // Timeout — loop back and check deadline / process status
-                continue;
-            }
-        }
+        // Short sleep to avoid busy waiting
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
-
-    // If we get here, the sidecar exited without emitting FYOM_READY
-    let msg = format!(
-        "Sidecar exited without emitting FYOM_READY (pid={})",
-        child_id
-    );
-    tracing::error!("{}", msg);
-    sidecar_state.set_error(msg.clone());
-    let _ = app.emit(SIDECAR_ERROR_EVENT, msg.clone());
-    anyhow::bail!("{}", msg)
 }
 
 /// Confirm sidecar readiness by calling /readyz.
