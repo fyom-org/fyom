@@ -43,6 +43,7 @@ type Server struct {
 func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gitCommit, buildTime, goVer string) *Server {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger(logger))
+	r.Use(corsMiddleware)
 	r.Use(middleware.ErrorHandler())
 
 	mediaRepo := repository.NewMediaRepository(db)
@@ -480,4 +481,51 @@ func (s *Server) checkAndRefreshLibraries(ctx context.Context) {
 			_ = s.settingRepo.SetSetting(ctx, "library_last_refresh_"+libraryID, strconv.FormatInt(time.Now().Unix(), 10))
 		}(lib.ID, lib.SourcePath, interval)
 	}
+}
+
+// corsMiddleware handles CORS preflight (OPTIONS) requests and adds
+// Access-Control-Allow-* headers to all responses.
+// It must be registered before ErrorHandler so that OPTIONS requests
+// are intercepted before route matching returns 405.
+func corsMiddleware(next http.Handler) http.Handler {
+	allowedOrigins := map[string]bool{
+		"http://localhost:5173":  true,
+		"http://127.0.0.1:5173": true,
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+
+		// Always set Vary headers to prevent caching issues.
+		w.Header().Add("Vary", "Origin")
+		w.Header().Add("Vary", "Access-Control-Request-Method")
+		w.Header().Add("Vary", "Access-Control-Request-Headers")
+
+		// If origin is not in the allowed list, skip CORS headers
+		// but still continue the request chain.
+		if !allowedOrigins[origin] {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Set CORS headers for allowed origin.
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		// Handle preflight OPTIONS request.
+		if r.Method == http.MethodOptions {
+			slog.Debug("CORS preflight",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"origin", origin,
+				"access-control-request-method", r.Header.Get("Access-Control-Request-Method"),
+				"access-control-request-headers", r.Header.Get("Access-Control-Request-Headers"),
+			)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
