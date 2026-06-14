@@ -11,7 +11,7 @@ use anyhow::Result;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{Notify, OnceCell};
+use tokio::sync::{Notify, OnceCell, mpsc};
 
 use crate::{SIDECAR_ERROR_EVENT, SIDECAR_READY_EVENT, SIDECAR_STARTUP_TIMEOUT_SECS};
 
@@ -142,15 +142,8 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
         .take()
         .ok_or_else(|| anyhow::anyhow!("Failed to capture sidecar stderr"))?;
 
-    // Create a notify to signal when sidecar is ready
-    let ready_notify = Arc::new(Notify::new());
-    let ready_api_url = Arc::new(OnceCell::new());
-
-    // Clone for use in the background task
-    let ready_notify_clone = ready_notify.clone();
-    let ready_api_url_clone = ready_api_url.clone();
-    let app_clone = app.clone();
-    let state_clone = state.clone();
+    // Create a channel to receive the ready signal
+    let (ready_tx, mut ready_rx) = mpsc::channel::<String>(1);
 
     // Spawn a background task to drain stdout/stderr and detect FYOM_READY
     tauri::async_runtime::spawn(async move {
@@ -158,8 +151,7 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
         let mut lines = reader.lines();
         let mut ready_emitted = false;
 
-        // Also spawn stderr drain in background
-        let stderr_app = app_clone.clone();
+        // Spawn stderr drain in background
         tauri::async_runtime::spawn(async move {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
@@ -169,17 +161,13 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
         });
 
         // Monitor child process exit
-        let child_app = app_clone.clone();
         tauri::async_runtime::spawn(async move {
             match child.wait().await {
                 Ok(status) if !status.success() => {
                     tracing::warn!("Sidecar exited with non-zero status: {:?}", status);
-                    let _ = child_app
-                        .emit(SIDECAR_ERROR_EVENT, format!("Sidecar exited: {:?}", status));
                 }
                 Err(e) => {
                     tracing::error!("Sidecar wait error: {}", e);
-                    let _ = child_app.emit(SIDECAR_ERROR_EVENT, format!("Sidecar error: {}", e));
                 }
                 _ => tracing::info!("Sidecar exited normally"),
             }
@@ -201,11 +189,8 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
                         ready_emitted = true;
                         tracing::info!("FYOM_READY received: {}", api_url);
 
-                        // Store the API URL for the main task to use
-                        ready_api_url_clone.set(api_url.clone()).ok();
-
-                        // Notify that sidecar is ready
-                        ready_notify_clone.notify_one();
+                        // Send the API URL through the channel
+                        let _ = ready_tx.send(api_url).await;
 
                         // Continue reading stdout to drain the pipe
                         continue;
@@ -234,18 +219,12 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
 
     loop {
         // Check if we received the ready signal
-        // Notified is a Future, so we can use timeout to check non-blocking
-        match tokio::time::timeout(Duration::from_millis(0), ready_notify.notified()).await {
-            Ok(_) => {
-                // Get the API URL
-                let api_url = ready_api_url.get().ok_or_else(|| {
-                    anyhow::anyhow!("Ready signal received but no API URL stored")
-                })?;
-
+        match tokio::time::timeout(Duration::from_millis(0), ready_rx.recv()).await {
+            Ok(Some(api_url)) => {
                 tracing::info!("  db_path:    {}", db_path.display());
 
                 // Confirm readiness with /readyz
-                if let Err(e) = confirm_readyz(api_url).await {
+                if let Err(e) = confirm_readyz(&api_url).await {
                     tracing::warn!("/readyz confirmation failed: {}", e);
                     // Don't fail — the sidecar emitted FYOM_READY so it's likely fine
                 }
@@ -255,13 +234,21 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
                 sidecar_state.set_ready(api_base_url.clone());
 
                 // Emit readiness event to the frontend
-                let _ = app.emit(SIDECAR_READY_EVENT, api_url.to_string());
+                let _ = app.emit(SIDECAR_READY_EVENT, api_url.clone());
 
                 // Bootstrap completed successfully
                 return Ok(());
             }
+            Ok(None) => {
+                // Channel closed, sidecar probably exited
+                let msg = "Sidecar exited without emitting FYOM_READY".to_string();
+                tracing::error!("{}", msg);
+                sidecar_state.set_error(msg.clone());
+                let _ = app.emit(SIDECAR_ERROR_EVENT, msg);
+                anyhow::bail!("{}", msg);
+            }
             Err(_) => {
-                // Notification not yet received, continue waiting
+                // No message yet, continue waiting
             }
         }
 
