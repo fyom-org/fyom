@@ -302,7 +302,7 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
                     // But we treat this as a failure for strict readiness confirmation
                     let msg = format!("Sidecar ready but /readyz failed: {}", e);
                     sidecar_state.set_error(msg.clone());
-                    let _ = app.emit(SIDECAR_ERROR_EVENT, msg);
+                    let _ = app.emit(SIDECAR_ERROR_EVENT, msg.clone());
                     anyhow::bail!("{}", msg);
                 }
 
