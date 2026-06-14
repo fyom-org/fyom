@@ -4,14 +4,13 @@
 
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{Notify, OnceCell, mpsc};
+use tokio::sync::mpsc;
 
 use crate::{SIDECAR_ERROR_EVENT, SIDECAR_READY_EVENT, SIDECAR_STARTUP_TIMEOUT_SECS};
 
@@ -142,10 +141,12 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
         .take()
         .ok_or_else(|| anyhow::anyhow!("Failed to capture sidecar stderr"))?;
 
-    // Create a channel to receive the ready signal
+    // Create channels for communication
     let (ready_tx, mut ready_rx) = mpsc::channel::<String>(1);
+    let (kill_tx, mut kill_rx) = mpsc::channel::<()>(1);
 
     // Spawn a background task to drain stdout/stderr and detect FYOM_READY
+    // This task owns the child process
     tauri::async_runtime::spawn(async move {
         let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
@@ -160,16 +161,24 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
             }
         });
 
-        // Monitor child process exit
+        // Monitor child process exit and kill signals
         tauri::async_runtime::spawn(async move {
-            match child.wait().await {
-                Ok(status) if !status.success() => {
-                    tracing::warn!("Sidecar exited with non-zero status: {:?}", status);
+            tokio::select! {
+                status = child.wait() => {
+                    match status {
+                        Ok(status) if !status.success() => {
+                            tracing::warn!("Sidecar exited with non-zero status: {:?}", status);
+                        }
+                        Err(e) => {
+                            tracing::error!("Sidecar wait error: {}", e);
+                        }
+                        _ => tracing::info!("Sidecar exited normally"),
+                    }
                 }
-                Err(e) => {
-                    tracing::error!("Sidecar wait error: {}", e);
+                _ = kill_rx.recv() => {
+                    // Kill signal received, try to kill the child
+                    let _ = child.kill().await;
                 }
-                _ => tracing::info!("Sidecar exited normally"),
             }
         });
 
@@ -244,7 +253,7 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
                 let msg = "Sidecar exited without emitting FYOM_READY".to_string();
                 tracing::error!("{}", msg);
                 sidecar_state.set_error(msg.clone());
-                let _ = app.emit(SIDECAR_ERROR_EVENT, msg);
+                let _ = app.emit(SIDECAR_ERROR_EVENT, msg.clone());
                 anyhow::bail!("{}", msg);
             }
             Err(_) => {
@@ -254,7 +263,8 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
 
         // Check timeout
         if start.elapsed() > deadline {
-            let _ = child.kill().await;
+            // Send kill signal to background task
+            let _ = kill_tx.send(()).await;
             let msg = format!(
                 "Sidecar startup timed out after {}s (pid={})",
                 SIDECAR_STARTUP_TIMEOUT_SECS, child_id
