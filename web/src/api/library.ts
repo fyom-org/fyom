@@ -67,3 +67,8 @@ export async function getMediaByStatus(status: string, limit = 20) {
   const res = await request.get('/library/by-status', { params: { status, limit } });
   return res.data;
 }
+
+export async function getContinueWatching() {
+  const res = await request.get('/library/continue');
+  return res.data;
+}

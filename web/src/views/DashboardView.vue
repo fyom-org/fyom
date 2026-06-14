@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { getMediaList, getMediaByStatus } from '@/api/library';
+import { getMediaList, getMediaByStatus, getContinueWatching } from '@/api/library';
 import request from '@/api/request';
 import { useUserStore } from '@/stores/user';
+import { isTauriMode } from '@/lib/runtime/env';
 import MediaRow from '@/components/MediaRow.vue';
 
 const router = useRouter();
@@ -42,16 +43,15 @@ function onStatusChanged(id: string, newStatus: string) {
 }
 
 onMounted(async () => {
+  console.log('[Dashboard] runtime:', isTauriMode() ? 'tauri' : 'browser');
   try {
     const [continueRes, wantRes, recentRes, libRes] = await Promise.all([
-      fetch('/api/v1/library/continue', {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` },
-      }).then((r) => (r.ok ? r.json() : { data: [] })),
+      getContinueWatching(),
       getMediaByStatus('want_to_watch', 20),
       getMediaList(1, 20, { sort: 'created_desc' }),
       request.get('/libraries'),
     ]);
-    continueWatching.value = continueRes.data || [];
+    continueWatching.value = continueRes?.items || [];
     wantToWatch.value = wantRes?.items || [];
     recentlyAdded.value = recentRes.items || [];
     libraries.value = (libRes as any).data || [];
