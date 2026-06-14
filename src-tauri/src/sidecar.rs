@@ -234,9 +234,9 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &crate::AppState) -> Resu
 
     loop {
         // Check if we received the ready signal
-        // Use a non-blocking check by trying to wait with zero timeout
-        match tokio::time::timeout(Duration::from_millis(0), ready_notify.notified().wait()).await {
-            Ok(()) => {
+        // Notified is a Future, so we can use timeout to check non-blocking
+        match tokio::time::timeout(Duration::from_millis(0), ready_notify.notified()).await {
+            Ok(_) => {
                 // Get the API URL
                 let api_url = ready_api_url.get().ok_or_else(|| {
                     anyhow::anyhow!("Ready signal received but no API URL stored")
