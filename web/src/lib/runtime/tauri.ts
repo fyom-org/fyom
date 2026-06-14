@@ -25,13 +25,14 @@ export function isTauriEnvironment(): boolean {
 }
 
 /**
- * Get the sidecar status from Tauri backend using invoke.
- * Uses dynamic import to avoid TypeScript module resolution issues.
+ * Get the sidecar status from Tauri backend.
+ * Uses the Tauri v2 API correctly.
  */
 async function getSidecarStatus(): Promise<{ status: string; api_base_url?: string } | null> {
   try {
-    // Dynamic import to get invoke function
-    const { invoke } = await import('@tauri-apps/api');
+    // In Tauri v2, we need to use the tauri object from window
+    // @ts-expect-error - tauri is available in Tauri environment
+    const { invoke } = window.__TAURI_INTERNALS__.tauri;
     const result = (await invoke('get_sidecar_status')) as {
       status: string;
       api_base_url?: string;
