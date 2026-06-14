@@ -9,18 +9,11 @@
         }"
       >
         <div class="sidebar-content">
-          <router-link
-            to="/"
-            exact-active-class="router-link-active"
-            @click="isMobile && (sidebarOpen = false)"
+          <router-link to="/" exact-active-class="router-link-active" @click="handleNavClick"
             >Home</router-link
           >
-          <router-link to="/profile" @click="isMobile && (sidebarOpen = false)"
-            >Profile</router-link
-          >
-          <router-link to="/library" @click="isMobile && (sidebarOpen = false)"
-            >Library</router-link
-          >
+          <router-link to="/profile" @click="handleNavClick">Profile</router-link>
+          <router-link to="/library" @click="handleNavClick">Library</router-link>
           <!-- Library switcher — only shows when 2+ libraries exist -->
           <div class="library-section" v-if="libraries.length >= 2">
             <div class="section-label">Libraries</div>
@@ -29,7 +22,7 @@
               :key="lib.id"
               :to="`/library/${lib.id}`"
               class="nav-link library-link"
-              @click="isMobile && (sidebarOpen = false)"
+              @click="handleNavClick"
             >
               <span class="library-icon">
                 {{ lib.type === 'movie' ? '🎬' : lib.type === 'show' ? '📺' : '📁' }}
@@ -71,10 +64,19 @@ const toggleSidebar = () => {
   sidebarOpen.value = !sidebarOpen.value;
 };
 
+const handleNavClick = () => {
+  if (isMobile.value) {
+    sidebarOpen.value = false;
+  }
+};
+
 const handleResize = () => {
+  const wasMobile = isMobile.value;
   isMobile.value = window.innerWidth <= 768;
-  // Reset sidebar state on resize
-  sidebarOpen.value = !isMobile.value;
+  // Only reset sidebar state when switching between mobile and desktop
+  if (wasMobile !== isMobile.value) {
+    sidebarOpen.value = !isMobile.value;
+  }
 };
 
 onMounted(async () => {
@@ -194,10 +196,7 @@ function handleLogout() {
   left: 0;
   height: 100%;
   transform: translateX(-100%);
-}
-
-.sidebar-hidden {
-  transform: translateX(-100%);
+  z-index: 100;
 }
 
 .sidebar-mobile:not(.sidebar-hidden) {
