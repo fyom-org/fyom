@@ -472,6 +472,7 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &AppState) -> Result<()> 
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| anyhow!("Failed to spawn sidecar: {}", e))?;
 
@@ -668,7 +669,7 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &AppState) -> Result<()> 
 }
 
 /// Shutdown the sidecar process cleanly.
-pub async fn shutdown_sidecar(_app: &AppHandle, state: &AppState) -> Result<()> {
+pub async fn shutdown_sidecar(state: &AppState) -> Result<()> {
     let sidecar_state = &state.sidecar_state;
 
     if let Some(runtime) = take_running_sidecar().await {

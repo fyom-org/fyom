@@ -41,7 +41,7 @@ pub async fn request_quit(app: AppHandle) -> Result<(), String> {
     state.mark_shutdown();
 
     // Shutdown sidecar (only the first intentional call reaches here).
-    sidecar::shutdown_sidecar(&app, &state)
+    sidecar::shutdown_sidecar(&state)
         .await
         .map_err(|e| e.to_string())?;
 

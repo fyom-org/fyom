@@ -9,6 +9,7 @@ use tauri::{
 
 use crate::AppState;
 use crate::MAIN_WINDOW_LABEL;
+use crate::sidecar;
 
 /// Setup the system tray with Show and Quit menu items.
 pub fn setup_tray<R: Runtime>(app: &tauri::App<R>) -> Result<()> {
@@ -28,12 +29,22 @@ pub fn setup_tray<R: Runtime>(app: &tauri::App<R>) -> Result<()> {
             }
             "quit" => {
                 tracing::info!("Quit requested from tray");
-                // Mark exit intent before quitting so the RunEvent handler
-                // can distinguish this from a window close.
+                // Mark exit intent and await sidecar shutdown before exiting.
                 if let Some(state) = app.try_state::<AppState>() {
                     state.mark_exit_intent();
                 }
-                app.exit(0);
+                // Use tauri::async_runtime to await the async shutdown before
+                // calling app.exit(). This ensures the sidecar is fully stopped
+                // before the Tauri process exits.
+                let app_clone = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = app_clone.state::<AppState>();
+                    if let Err(e) = sidecar::shutdown_sidecar(&state).await {
+                        tracing::warn!("Sidecar shutdown error during quit: {}", e);
+                    }
+                    tracing::info!("Sidecar shutdown completed, exiting app");
+                    app_clone.exit(0);
+                });
             }
             _ => {}
         })
