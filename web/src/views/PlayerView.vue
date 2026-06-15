@@ -1,25 +1,25 @@
 <template>
   <div class="player-view">
-    <!-- Fallback banner: shown when native player was attempted but failed -->
+    <!-- Fallback banner: shown only when native was attempted and failed -->
     <PlayerFallbackNotice
       v-if="showFallbackBanner"
       message="Native player unavailable, using browser playback"
     />
 
-    <!-- Error state -->
+    <!-- Error state (fatal: no stream available at all) -->
     <div v-if="error" class="error">{{ error }}</div>
 
     <!-- Player surface -->
     <div v-else class="player-surface">
-      <!-- Loading state while initializing -->
+      <!-- Loading state while native player initializes -->
       <div v-if="isLoading" class="loading">
         <span class="spinner"></span>
-        <span>{{ loadingText }}</span>
+        <span>Initializing native player...</span>
       </div>
 
       <!-- HTML5 browser player (fallback or default) -->
       <video
-        v-if="showBrowserPlayer && streamUrl"
+        v-else-if="showBrowserPlayer && streamUrl"
         ref="videoRef"
         :src="streamUrl"
         controls
@@ -31,22 +31,22 @@
         Your browser does not support the video tag.
       </video>
 
-      <!-- No stream available -->
-      <div v-if="!streamUrl && !isLoading && !error" class="loading">
-        {{ nativePlayerState.status === 'initializing' ? 'Initializing native player...' : 'Loading...' }}
+      <!-- Waiting for stream URL -->
+      <div v-else-if="!streamUrl" class="loading">
+        <span>Loading...</span>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, shallowRef } from 'vue';
 import { useRoute } from 'vue-router';
 import { getMediaDetail } from '@/api/library';
 import {
   createInitialNativePlayerState,
-  mapNativePlayerInitError,
-  isNativePlayerAvailable,
+  tryInitializeNativePlayer,
+  isNativePlaybackRuntimeAvailable,
   type NativePlayerState,
 } from '@/lib/player/native-player';
 import PlayerFallbackNotice from '@/components/PlayerFallbackNotice.vue';
@@ -57,46 +57,49 @@ const error = ref('');
 const videoRef = ref<HTMLVideoElement | null>(null);
 let lastReport = 0;
 
-// Native player state
-const nativePlayerState = ref<NativePlayerState>(createInitialNativePlayerState());
+// Use shallowRef for state object to avoid deep reactivity overhead
+const nativePlayerState = shallowRef<NativePlayerState>(
+  createInitialNativePlayerState(),
+);
 
-// Computed flags for UI decisions
-const isNativeAvailable = computed(() => isNativePlayerAvailable());
+// Guard: ensure we only attempt native init once per mount
+const nativeInitAttempted = ref(false);
+
+/* ── Computed flags ────────────────────────────────────────────────────── */
+
+const isNativeAvailable = computed(() => isNativePlaybackRuntimeAvailable());
 const isInitializing = computed(() => nativePlayerState.value.status === 'initializing');
 const isFailed = computed(() => nativePlayerState.value.status === 'failed');
 const isReady = computed(() => nativePlayerState.value.status === 'ready');
+const isUnavailable = computed(() => nativePlayerState.value.status === 'unavailable');
 
-// Show fallback banner only when native was attempted and failed
+// Show fallback banner only when native was attempted AND failed
 const showFallbackBanner = computed(() => {
   return isNativeAvailable.value && isFailed.value;
 });
 
-// Show loading state while native player is initializing
-const isLoading = computed(() => {
-  return isInitializing.value;
-});
+// Show loading spinner only during active native initialization
+const isLoading = computed(() => isInitializing.value);
 
 // Show browser player when:
-// - native player failed (fallback)
-// - native player is not available (browser mode)
-// - native player is ready but we're using browser fallback
+// - native is unavailable (browser mode, never attempted)
+// - native failed (browser fallback)
+// - native is idle but stream URL is ready (browser default before native attempt completes)
+// - native is ready but we still show browser (shouldn't happen, but safe)
 const showBrowserPlayer = computed(() => {
-  // Always show browser player in non-Tauri (browser) mode
-  if (!isNativeAvailable.value) return true;
+  // Never show browser player while native is initializing
+  if (isInitializing.value) return false;
   // Show browser player when native failed
   if (isFailed.value) return true;
-  // Show browser player when native is idle (not yet attempted)
+  // Show browser player when native is unavailable (browser mode)
+  if (isUnavailable.value) return true;
+  // Show browser player when native is idle (not yet attempted, stream ready)
   if (nativePlayerState.value.status === 'idle') return true;
-  // When native is ready, native player surface is used (not browser)
-  if (isReady.value) return false;
-  // During initialization, don't show browser player yet
+  // When native is ready, native surface is used
   return false;
 });
 
-const loadingText = computed(() => {
-  if (isInitializing.value) return 'Initializing native player...';
-  return 'Loading...';
-});
+/* ── Progress tracking ─────────────────────────────────────────────────── */
 
 function onTimeUpdate() {
   const video = videoRef.value;
@@ -135,43 +138,56 @@ function onEnded() {
   }).catch(() => {});
 }
 
+/* ── Native player lifecycle ───────────────────────────────────────────── */
+
 /**
- * Attempt to initialize the native player.
- * In Tauri desktop mode, this would invoke the native libmpv backend.
- * On failure, the state transitions to 'failed' and the UI falls back to HTML5.
+ * Attempt native player initialization.
+ * This function is called exactly once per mount lifecycle.
+ * It transitions the state machine: idle → initializing → ready | failed
  */
-async function tryInitNativePlayer(mediaId: string): Promise<boolean> {
-  if (!isNativeAvailable.value) {
-    nativePlayerState.value = { status: 'unavailable', failure: null };
-    return false;
+async function attemptNativeInit(mediaId: string): Promise<void> {
+  if (nativeInitAttempted.value) return;
+  nativeInitAttempted.value = true;
+
+  // Check runtime availability first
+  if (!isNativePlaybackRuntimeAvailable()) {
+    nativePlayerState.value = {
+      status: 'unavailable',
+      failure: null,
+      attempted: false,
+    };
+    return;
   }
 
-  nativePlayerState.value = { status: 'initializing', failure: null };
+  // Transition to initializing
+  nativePlayerState.value = {
+    status: 'initializing',
+    failure: null,
+    attempted: true,
+  };
 
-  try {
-    // Attempt native player initialization via Tauri invoke
-    // @ts-expect-error - tauri is available in Tauri environment
-    const { invoke } = window.__TAURI_INTERNALS__.tauri;
-    const result = await invoke('play_media', { mediaId });
+  // Attempt native init via bridge function
+  const result = await tryInitializeNativePlayer({
+    mediaUrl: streamUrl.value,
+  });
 
-    if (result && result.success) {
-      nativePlayerState.value = { status: 'ready', failure: null };
-      return true;
-    }
-
-    // Native player reported failure
-    const failure = mapNativePlayerInitError(new Error(result?.error || 'Unknown native player error'));
-    nativePlayerState.value = { status: 'failed', failure };
-    console.warn('[Player] Native player init failed:', failure.stage, failure.message);
-    return false;
-  } catch (err) {
-    // Native player initialization threw
-    const failure = mapNativePlayerInitError(err);
-    nativePlayerState.value = { status: 'failed', failure };
-    console.warn('[Player] Native player init failed:', failure.stage, failure.message);
-    return false;
+  if (result.ok) {
+    nativePlayerState.value = {
+      status: 'ready',
+      failure: null,
+      attempted: true,
+    };
+  } else {
+    nativePlayerState.value = {
+      status: 'failed',
+      failure: result.failure,
+      attempted: true,
+    };
+    console.warn('[Player] Native player init failed:', result.failure.stage, result.failure.message);
   }
 }
+
+/* ── Lifecycle ─────────────────────────────────────────────────────────── */
 
 onMounted(async () => {
   try {
@@ -183,31 +199,25 @@ onMounted(async () => {
       return;
     }
 
-    // Store stream URL for potential browser fallback
+    // Store stream URL for browser fallback
     streamUrl.value = data.stream_url;
 
-    // Attempt native player initialization (Tauri desktop only)
-    const nativeSuccess = await tryInitNativePlayer(mediaId);
-
-    if (!nativeSuccess) {
-      // Native player failed or unavailable — browser player will be shown
-      // streamUrl is already set, so HTML5 player will render
-      console.log('[Player] Using browser playback' + (isFailed.value ? ' (native player failed)' : ''));
-    }
+    // Attempt native init (only in Tauri runtime; no-op in browser)
+    await attemptNativeInit(mediaId);
   } catch {
     error.value = 'Failed to load media.';
   }
 });
 
 onUnmounted(() => {
-  // Clean up native player if it was initialized
+  // Clean up native player only if it was successfully initialized
   if (isReady.value) {
     try {
-      // @ts-expect-error - tauri is available in Tauri environment
+      // @ts-expect-error — __TAURI_INTERNALS__ exists in Tauri runtime
       const { invoke } = window.__TAURI_INTERNALS__.tauri;
       invoke('stop_media').catch(() => {});
     } catch {
-      // Ignore cleanup errors
+      // Ignore cleanup errors — native may have already been torn down
     }
   }
 });

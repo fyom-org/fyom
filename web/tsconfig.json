@@ -3,7 +3,7 @@
     "target": "es2023",
     "module": "esnext",
     "lib": ["ES2023", "DOM"],
-    "types": ["vite/client", "@tauri-apps/api"],
+    "types": ["vite/client", "@tauri-apps/api", "vitest/globals", "node"],
     "skipLibCheck": true,
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
@@ -19,5 +19,5 @@
       "@/*": ["./src/*"],
     },
   },
-  "include": ["src"],
+  "include": ["src", "tests"],
 }
