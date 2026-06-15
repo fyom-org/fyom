@@ -469,11 +469,10 @@ Current client-side genre filtering is unaffected.
 > coverage significantly strengthened.
 >
 > **Follow-up notes:**
-> - `ImportSummary` currently returns from synchronous `ImportLibrary`
->   only. It is not yet propagated through the async import job / API
->   status surfaces used by the scheduler and admin views. (Tracks
->   under 9.5 Observability — structured import summary in job
->   responses.)
+> - `ImportSummary` is now persisted on async import jobs and exposed through
+>   job status responses, including `scanned_files`, `imported_items`,
+>   `updated_items`, `skipped_files`, `parse_warnings`, and `duration_ms`.
+>   Remaining UI work can wire scheduler/admin surfaces to those fields.
 > - `MediaRepository.Update()` excludes `status`. NFO-derived fields
 >   such as `playcount` and `last_played` are refreshed on re-import
 >   by design. Future product decisions may revisit whether these
@@ -604,19 +603,18 @@ Current client-side genre filtering is unaffected.
       - static asset 404s
       - auth failures
 
-- [ ] Add debug-safe startup diagnostics:
+- [x] Add debug-safe startup diagnostics:
       data directory, DB path, web asset mode, listening address
 
 - [x] Add optional verbose logging flag:
       `--log-level debug`
 
-- [ ] **Propagate ImportSummary through async import job / API
+- [x] **Propagate ImportSummary through async import job / API
       status responses** (follow-up from Phase 9.2):
-      scheduler/admin views should surface scanned_files,
-      imported_items, parse_warnings, and duration from
-      `ImportSummary`, not just the current done/total counters.
-      This may require adding summary columns to import_jobs
-      or a separate endpoint.
+      scheduler/admin views can now surface `scanned_files`,
+      `imported_items`, `updated_items`, `skipped_files`,
+      `parse_warnings`, and `duration_ms` from persisted import jobs,
+      while `done_items` / `total_items` progress counters remain intact.
 
 ### 9.6 Configuration & Data Safety
 
