@@ -29,10 +29,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useUserStore } from '@/stores/user';
-import request from '@/api/request';
 
 const router = useRouter();
 const store = useUserStore();
@@ -41,17 +40,6 @@ const username = ref('');
 const password = ref('');
 const loading = ref(false);
 const error = ref('');
-
-onMounted(async () => {
-  try {
-    const res = await request.get('/system/status');
-    if (!res.data.initialized) {
-      router.push('/setup');
-    }
-  } catch {
-    // system not initialized — router.push handled above
-  }
-});
 
 async function handleLogin() {
   error.value = '';

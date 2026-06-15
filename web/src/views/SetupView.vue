@@ -40,6 +40,7 @@ import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import request from '@/api/request';
 import { useUserStore } from '@/stores/user';
+import { useSystemStore } from '@/stores/system';
 
 const router = useRouter();
 const username = ref('');
@@ -75,13 +76,15 @@ async function submit() {
     });
     localStorage.setItem('token', loginRes.data.access_token);
 
-    // Step 3: Establish server-truth auth state via the store
-    // before navigating. This ensures the router guard sees
-    // isAuthenticated=true instead of bouncing back to /setup.
+    // Step 3: Update system truth so the router guard sees initialized
+    const systemStore = useSystemStore();
+    await systemStore.fetchSystemStatus();
+
+    // Step 4: Establish server-truth auth state via the store
     const userStore = useUserStore();
     await userStore.rehydrateSession();
 
-    // Step 4: Navigate to dashboard
+    // Step 5: Navigate to dashboard
     router.replace('/');
   } catch (e: unknown) {
     const err = e as { response?: { data?: { message?: string } } };
@@ -174,11 +177,6 @@ async function submit() {
 
 .toggle-label input[type='checkbox'] {
   accent-color: #6c63ff;
-}
-
-.library-fields {
-  margin-top: 12px;
-  padding-left: 28px;
 }
 
 .hint {

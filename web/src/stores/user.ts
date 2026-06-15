@@ -3,7 +3,7 @@ import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { login, getMe, type MeData } from '@/api/auth';
 
-export type AuthStatus = 'unknown' | 'rehydrating' | 'authenticated' | 'anonymous';
+export type AuthStatus = 'unknown' | 'rehydrating' | 'authenticated' | 'anonymous' | 'error';
 
 export const useUserStore = defineStore('user', () => {
   const router = useRouter();
@@ -13,8 +13,12 @@ export const useUserStore = defineStore('user', () => {
   const user = ref<MeData | null>(null);
 
   const isAuthenticated = computed(() => status.value === 'authenticated');
-  const isAuthReady = computed(() => status.value === 'authenticated' || status.value === 'anonymous');
-  const isAdmin = computed(() => status.value === 'authenticated' && user.value?.role === 'admin');
+  const isAuthReady = computed(
+    () => status.value === 'authenticated' || status.value === 'anonymous'
+  );
+  const isAdmin = computed(
+    () => status.value === 'authenticated' && user.value?.role === 'admin'
+  );
 
   /**
    * Rehydrate session from a persisted token.

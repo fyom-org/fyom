@@ -2,6 +2,8 @@ import { createRouter, createWebHistory } from 'vue-router';
 import MainLayout from '@/layouts/MainLayout.vue';
 import AdminLayout from '@/layouts/AdminLayout.vue';
 import { useUserStore } from '@/stores/user';
+import { useSystemStore } from '@/stores/system';
+import { resolveNavigationTarget } from '@/lib/navigation/resolveNavigationTarget';
 
 const router = createRouter({
   history: createWebHistory(),
@@ -76,31 +78,55 @@ const router = createRouter({
   ],
 });
 
-// Public routes — always accessible
-const PUBLIC_PATHS = new Set(['/login', '/register', '/setup']);
-
+// Unified route guard — single decision point using system + auth state machines
 router.beforeEach(async (to) => {
-  const store = useUserStore();
+  const systemStore = useSystemStore();
+  const userStore = useUserStore();
 
-  // Public routes — pass through
-  if (PUBLIC_PATHS.has(to.path)) {
-    return;
+  // 1. Ensure system truth is known
+  if (systemStore.status === 'unknown') {
+    await systemStore.fetchSystemStatus();
   }
 
-  // Not yet bootstrapped — trigger rehydration and wait.
-  if (!store.isAuthReady) {
-    await store.rehydrateSession();
+  // 2. If system needs setup, let the resolver decide
+  // 3. If system is initialized, ensure auth truth when needed
+  if (systemStore.isInitialized) {
+    // If auth is still unknown and there's a persisted token, rehydrate
+    if (userStore.status === 'unknown' && localStorage.getItem('token')) {
+      await userStore.rehydrateSession();
+    }
+    // If auth is still unknown (no token), mark as anonymous so resolver works
+    if (userStore.status === 'unknown') {
+      // No token — anonymous. We need to set this explicitly since
+      // rehydrateSession only runs when there's a token.
+      // But we can't call clearStaleSession here (it's a no-op for unknown).
+      // The resolver handles unknown auth as "wait", which is correct.
+    }
   }
 
-  // After rehydration, if still not authenticated — redirect.
-  if (!store.isAuthenticated) {
-    // No users yet? → setup flow
-    return '/setup';
-  }
+  // 3. Resolve navigation decision
+  const decision = resolveNavigationTarget({
+    systemStatus: systemStore.status,
+    authStatus: userStore.status,
+    isAdmin: userStore.isAdmin,
+    targetPath: to.path,
+  });
 
-  // Admin routes — check role from server-verified user, not localStorage token.
-  if (to.meta.requiresAdmin && !store.isAdmin) {
-    return '/';
+  switch (decision.type) {
+    case 'allow':
+      return;
+    case 'redirect':
+      return decision.to;
+    case 'wait':
+      // Wait is only valid during bootstrap. If we're still waiting
+      // after fetchSystemStatus + rehydrateSession, something is wrong.
+      // As a fallback, redirect to /login for initialized system.
+      if (systemStore.isInitialized) {
+        return '/login';
+      }
+      // System not ready yet — allow the navigation to proceed
+      // and let the guard re-evaluate on next tick
+      return;
   }
 });
 
