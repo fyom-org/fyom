@@ -129,6 +129,17 @@ tasks:
       NO_PROXY: "localhost,127.0.0.1,::1"
       no_proxy: "localhost,127.0.0.1,::1"
 
+  test:playwright-e2e:
+    desc: "Run Playwright E2E tests"
+    dir: web
+    cmds:
+      - pnpm exec playwright test
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: "true"
+      NO_PROXY: "localhost,127.0.0.1,::1"
+      no_proxy: "localhost,127.0.0.1,::1"
+
   test:playwright-headless:
     desc: "Run frontend Vitest Browser Mode tests with Playwright"
     dir: web
