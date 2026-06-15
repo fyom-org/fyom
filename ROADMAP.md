@@ -508,9 +508,9 @@ Current client-side genre filtering is unaffected.
 
 - [ ] Ensure admin and non-admin authorization behavior is covered
 
-- [ ] Add migration test path from empty DB to latest schema
+- [x] Add migration test path from empty DB to latest schema
 
-- [ ] Add migration test path from pre-Phase-8 DB to latest schema
+- [x] Add migration test path from pre-Phase-8 DB to latest schema
 
 - [ ] Ensure `MediaColumns` constant is used consistently
       for SELECT/Scan safety
@@ -569,7 +569,7 @@ Current client-side genre filtering is unaffected.
 - [ ] Add debug-safe startup diagnostics:
       data directory, DB path, web asset mode, listening address
 
-- [ ] Add optional verbose logging flag:
+- [x] Add optional verbose logging flag:
       `--log-level debug`
 
 - [ ] **Propagate ImportSummary through async import job / API
