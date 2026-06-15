@@ -87,6 +87,8 @@ func Run(opts RunOptions) error {
 		return fmt.Errorf("create db parent dir %s: %w", dbDir, err)
 	}
 
+	emitStartupDiagnostics(slog.Default(), newStartupDiagnostics(dbPath, cfg))
+
 	slog.Info("fyom starting",
 		"mode", opts.Mode,
 		"version", version.Version,
