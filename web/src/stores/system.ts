@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import request from '@/api/request';
+import { apiRequest } from '@/api/request';
 
 export type SystemStatus =
   | 'unknown'
@@ -23,7 +23,7 @@ export const useSystemStore = defineStore('system', () => {
     if (status.value === 'checking') return;
     status.value = 'checking';
     try {
-      const res = await request.get<{ initialized: boolean }>('/system/status');
+      const res = await apiRequest.get<{ initialized: boolean }>('/system/status');
       status.value = res.data.initialized ? 'initialized' : 'needs_setup';
       checkedOnce.value = true;
     } catch {

@@ -37,7 +37,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import request from '@/api/request';
+import { apiRequest } from '@/api/request';
 
 const permissions = ref<any[]>([]);
 const libraries = ref<any[]>([]);

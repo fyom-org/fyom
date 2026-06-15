@@ -40,7 +40,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import request from '@/api/request';
+import { apiRequest } from '@/api/request';
 
 const items = ref<any[]>([]);
 const total = ref(0);

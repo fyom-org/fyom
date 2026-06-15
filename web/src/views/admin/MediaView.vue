@@ -74,7 +74,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import request from '@/api/request';
+import { apiRequest } from '@/api/request';
 
 interface AdminItem {
   id: string;

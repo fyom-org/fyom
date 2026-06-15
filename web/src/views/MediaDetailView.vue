@@ -201,7 +201,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { getMediaDetail, setMediaStatus } from '@/api/library';
-import request from '@/api/request';
+import { apiRequest } from '@/api/request';
 import EpisodeList from '@/components/EpisodeList.vue';
 import { resolveResourceUrl } from '@/lib/runtime/resource';
 

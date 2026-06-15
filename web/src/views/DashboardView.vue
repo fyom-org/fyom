@@ -2,7 +2,7 @@
 import { ref, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { getMediaList, getMediaByStatus, getContinueWatching } from '@/api/library';
-import request from '@/api/request';
+import { apiRequest } from '@/api/request';
 import { useUserStore } from '@/stores/user';
 import { isTauriMode } from '@/lib/runtime/env';
 import MediaRow from '@/components/MediaRow.vue';

@@ -131,7 +131,7 @@
 import { ref, onMounted, computed, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { getMediaList, getMediaByStatus } from '@/api/library';
-import request from '@/api/request';
+import { apiRequest } from '@/api/request';
 import MediaCard from '@/components/MediaCard.vue';
 
 interface MediaItem {

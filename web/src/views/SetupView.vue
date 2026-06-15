@@ -38,7 +38,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
-import request from '@/api/request';
+import { apiRequest } from '@/api/request';
 import { useUserStore } from '@/stores/user';
 import { useSystemStore } from '@/stores/system';
 

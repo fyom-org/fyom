@@ -52,7 +52,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import request from '@/api/request';
+import { apiRequest } from '@/api/request';
 import { useUserStore } from '@/stores/user';
 
 const router = useRouter();

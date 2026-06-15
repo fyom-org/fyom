@@ -83,7 +83,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import request from '@/api/request';
+import { apiRequest } from '@/api/request';
 
 const stats = ref<any>(null);
 const jobs = ref<any[]>([]);

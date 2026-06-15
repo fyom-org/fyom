@@ -50,7 +50,7 @@
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue';
 import { useRouter } from 'vue-router';
 import { useUserStore } from '@/stores/user';
-import request from '@/api/request';
+import { apiRequest } from '@/api/request';
 
 const router = useRouter();
 const store = useUserStore();

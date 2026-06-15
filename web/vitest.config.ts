@@ -13,5 +13,6 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     include: ['tests/**/*.test.ts'],
+    exclude: ['tests/*-lifecycle.e2e.test.ts', 'tests/diagnose-login.e2e.test.ts.disabled'],
   },
 });

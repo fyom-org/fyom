@@ -129,7 +129,8 @@ describe('Test 5: transport errors do NOT trigger invalidation', () => {
 describe('Test 6: verified interceptor wiring — request module loads', () => {
   it('request module loads without error', async () => {
     const req = await import('@/api/request');
-    expect(req.default).toBeDefined();
+    expect(req.apiRequest).toBeDefined();
+    expect(req.authRequest).toBeDefined();
   });
 });
 

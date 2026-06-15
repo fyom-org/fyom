@@ -1,4 +1,4 @@
-import request from './request';
+import { authRequest } from './request';
 
 export interface LoginPayload {
   username: string;
@@ -18,9 +18,13 @@ export interface MeData {
 }
 
 export function login(payload: LoginPayload) {
-  return request.post<LoginData>('/auth/login', payload);
+  return authRequest.post<LoginData>('/auth/login', payload);
 }
 
 export function getMe() {
-  return request.get<MeData>('/auth/me');
+  return authRequest.get<MeData>('/auth/me');
+}
+
+export function register(payload: { username: string; password: string }) {
+  return authRequest.post('/auth/register', payload);
 }
