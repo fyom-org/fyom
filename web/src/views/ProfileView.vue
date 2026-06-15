@@ -100,12 +100,8 @@ async function changePassword() {
 }
 
 function handleLogout() {
+  // F4: Only trigger state change — centralized revalidation handles redirect
   store.logout();
-  // Centralized route revalidation will redirect to /login
-  // when auth state changes from authenticated to anonymous.
-  // As a fallback (in case revalidation hasn't been set up yet),
-  // explicitly navigate.
-  router.replace({ name: 'Login' });
 }
 
 function navigateToAdmin() {

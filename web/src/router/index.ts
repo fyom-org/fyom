@@ -139,6 +139,9 @@ function setupRouteRevalidation() {
 
 // Unified route guard — single decision point using system + auth state machines
 router.beforeEach(async (to) => {
+  // F1: Always install revalidation watcher first, regardless of decision outcome
+  setupRouteRevalidation();
+
   const systemStore = useSystemStore();
   const userStore = useUserStore();
 
@@ -147,11 +150,16 @@ router.beforeEach(async (to) => {
     await systemStore.fetchSystemStatus();
   }
 
-  // 2. If system is initialized, ensure auth truth when needed
+  // 2. F2: Eliminate authStatus=unknown passthrough
+  // When system is initialized, auth MUST be resolved before entering resolver
   if (systemStore.isInitialized) {
-    // If auth is still unknown and there's a persisted token, rehydrate
-    if (userStore.status === 'unknown' && localStorage.getItem('token')) {
-      await userStore.rehydrateSession();
+    if (userStore.status === 'unknown') {
+      if (localStorage.getItem('token')) {
+        await userStore.rehydrateSession();
+      } else {
+        // No token = explicit anonymous, not "unknown"
+        userStore.setAnonymous();
+      }
     }
   }
 
@@ -165,21 +173,15 @@ router.beforeEach(async (to) => {
 
   switch (decision.type) {
     case 'allow':
-      // Set up revalidation on first successful navigation
-      setupRouteRevalidation();
       return;
     case 'redirect':
       return decision.to;
     case 'wait':
-      // Wait is only valid during bootstrap. If we're still waiting
-      // after fetchSystemStatus + rehydrateSession, something is wrong.
-      // As a fallback, redirect to /login for initialized system.
       if (systemStore.isInitialized) {
         return '/login';
       }
-      // System not ready yet — allow the navigation to proceed
-      // and let the guard re-evaluate on next tick
-      return;
+      // F5: System truth not yet known — cancel navigation, don't silently allow
+      return false;
   }
 });
 

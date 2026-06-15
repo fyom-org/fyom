@@ -1,13 +1,10 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import { useRouter } from 'vue-router';
 import { login, getMe, type MeData } from '@/api/auth';
 
 export type AuthStatus = 'unknown' | 'rehydrating' | 'authenticated' | 'anonymous' | 'error';
 
 export const useUserStore = defineStore('user', () => {
-  const router = useRouter();
-
   const status = ref<AuthStatus>('unknown');
   const token = ref<string | null>(localStorage.getItem('token') ?? null);
   const user = ref<MeData | null>(null);
@@ -37,7 +34,7 @@ export const useUserStore = defineStore('user', () => {
     rehydrationPromise = (async () => {
       const persisted = localStorage.getItem('token');
       if (!persisted) {
-        status.value = 'anonymous';
+        setAnonymous();
         return;
       }
 
@@ -67,6 +64,13 @@ export const useUserStore = defineStore('user', () => {
     return rehydrationPromise;
   }
 
+  /** F2: Explicitly set anonymous state (no token, not "unknown") */
+  function setAnonymous(): void {
+    token.value = null;
+    user.value = null;
+    status.value = 'anonymous';
+  }
+
   function clearStaleSession(): void {
     token.value = null;
     user.value = null;
@@ -80,7 +84,9 @@ export const useUserStore = defineStore('user', () => {
     if (!accessToken) throw new Error('login response missing access_token');
     token.value = accessToken;
     localStorage.setItem('token', accessToken);
-    await router.push('/');
+
+    // F3: Centralized revalidation handles post-login redirect
+    await rehydrateSession();
   }
 
   function logout(): void {
@@ -99,6 +105,7 @@ export const useUserStore = defineStore('user', () => {
     isAuthReady,
     isAdmin,
     rehydrateSession,
+    setAnonymous,
     clearStaleSession,
     doLogin,
     logout,
