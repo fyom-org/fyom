@@ -46,9 +46,21 @@ describe('resolveNavigationTarget state matrix', () => {
     })).toEqual({ type: 'redirect', to: '/setup' });
   });
 
+  it('needs_setup + /register → redirect /setup', () => {
+    expect(resolveNavigationTarget({
+      systemStatus: 'needs_setup', authStatus: 'anonymous', isAdmin: false, targetPath: '/register',
+    })).toEqual({ type: 'redirect', to: '/setup' });
+  });
+
   it('needs_setup + /admin/stats → redirect /setup', () => {
     expect(resolveNavigationTarget({
       systemStatus: 'needs_setup', authStatus: 'authenticated', isAdmin: true, targetPath: '/admin/stats',
+    })).toEqual({ type: 'redirect', to: '/setup' });
+  });
+
+  it('needs_setup + /profile → redirect /setup', () => {
+    expect(resolveNavigationTarget({
+      systemStatus: 'needs_setup', authStatus: 'authenticated', isAdmin: false, targetPath: '/profile',
     })).toEqual({ type: 'redirect', to: '/setup' });
   });
 
@@ -90,6 +102,18 @@ describe('resolveNavigationTarget state matrix', () => {
     })).toEqual({ type: 'redirect', to: '/login' });
   });
 
+  it('initialized + anonymous + /profile → redirect /login', () => {
+    expect(resolveNavigationTarget({
+      systemStatus: 'initialized', authStatus: 'anonymous', isAdmin: false, targetPath: '/profile',
+    })).toEqual({ type: 'redirect', to: '/login' });
+  });
+
+  it('initialized + anonymous + /library → redirect /login', () => {
+    expect(resolveNavigationTarget({
+      systemStatus: 'initialized', authStatus: 'anonymous', isAdmin: false, targetPath: '/library',
+    })).toEqual({ type: 'redirect', to: '/login' });
+  });
+
   it('initialized + anonymous + /admin/stats → redirect /login', () => {
     expect(resolveNavigationTarget({
       systemStatus: 'initialized', authStatus: 'anonymous', isAdmin: false, targetPath: '/admin/stats',
@@ -109,6 +133,12 @@ describe('resolveNavigationTarget state matrix', () => {
     })).toEqual({ type: 'allow' });
   });
 
+  it('initialized + authenticated user + /profile → allow', () => {
+    expect(resolveNavigationTarget({
+      systemStatus: 'initialized', authStatus: 'authenticated', isAdmin: false, targetPath: '/profile',
+    })).toEqual({ type: 'allow' });
+  });
+
   it('initialized + authenticated user + /setup → redirect /', () => {
     expect(resolveNavigationTarget({
       systemStatus: 'initialized', authStatus: 'authenticated', isAdmin: false, targetPath: '/setup',
@@ -118,6 +148,12 @@ describe('resolveNavigationTarget state matrix', () => {
   it('initialized + authenticated user + /login → redirect /', () => {
     expect(resolveNavigationTarget({
       systemStatus: 'initialized', authStatus: 'authenticated', isAdmin: false, targetPath: '/login',
+    })).toEqual({ type: 'redirect', to: '/' });
+  });
+
+  it('initialized + authenticated user + /register → redirect /', () => {
+    expect(resolveNavigationTarget({
+      systemStatus: 'initialized', authStatus: 'authenticated', isAdmin: false, targetPath: '/register',
     })).toEqual({ type: 'redirect', to: '/' });
   });
 
@@ -137,6 +173,12 @@ describe('resolveNavigationTarget state matrix', () => {
   it('initialized + authenticated admin + /admin/libraries → allow', () => {
     expect(resolveNavigationTarget({
       systemStatus: 'initialized', authStatus: 'authenticated', isAdmin: true, targetPath: '/admin/libraries',
+    })).toEqual({ type: 'allow' });
+  });
+
+  it('initialized + authenticated admin + /profile → allow', () => {
+    expect(resolveNavigationTarget({
+      systemStatus: 'initialized', authStatus: 'authenticated', isAdmin: true, targetPath: '/profile',
     })).toEqual({ type: 'allow' });
   });
 

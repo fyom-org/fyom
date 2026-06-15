@@ -78,6 +78,65 @@ const router = createRouter({
   ],
 });
 
+/**
+ * Centralized route revalidation.
+ *
+ * Re-runs resolveNavigationTarget against the current route whenever
+ * system/auth/role state changes. This ensures that state transitions
+ * (logout, login, setup completion, auth invalidation) immediately
+ * invalidate the current page — not just future navigations.
+ */
+let lastRevalidationKey = '';
+
+function revalidateCurrentRoute() {
+  const systemStore = useSystemStore();
+  const userStore = useUserStore();
+
+  const currentRoute = router.currentRoute.value;
+  const targetPath = currentRoute.path;
+
+  // Build a simple key to avoid redundant revalidation
+  const key = `${systemStore.status}|${userStore.status}|${userStore.isAdmin}|${targetPath}`;
+  if (key === lastRevalidationKey) return;
+  lastRevalidationKey = key;
+
+  const decision = resolveNavigationTarget({
+    systemStatus: systemStore.status,
+    authStatus: userStore.status,
+    isAdmin: userStore.isAdmin,
+    targetPath,
+  });
+
+  if (decision.type === 'redirect' && decision.to !== targetPath) {
+    router.replace(decision.to).catch(() => {
+      // ignore duplicate navigation
+    });
+  }
+}
+
+// Subscribe to store changes for route revalidation
+let unsubscribe: (() => void) | null = null;
+
+function setupRouteRevalidation() {
+  if (unsubscribe) return; // already set up
+
+  const systemStore = useSystemStore();
+  const userStore = useUserStore();
+
+  // Watch all three truth sources
+  const stopSystem = systemStore.$subscribe(() => {
+    revalidateCurrentRoute();
+  });
+  const stopUser = userStore.$subscribe(() => {
+    revalidateCurrentRoute();
+  });
+
+  unsubscribe = () => {
+    stopSystem();
+    stopUser();
+  };
+}
+
 // Unified route guard — single decision point using system + auth state machines
 router.beforeEach(async (to) => {
   const systemStore = useSystemStore();
@@ -88,19 +147,11 @@ router.beforeEach(async (to) => {
     await systemStore.fetchSystemStatus();
   }
 
-  // 2. If system needs setup, let the resolver decide
-  // 3. If system is initialized, ensure auth truth when needed
+  // 2. If system is initialized, ensure auth truth when needed
   if (systemStore.isInitialized) {
     // If auth is still unknown and there's a persisted token, rehydrate
     if (userStore.status === 'unknown' && localStorage.getItem('token')) {
       await userStore.rehydrateSession();
-    }
-    // If auth is still unknown (no token), mark as anonymous so resolver works
-    if (userStore.status === 'unknown') {
-      // No token — anonymous. We need to set this explicitly since
-      // rehydrateSession only runs when there's a token.
-      // But we can't call clearStaleSession here (it's a no-op for unknown).
-      // The resolver handles unknown auth as "wait", which is correct.
     }
   }
 
@@ -114,6 +165,8 @@ router.beforeEach(async (to) => {
 
   switch (decision.type) {
     case 'allow':
+      // Set up revalidation on first successful navigation
+      setupRouteRevalidation();
       return;
     case 'redirect':
       return decision.to;

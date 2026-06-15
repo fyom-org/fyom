@@ -72,7 +72,7 @@ export function resolveNavigationTarget(
         }
         return { type: 'redirect', to: '/' };
       }
-      // All other protected routes
+      // All other protected routes (/, /library, /profile, /media/*, /play/*)
       return { type: 'allow' };
     }
 
