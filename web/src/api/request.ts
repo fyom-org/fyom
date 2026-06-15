@@ -29,6 +29,38 @@ request.interceptors.request.use(
   }
 );
 
+/**
+ * Decide whether an error response should trigger global session clearing.
+ *
+ * Auth-truth endpoints (where 401/403 means "session is invalid"):
+ *   - /auth/me  (session self-validation)
+ *   - /auth/login  (login failure)
+ *
+ * Business/resource endpoints (where 403 means "you lack permission"):
+ *   - /admin/*  (RequireAdmin: non-admin user, but session is fine)
+ *   - any resource-specific 403
+ *
+ * Transport failures (network, timeout, 5xx):
+ *   never clear session.
+ */
+function shouldInvalidateSession(error: unknown): boolean {
+  const axiosError = error as any;
+  const status: number | undefined = axiosError?.response?.status;
+  const url: string = axiosError?.config?.url ?? '';
+
+  // Only 401/403 can trigger invalidation.
+  if (status !== 401 && status !== 403) return false;
+
+  // Only auth-truth endpoints trigger global session clearing.
+  if (url.startsWith('/auth/me') || url.startsWith('/auth/login')) {
+    return true;
+  }
+
+  // All other 401/403 are endpoint-specific permission denials.
+  // Do NOT clear the session.
+  return false;
+}
+
 request.interceptors.response.use(
   (response: AxiosResponse<ApiResponse>) => {
     const body = response.data;
@@ -44,19 +76,14 @@ request.interceptors.response.use(
     return response.data as any;
   },
   (error: unknown) => {
-    // Distinguish real auth failure from transient/network errors.
-    // Only HTTP 401/403 means "session is invalid now".
-    // Network errors, timeouts, 5xx, etc. mean "try again later".
-    const axiosError = error as any;
-    const status: number | undefined = axiosError?.response?.status;
-
-    if (status === 401 || status === 403) {
-      // Real auth rejection from server — clear session immediately.
+    // Distinguish real auth-truth failures from business/resource denials.
+    // Only /auth/me and /auth/login 401/403 mean "session is globally invalid".
+    // /admin/* 403, resource-specific 403, etc. must NOT clear session.
+    // Network errors, timeouts, 5xx are always preserved.
+    if (shouldInvalidateSession(error)) {
       localStorage.removeItem('token');
       window.dispatchEvent(new Event('auth:unauthorized'));
     }
-    // For all other errors (network, timeout, 5xx) do NOT touch the token.
-    // The session may still be valid.
 
     return Promise.reject(error);
   }
