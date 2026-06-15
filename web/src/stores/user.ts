@@ -88,18 +88,27 @@ export const useUserStore = defineStore('user', () => {
     token.value = accessToken;
     localStorage.setItem('token', accessToken);
 
-    // Complete auth truth before navigation
-    await rehydrateSession();
+    // Verify the token by calling /auth/me using fetch() directly.
+    // This bypasses any potential issues with the axios interceptor.
+    try {
+      const apiBase = window.location.origin + '/api/v1';
+      const meRes = await fetch(apiBase + '/auth/me', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (meRes.ok) {
+        const meData = (await meRes.json()) as { data: MeData };
+        user.value = meData.data;
+        status.value = 'authenticated';
+      } else {
+        // Token verification failed — fall back to rehydrateSession
+        await rehydrateSession();
+      }
+    } catch {
+      // Network error — fall back to rehydrateSession
+      await rehydrateSession();
+    }
 
-    // F3: Explicit navigation after auth truth is confirmed.
-    // This is the primary navigation path — the revalidation watcher
-    // (installed by F1 in router.beforeEach) serves as backup for
-    // other state changes (logout, token invalidation, etc.).
-    //
-    // We use replace() to avoid /login remaining in history.
-    // The $subscribe callback in rehydrateSession may also trigger
-    // router.replace('/') via revalidation, but that's harmless
-    // since the target is the same.
+    // Always navigate to / after login.
     await router.replace('/');
   }
 
