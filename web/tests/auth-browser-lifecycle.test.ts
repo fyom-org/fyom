@@ -28,7 +28,6 @@ vi.mock('@/api/auth', () => ({
 }));
 
 // Track auth:unauthorized events
-let unauthorizedEventFired = false;
 let unauthorizedHandler: (() => void) | null = null;
 const originalAddEventListener = window.addEventListener;
 
@@ -37,7 +36,6 @@ beforeEach(() => {
   setActivePinia(createPinia());
   localStorage.clear();
   mockGetMe.mockReset();
-  unauthorizedEventFired = false;
   unauthorizedHandler = null;
 
   // Spy on event listener registration so we can capture the handler
@@ -66,7 +64,6 @@ function simulatePageReload() {
 
 /** Fire the auth:unauthorized event (simulating request interceptor) */
 function fireAuthUnauthorized() {
-  unauthorizedEventFired = true;
   if (unauthorizedHandler) unauthorizedHandler();
 }
 
