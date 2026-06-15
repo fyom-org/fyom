@@ -1,10 +1,13 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
+import { useRouter } from 'vue-router';
 import { login, getMe, type MeData } from '@/api/auth';
 
 export type AuthStatus = 'unknown' | 'rehydrating' | 'authenticated' | 'anonymous' | 'error';
 
 export const useUserStore = defineStore('user', () => {
+  const router = useRouter();
+
   const status = ref<AuthStatus>('unknown');
   const token = ref<string | null>(localStorage.getItem('token') ?? null);
   const user = ref<MeData | null>(null);
@@ -85,8 +88,19 @@ export const useUserStore = defineStore('user', () => {
     token.value = accessToken;
     localStorage.setItem('token', accessToken);
 
-    // F3: Centralized revalidation handles post-login redirect
+    // Complete auth truth before navigation
     await rehydrateSession();
+
+    // F3: Explicit navigation after auth truth is confirmed.
+    // This is the primary navigation path — the revalidation watcher
+    // (installed by F1 in router.beforeEach) serves as backup for
+    // other state changes (logout, token invalidation, etc.).
+    //
+    // We use replace() to avoid /login remaining in history.
+    // The $subscribe callback in rehydrateSession may also trigger
+    // router.replace('/') via revalidation, but that's harmless
+    // since the target is the same.
+    await router.replace('/');
   }
 
   function logout(): void {

@@ -1,3 +1,4 @@
+import { nextTick } from 'vue';
 import { createRouter, createWebHistory } from 'vue-router';
 import MainLayout from '@/layouts/MainLayout.vue';
 import AdminLayout from '@/layouts/AdminLayout.vue';
@@ -85,6 +86,10 @@ const router = createRouter({
  * system/auth/role state changes. This ensures that state transitions
  * (logout, login, setup completion, auth invalidation) immediately
  * invalidate the current page — not just future navigations.
+ *
+ * Uses nextTick() to defer navigation, preventing conflicts with
+ * Vue Router's internal navigation state when the subscriber fires
+ * synchronously during an async operation (e.g., rehydrateSession).
  */
 let lastRevalidationKey = '';
 
@@ -108,8 +113,13 @@ function revalidateCurrentRoute() {
   });
 
   if (decision.type === 'redirect' && decision.to !== targetPath) {
-    router.replace(decision.to).catch(() => {
-      // ignore duplicate navigation
+    // F1: Defer navigation to nextTick to avoid conflicting with
+    // Vue Router's internal state when subscriber fires synchronously
+    // during an async operation (e.g., inside rehydrateSession's await).
+    nextTick(() => {
+      router.replace(decision.to).catch(() => {
+        // ignore duplicate navigation
+      });
     });
   }
 }

@@ -12,7 +12,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { useUserStore } from '@/stores/user';
-import { useSystemStore } from '@/stores/system';
 import { resolveNavigationTarget } from '@/lib/navigation/resolveNavigationTarget';
 
 // ----- Mocks -----
@@ -23,22 +22,16 @@ vi.mock('@/api/auth', () => ({
   getMe: (...args: unknown[]) => mockGetMe(...args),
 }));
 
-// Capture dispatched auth:unauthorized events
-let unauthorizedHandler: (() => void) | null = null;
-const originalAddEventListener = window.addEventListener;
-
 beforeEach(() => {
   setActivePinia(createPinia());
   localStorage.clear();
   mockGetMe.mockReset();
-  unauthorizedHandler = null;
 
+  // Capture original before spying to avoid infinite recursion
+  const origAddEventListener = window.addEventListener.bind(window);
   vi.spyOn(window, 'addEventListener').mockImplementation(
     (event: string, handler: any) => {
-      if (event === 'auth:unauthorized') {
-        unauthorizedHandler = handler;
-      }
-      originalAddEventListener.call(window, event, handler);
+      origAddEventListener(event, handler);
     }
   );
 });
@@ -106,17 +99,16 @@ describe('F2: authStatus=unknown must not leak into resolver', () => {
 // ----- F3 Tests: doLogin updates auth status directly -----
 
 describe('F3: doLogin() must complete auth truth', () => {
-  it('doLogin does not import or use router', async () => {
-    // Verify the store module doesn't import vue-router or use router.push
+  it('doLogin uses router.replace (not router.push) for explicit navigation', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const storeFile = fs.readFileSync(
       path.resolve(__dirname, '../src/stores/user.ts'),
       'utf-8'
     );
-    expect(storeFile).not.toContain('vue-router');
-    expect(storeFile).not.toContain('useRouter');
+    // doLogin should use router.replace, not router.push
     expect(storeFile).not.toContain('router.push');
+    expect(storeFile).toContain('router.replace');
   });
 
   it('doLogin calls rehydrateSession to complete auth truth', async () => {
