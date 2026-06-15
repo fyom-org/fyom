@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/fyom/fyom/internal/model"
 	"github.com/fyom/fyom/internal/repository"
@@ -77,5 +78,50 @@ func TestImporter_JobCounts_AreCandidateBased_AndNeverExceedTotal(t *testing.T) 
 	// Total should be 4 (1 show + 3 episodes)
 	if jobFinal.TotalItems != 4 {
 		t.Errorf("expected total_items=4 (1 show + 3 episodes), got %d", jobFinal.TotalItems)
+	}
+}
+
+func TestAsyncImport_PersistsImportSummaryToJob(t *testing.T) {
+	root := buildFixture_library(t)
+	db := openImporterTestDB(t)
+	lib := createImporterTestLibrary(t, db, root)
+	mediaRepo := repository.NewMediaRepository(db)
+	jobRepo := repository.NewImportJobRepository(db)
+	importer := NewImporter(NewLocalImportFS(), "local", db, mediaRepo, jobRepo)
+	importer.SetLibraryID(lib.ID)
+
+	ctx := context.Background()
+	job, err := importer.ImportRequest(ctx, root)
+	if err != nil {
+		t.Fatalf("ImportRequest failed: %v", err)
+	}
+
+	waitForJob(t, ctx, jobRepo, job.ID, 5*time.Second)
+	time.Sleep(50 * time.Millisecond)
+
+	jobFinal, err := jobRepo.Get(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("Get job failed: %v", err)
+	}
+	if jobFinal.Status == "error" {
+		t.Fatalf("import ended in error: %s", jobFinal.ErrorMsg)
+	}
+	if jobFinal.ScannedFiles <= 0 {
+		t.Fatalf("expected scanned_files > 0, got %d", jobFinal.ScannedFiles)
+	}
+	if jobFinal.ImportedItems <= 0 {
+		t.Fatalf("expected imported_items > 0, got %d", jobFinal.ImportedItems)
+	}
+	if jobFinal.UpdatedItems != 0 {
+		t.Fatalf("expected updated_items=0 on first import, got %d", jobFinal.UpdatedItems)
+	}
+	if jobFinal.SkippedFiles < 0 {
+		t.Fatalf("expected non-negative skipped_files, got %d", jobFinal.SkippedFiles)
+	}
+	if jobFinal.DurationMS < 0 {
+		t.Fatalf("expected non-negative duration_ms, got %d", jobFinal.DurationMS)
+	}
+	if jobFinal.TotalItems != jobFinal.DoneItems {
+		t.Fatalf("progress counters changed unexpectedly: total_items=%d done_items=%d", jobFinal.TotalItems, jobFinal.DoneItems)
 	}
 }

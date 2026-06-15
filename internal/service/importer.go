@@ -59,7 +59,6 @@ func (imp *Importer) ImportLibrary(ctx context.Context, libraryID string) (*mode
 	}
 	imp.libraryType = libType
 
-	summary := &model.ImportSummary{}
 	startTime := time.Now()
 
 	// Stage 1: Build filesystem snapshot
@@ -82,29 +81,33 @@ func (imp *Importer) ImportLibrary(ctx context.Context, libraryID string) (*mode
 
 	// Stage 4: Reconcile candidates into DB writes
 	reconResult, err := imp.reconcileCandidates(ctx, classResult.Candidates)
-	if err != nil {
-		summary.ParseWarnings = append(summary.ParseWarnings, fmt.Sprintf("reconcile error: %v", err))
-	}
 
 	// Build summary
-	summary.ImportedItems = 0
-	for _, r := range reconResult.Accepted {
-		if r.Action == ReconcileCreate {
-			summary.ImportedItems++
-		}
-	}
-	summary.UpdatedItems = 0
-	for _, r := range reconResult.Accepted {
-		if r.Action == ReconcileUpdate {
-			summary.UpdatedItems++
-		}
-	}
-	summary.ScannedFiles = classResult.ScannedDirs
-	summary.SkippedFiles = len(reconResult.Rejected)
-	summary.ParseWarnings = append(summary.ParseWarnings, imp.buildRejectWarnings(reconResult.Rejected)...)
-	summary.Duration = time.Since(startTime)
+	return imp.buildImportSummary(startTime, classResult, reconResult, err), nil
+}
 
-	return summary, nil
+func (imp *Importer) buildImportSummary(startTime time.Time, classResult *ClassificationResult, reconResult *ReconcileResult, reconErr error) *model.ImportSummary {
+	summary := &model.ImportSummary{}
+	if classResult != nil {
+		summary.ScannedFiles = classResult.ScannedDirs
+	}
+	if reconResult != nil {
+		for _, r := range reconResult.Accepted {
+			switch r.Action {
+			case ReconcileCreate:
+				summary.ImportedItems++
+			case ReconcileUpdate:
+				summary.UpdatedItems++
+			}
+		}
+		summary.SkippedFiles = len(reconResult.Rejected)
+		summary.ParseWarnings = append(summary.ParseWarnings, imp.buildRejectWarnings(reconResult.Rejected)...)
+	}
+	if reconErr != nil {
+		summary.ParseWarnings = append(summary.ParseWarnings, fmt.Sprintf("reconcile error: %v", reconErr))
+	}
+	summary.Duration = time.Since(startTime)
+	return summary
 }
 
 // ImportRequest triggers an asynchronous import.
@@ -126,6 +129,7 @@ func (imp *Importer) ImportRequest(ctx context.Context, sourcePath string) (*mod
 // runImport does the actual directory scanning and DB insertion in a goroutine.
 func (imp *Importer) runImport(jobID, sourcePath string) {
 	ctx := context.Background()
+	startTime := time.Now()
 
 	_ = imp.jobRepo.UpdateProgress(ctx, jobID, 0, 0, "running")
 
@@ -161,4 +165,5 @@ func (imp *Importer) runImport(jobID, sourcePath string) {
 
 	done := reconResult.DoneCandidates
 	_ = imp.jobRepo.UpdateProgress(ctx, jobID, total, done, "done")
+	_ = imp.jobRepo.UpdateSummary(ctx, jobID, imp.buildImportSummary(startTime, classResult, reconResult, nil))
 }

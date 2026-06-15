@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	_ "modernc.org/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite"
 )
 
 // setupMigrationTestDB opens a fresh DB and runs all migrations.
@@ -76,11 +76,11 @@ func TestMigration_EmptyToLatest(t *testing.T) {
 	assert.True(t, columns["video_codec"], "video_codec column should exist")
 	assert.True(t, columns["logo_path"], "logo_path column should exist")
 
-	// Verify schema_migrations table has all 16 migrations applied
+	// Verify schema_migrations table has all 17 migrations applied
 	var count int
 	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, 16, count, "all 16 migrations should be applied")
+	assert.Equal(t, 17, count, "all 17 migrations should be applied")
 }
 
 // TestMigration_PrePhase8ToLatest simulates a database at schema version 0011
@@ -160,11 +160,11 @@ func TestMigration_PrePhase8ToLatest(t *testing.T) {
 	assert.Equal(t, "", language, "language should default to empty string")
 	assert.Equal(t, "", countryCode, "country_code should default to empty string")
 
-	// Verify schema_migrations has all 16 entries
+	// Verify schema_migrations has all 17 entries
 	var count int
 	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, 16, count, "all 16 migrations should be applied")
+	assert.Equal(t, 17, count, "all 17 migrations should be applied")
 }
 
 // padInt zero-pads an integer to 4 digits for migration filename matching.

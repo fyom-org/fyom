@@ -10,11 +10,11 @@ import (
 
 // AdminStats holds aggregate system statistics for the admin dashboard.
 type AdminStats struct {
-	Library  LibraryStats  `json:"library"`
-	Providers ProviderStats `json:"providers"`
-	Users    UserStats    `json:"users"`
-	Storage  map[string]int `json:"storage"`
-	Imports  ImportStats  `json:"imports"`
+	Library   LibraryStats   `json:"library"`
+	Providers ProviderStats  `json:"providers"`
+	Users     UserStats      `json:"users"`
+	Storage   map[string]int `json:"storage"`
+	Imports   ImportStats    `json:"imports"`
 }
 
 type LibraryStats struct {
@@ -161,7 +161,7 @@ func (r *AdminRepository) ListJobs(ctx context.Context, page, limit int) ([]mode
 	}
 
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, source_path, status, total_items, done_items, library_id, error_msg, created_at, updated_at FROM import_jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
+		"SELECT id, source_path, status, total_items, done_items, library_id, error_msg, scanned_files, imported_items, updated_items, skipped_files, parse_warnings, duration_ms, created_at, updated_at FROM import_jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
 		limit, offset,
 	)
 	if err != nil {
@@ -173,12 +173,30 @@ func (r *AdminRepository) ListJobs(ctx context.Context, page, limit int) ([]mode
 	for rows.Next() {
 		var j model.ImportJob
 		var errorMsg sql.NullString
-		if err := rows.Scan(&j.ID, &j.SourcePath, &j.Status, &j.TotalItems, &j.DoneItems, &j.LibraryID, &errorMsg, &j.CreatedAt, &j.UpdatedAt); err != nil {
+		var parseWarnings sql.NullString
+		if err := rows.Scan(
+			&j.ID,
+			&j.SourcePath,
+			&j.Status,
+			&j.TotalItems,
+			&j.DoneItems,
+			&j.LibraryID,
+			&errorMsg,
+			&j.ScannedFiles,
+			&j.ImportedItems,
+			&j.UpdatedItems,
+			&j.SkippedFiles,
+			&parseWarnings,
+			&j.DurationMS,
+			&j.CreatedAt,
+			&j.UpdatedAt,
+		); err != nil {
 			return nil, 0, err
 		}
 		if errorMsg.Valid {
 			j.ErrorMsg = errorMsg.String
 		}
+		j.ParseWarnings = parseWarningsFromDB(parseWarnings)
 		jobs = append(jobs, j)
 	}
 	return jobs, total, rows.Err()

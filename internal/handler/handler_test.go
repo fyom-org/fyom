@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/fyom/fyom/internal/config"
 	"github.com/fyom/fyom/internal/middleware"
+	"github.com/fyom/fyom/internal/model"
 	"github.com/fyom/fyom/internal/provider"
 	"github.com/fyom/fyom/internal/repository"
 	"github.com/fyom/fyom/pkg/presign"
@@ -67,10 +69,10 @@ func setupTestRouter(t *testing.T) http.Handler {
 
 	reg := provider.NewRegistry()
 	reg.Register(provider.NewLocalProvider(presign.NewSigner("test-secret", 3600)))
-	
+
 	// Mock refresh coordinator for tests
 	mockCoordinator := &mockRefreshCoordinator{}
-	
+
 	mediaHandler := NewMediaHandler(reg, db, mediaRepo, jobRepo, providerRepo, libRepo, statusRepo, slog.Default(), mockCoordinator)
 
 	authHandler := NewAuthHandler(userRepo, libPermRepo, settingRepo, cfg.Auth.JWTSecret, cfg.Auth.TokenExpiry)
@@ -175,4 +177,68 @@ func TestMediaHandler_GetNotFound(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, 404, w.Code)
+}
+
+func TestImportJobStatusResponse_IncludesImportSummary(t *testing.T) {
+	tmpDir := t.TempDir()
+	db, err := repository.Open(filepath.Join(tmpDir, "fyom.db"), 5, 2, 60)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	jobRepo := repository.NewImportJobRepository(db)
+	job, err := jobRepo.Create(context.Background(), "/tmp/source", "lib-1")
+	require.NoError(t, err)
+	require.NoError(t, jobRepo.UpdateProgress(context.Background(), job.ID, 4, 2, "running"))
+
+	summary := &model.ImportSummary{
+		ScannedFiles:  7,
+		ImportedItems: 3,
+		UpdatedItems:  1,
+		SkippedFiles:  2,
+		ParseWarnings: []string{"bad.nfo: malformed XML"},
+		Duration:      1234 * time.Millisecond,
+	}
+	require.NoError(t, jobRepo.UpdateSummary(context.Background(), job.ID, summary))
+
+	claims := jwt.MapClaims{
+		"sub":      "test-user-id",
+		"username": "testuser",
+		"role":     "admin",
+		"iat":      time.Now().Unix(),
+		"exp":      time.Now().Add(24 * time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := token.SignedString([]byte("test-secret"))
+	require.NoError(t, err)
+
+	r := chi.NewRouter()
+	mediaHandler := NewMediaHandler(nil, db, nil, jobRepo, nil, nil, nil, slog.Default(), &mockRefreshCoordinator{})
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.AuthMiddleware("test-secret"))
+		r.Get("/api/v1/library/jobs/{id}", mediaHandler.GetJob)
+	})
+
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest("GET", "/api/v1/library/jobs/"+job.ID, nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+signed)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	dataBytes, err := json.Marshal(resp["data"])
+	require.NoError(t, err)
+	var got model.ImportJob
+	require.NoError(t, json.Unmarshal(dataBytes, &got))
+
+	assert.Equal(t, job.ID, got.ID)
+	assert.Equal(t, summary.ScannedFiles, got.ScannedFiles)
+	assert.Equal(t, summary.ImportedItems, got.ImportedItems)
+	assert.Equal(t, summary.UpdatedItems, got.UpdatedItems)
+	assert.Equal(t, summary.SkippedFiles, got.SkippedFiles)
+	assert.Equal(t, summary.ParseWarnings, got.ParseWarnings)
+	assert.Equal(t, summary.Duration.Milliseconds(), got.DurationMS)
+	assert.Equal(t, 4, got.TotalItems)
+	assert.Equal(t, 2, got.DoneItems)
 }
