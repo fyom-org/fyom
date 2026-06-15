@@ -39,6 +39,7 @@
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import request from '@/api/request';
+import { useUserStore } from '@/stores/user';
 
 const router = useRouter();
 const username = ref('');
@@ -74,8 +75,14 @@ async function submit() {
     });
     localStorage.setItem('token', loginRes.data.access_token);
 
-    // Step 3: Navigate to dashboard
-    router.push('/');
+    // Step 3: Establish server-truth auth state via the store
+    // before navigating. This ensures the router guard sees
+    // isAuthenticated=true instead of bouncing back to /setup.
+    const userStore = useUserStore();
+    await userStore.rehydrateSession();
+
+    // Step 4: Navigate to dashboard
+    router.replace('/');
   } catch (e: unknown) {
     const err = e as { response?: { data?: { message?: string } } };
     error.value = err.response?.data?.message || 'Setup failed';
