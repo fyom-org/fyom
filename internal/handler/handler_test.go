@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/fyom/fyom/internal/model"
 	"github.com/fyom/fyom/internal/provider"
 	"github.com/fyom/fyom/internal/repository"
+	"github.com/fyom/fyom/internal/service"
 	"github.com/fyom/fyom/pkg/presign"
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
@@ -24,10 +26,14 @@ import (
 )
 
 func makeTestToken(secret string) string {
+	return makeTestTokenWithRole(secret, "user")
+}
+
+func makeTestTokenWithRole(secret, role string) string {
 	claims := jwt.MapClaims{
 		"sub":      "test-user-id",
 		"username": "testuser",
-		"role":     "user",
+		"role":     role,
 		"iat":      time.Now().Unix(),
 		"exp":      time.Now().Add(24 * time.Hour).Unix(),
 	}
@@ -89,6 +95,30 @@ func setupTestRouter(t *testing.T) http.Handler {
 	})
 
 	return r
+}
+
+func setupAdminMediaTestRouter(t *testing.T) (*repository.DB, *repository.MediaRepository, http.Handler) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	db, err := repository.Open(filepath.Join(tmpDir, "fyom.db"), 5, 2, 60)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	mediaRepo := repository.NewMediaRepository(db)
+	adminRepo := repository.NewAdminRepository(db)
+	settingRepo := repository.NewSystemSettingRepository(db)
+	libPermRepo := repository.NewLibraryPermissionRepository(db)
+	adminHandler := NewAdminHandler(adminRepo, mediaRepo, settingRepo, libPermRepo, db)
+
+	r := chi.NewRouter()
+	r.Use(middleware.ErrorHandler())
+	r.Route("/api/v1/admin", func(r chi.Router) {
+		r.Use(middleware.AuthMiddleware("test-secret"))
+		r.Use(middleware.RequireAdmin)
+		r.Get("/media", adminHandler.ListMedia)
+	})
+	return db, mediaRepo, r
 }
 
 // mockRefreshCoordinator implements RefreshCoordinator for testing.
@@ -177,6 +207,159 @@ func TestMediaHandler_GetNotFound(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, 404, w.Code)
+}
+
+func TestAdminListMedia_ReturnsItemsAfterImporterSchemaExpansion(t *testing.T) {
+	_, mediaRepo, router := setupAdminMediaTestRouter(t)
+
+	item := &model.MediaItem{
+		ID:             "admin-media-expanded-schema",
+		Type:           "movie",
+		Title:          "Admin Media Expanded Schema",
+		SortTitle:      "admin media expanded schema",
+		FilePath:       "/media/Admin Media Expanded Schema/movie.mkv",
+		RootPath:       "/media/Admin Media Expanded Schema",
+		PrimaryPath:    "/media/Admin Media Expanded Schema/movie.mkv",
+		NFOPath:        "/media/Admin Media Expanded Schema/movie.nfo",
+		MetadataSource: "nfo",
+		ProviderID:     "local",
+		LibraryID:      "lib-admin-media",
+		Status:         "available",
+	}
+	require.NoError(t, mediaRepo.Create(context.Background(), item))
+
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest("GET", "/api/v1/admin/media?limit=20", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+makeTestTokenWithRole("test-secret", "admin"))
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	var resp struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			Items []model.MediaItem `json:"items"`
+			Total int               `json:"total"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.Len(t, resp.Data.Items, 1)
+	assert.Equal(t, 1, resp.Data.Total)
+	assert.Equal(t, item.ID, resp.Data.Items[0].ID)
+	assert.Equal(t, item.Title, resp.Data.Items[0].Title)
+	assert.Equal(t, item.Type, resp.Data.Items[0].Type)
+}
+
+func TestAdminListMedia_ResponseIncludesNewPathFields(t *testing.T) {
+	_, mediaRepo, router := setupAdminMediaTestRouter(t)
+
+	item := &model.MediaItem{
+		ID:             "admin-media-path-fields",
+		Type:           "episode",
+		Title:          "Path Fields Episode",
+		FilePath:       "/media/Show/Season 01/episode.mkv",
+		RootPath:       "/media/Show",
+		PrimaryPath:    "/media/Show/Season 01/episode.mkv",
+		NFOPath:        "/media/Show/Season 01/episode.nfo",
+		MetadataSource: "nfo",
+		ProviderID:     "local",
+		LibraryID:      "lib-admin-media-paths",
+		Status:         "available",
+	}
+	require.NoError(t, mediaRepo.Create(context.Background(), item))
+
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest("GET", "/api/v1/admin/media?limit=20", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+makeTestTokenWithRole("test-secret", "admin"))
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	var resp struct {
+		Data struct {
+			Items []model.MediaItem `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Data.Items, 1)
+	got := resp.Data.Items[0]
+	assert.Equal(t, item.RootPath, got.RootPath)
+	assert.Equal(t, item.PrimaryPath, got.PrimaryPath)
+	assert.Equal(t, item.NFOPath, got.NFOPath)
+	assert.Equal(t, item.FilePath, got.FilePath)
+	assert.Equal(t, item.Title, got.Title)
+	assert.Equal(t, item.Type, got.Type)
+}
+
+func TestAdminListMedia_WithRealImportedData_NoLongerReturnsEmpty(t *testing.T) {
+	db, _, router := setupAdminMediaTestRouter(t)
+	ctx := context.Background()
+
+	libRepo := repository.NewLibraryRepository(db)
+	lib := &model.Library{
+		Name:           "Admin Media Real Import",
+		Type:           "movie",
+		SourcePath:     filepath.Join(t.TempDir(), "library"),
+		ProviderID:     "local",
+		MetadataSource: "nfo",
+	}
+	require.NoError(t, libRepo.Create(ctx, lib))
+	require.NoError(t, os.MkdirAll(lib.SourcePath, 0755))
+
+	movieDir := filepath.Join(lib.SourcePath, "Imported Movie (2024)")
+	require.NoError(t, os.MkdirAll(movieDir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(movieDir, "movie.nfo"), []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<movie>
+  <title>Imported Movie</title>
+  <year>2024</year>
+  <plot>Real import regression fixture.</plot>
+  <genre>Drama</genre>
+  <uniqueid type="imdb">tt0000002</uniqueid>
+</movie>`), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(movieDir, "movie.mkv"), []byte(""), 0644))
+
+	jobRepo := repository.NewImportJobRepository(db)
+	importer := service.NewImporter(service.NewLocalImportFS(), "local", db, repository.NewMediaRepository(db), jobRepo)
+	importer.SetLibraryID(lib.ID)
+	job, err := importer.ImportRequest(ctx, lib.SourcePath)
+	require.NoError(t, err)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		stored, err := jobRepo.Get(ctx, job.ID)
+		require.NoError(t, err)
+		if stored != nil && stored.Status == "done" {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	stored, err := jobRepo.Get(ctx, job.ID)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	require.Equal(t, "done", stored.Status)
+
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest("GET", "/api/v1/admin/media?limit=20", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+makeTestTokenWithRole("test-secret", "admin"))
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	var resp struct {
+		Data struct {
+			Items []model.MediaItem `json:"items"`
+			Total int               `json:"total"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.NotEmpty(t, resp.Data.Items)
+	assert.Equal(t, 1, resp.Data.Total)
+	assert.Equal(t, "movie", resp.Data.Items[0].Type)
+	assert.NotEmpty(t, resp.Data.Items[0].RootPath)
+	assert.NotEmpty(t, resp.Data.Items[0].PrimaryPath)
+	assert.NotEmpty(t, resp.Data.Items[0].NFOPath)
 }
 
 func TestImportJobStatusResponse_IncludesImportSummary(t *testing.T) {

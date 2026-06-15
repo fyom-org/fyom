@@ -176,27 +176,10 @@ func (h *AdminHandler) ListMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = rows.Close() }()
 
-	var items []model.MediaItem
-	for rows.Next() {
-		var m model.MediaItem
-		var season, episode int
-		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year,
-			&m.Overview, &m.Rating, &m.Duration, &m.FilePath, &m.PosterPath,
-			&m.BackdropPath, &m.ParentID, &season, &episode,
-			&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.Status, &m.CreatedAt, &m.UpdatedAt,
-			&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
-			&m.Outline, &m.Tagline, &m.Countries, &m.Directors, &m.Credits, &m.Tags,
-			&m.SetName, &m.SetOverview, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
-			&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages, &m.Aired, &m.LogoPath,
-			&m.Language, &m.CountryCode, &m.CustomRating, &m.CollectionNumber,
-			&m.EndDate, &m.ReleaseDate, &m.DisplayOrder, &m.OriginalTitle,
-			&m.UserRating, &m.DateAdded, &m.LastPlayed, &m.Playcount); err != nil {
-			response.Error(w, 500, "internal server error")
-			return
-		}
-		m.Season = repository.IntPtr(season)
-		m.Episode = repository.IntPtr(episode)
-		items = append(items, m)
+	items, err := repository.ScanMediaItemRows(rows)
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
 	}
 
 	response.Success(w, map[string]interface{}{

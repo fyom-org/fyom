@@ -50,9 +50,9 @@ const mediaInsertColumns = `(id, type, title, sort_title, year, overview, rating
 
 const mediaInsertPlaceholders = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-func scanMediaItem(rows *sql.Rows, m *model.MediaItem) error {
+func scanMediaItem(scanner interface{ Scan(dest ...any) error }, m *model.MediaItem) error {
 	var season, episode int
-	if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year,
+	if err := scanner.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year,
 		&m.Overview, &m.Rating, &m.Duration, &m.FilePath, &m.RootPath, &m.PrimaryPath, &m.NFOPath, &m.PosterPath,
 		&m.BackdropPath, &m.ParentID, &season, &episode,
 		&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.Status, &m.CreatedAt, &m.UpdatedAt,
@@ -70,22 +70,21 @@ func scanMediaItem(rows *sql.Rows, m *model.MediaItem) error {
 	return nil
 }
 
+// ScanMediaItemRows hydrates media rows using the same order as MediaColumns.
+func ScanMediaItemRows(rows *sql.Rows) ([]model.MediaItem, error) {
+	var items []model.MediaItem
+	for rows.Next() {
+		var m model.MediaItem
+		if err := scanMediaItem(rows, &m); err != nil {
+			return nil, err
+		}
+		items = append(items, m)
+	}
+	return items, rows.Err()
+}
+
 func scanMediaRow(row *sql.Row, m *model.MediaItem) error {
-	var season, episode int
-	err := row.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year, &m.Overview,
-		&m.Rating, &m.Duration, &m.FilePath, &m.RootPath, &m.PrimaryPath, &m.NFOPath, &m.PosterPath, &m.BackdropPath,
-		&m.ParentID, &season, &episode, &m.MetadataSource, &m.ProviderID, &m.LibraryID,
-		&m.Status, &m.CreatedAt, &m.UpdatedAt,
-		&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
-		&m.Outline, &m.Tagline, &m.Countries, &m.Directors, &m.Credits, &m.Tags,
-		&m.SetName, &m.SetOverview, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
-		&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages, &m.Aired, &m.LogoPath,
-		&m.Language, &m.CountryCode, &m.CustomRating, &m.CollectionNumber,
-		&m.EndDate, &m.ReleaseDate, &m.DisplayOrder, &m.OriginalTitle,
-		&m.UserRating, &m.DateAdded, &m.LastPlayed, &m.Playcount)
-	m.Season = IntPtr(season)
-	m.Episode = IntPtr(episode)
-	return err
+	return scanMediaItem(row, m)
 }
 
 // List returns all media items, optionally filtered by type.
