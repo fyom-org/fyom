@@ -328,11 +328,12 @@ Current client-side genre filtering is unaffected.
 
 > **Execution Strategy:** Phase 9.1 and 9.2 are complete. The next major
 > product milestone is **Tauri shell + sidecar + libmpv** — desktop-native
-> playback is the biggest practical value unlock for fyom. The remainder
-> of Phase 9 is **not a full blocker** for that work. Only a minimal
-> pre-desktop guardrail subset should be completed before desktop
-> development begins; the bulk of 9.3, 9.4, and 9.6 is intentionally
-> deferred until after the desktop playback milestone.
+> playback is the biggest practical value unlock for fyom. Phase 9.3 and
+> 9.6 have been elevated: auth truth, authorization boundaries,
+> session rehydration, and self-hosted safety are now concrete
+> pre-desktop requirements. Only the remaining 9.4 polish items and
+> non-critical 9.6 extras stay deferred until after the desktop
+> playback milestone.
 
 ### 9.1 Static Asset & Build Reliability
 
@@ -485,9 +486,18 @@ Current client-side genre filtering is unaffected.
 
 ### 9.3 API Contract & Test Cleanup
 
-> **Priority:** hygiene-only before desktop. Only fix currently red/failing
-> integration-auth tests and constructor-signature drift issues. The rest
-> of 9.3 is deferred until after the desktop playback milestone.
+> **Priority:** before further desktop/native expansion, fyom must harden
+> auth truth, authorization boundaries, and stale-session behavior.
+> This section is no longer only hygiene. The minimum required scope is:
+> - admin vs non-admin authorization coverage
+> - deleted/missing-user token rejection
+> - setup/bootstrap state must not inherit old auth
+> - API/auth contract tests must reflect current DB-backed identity truth
+>
+> The goal is not enterprise IAM completeness. The goal is to ensure fyom's
+> core security invariants hold under realistic self-hosted usage:
+> browser local storage, long-lived sessions, DB resets, setup re-entry,
+> desktop sidecar runtime, and mixed admin/non-admin use.
 
 - [x] Fix failing integration/auth/startup test drift and restore
       green `go test ./...` execution across the repository
@@ -505,7 +515,20 @@ Current client-side genre filtering is unaffected.
       - extended metadata fields
       - admin media grouping
 
-- [ ] Ensure admin and non-admin authorization behavior is covered
+- [x] Ensure admin and non-admin authorization behavior is covered:
+      - unauthenticated access to admin routes is rejected
+      - non-admin access to admin read routes is rejected or constrained
+      - non-admin access to admin mutate routes is rejected
+      - admin access succeeds only when backed by a current DB admin user
+      - deleted/missing-user token is rejected
+      - downgraded admin token is rejected after role change
+      - DB reset / zero-user state does not preserve old admin access
+      - setup/bootstrap state does not inherit stale admin tokens
+
+- [x] Add auth/session regression coverage for stale-session invalidation:
+      - server rejects orphaned tokens whose backing user no longer exists
+      - frontend clears stored auth state on unauthorized stale-session response
+      - browser-visible login state cannot outlive server-side auth truth
 
 - [x] Add migration test path from empty DB to latest schema
 
@@ -513,6 +536,15 @@ Current client-side genre filtering is unaffected.
 
 - [ ] Ensure `MediaColumns` constant is used consistently
       for SELECT/Scan safety
+
+> **Follow-up notes:**
+> - This section is intentionally focused on DB-backed auth truth and
+>   authorization correctness, not on advanced identity features such as
+>   refresh-token rotation, multi-device session management, SSO, or
+>   audit-trail expansion.
+> - Frontend auth UX polish is secondary to server-side authorization
+>   correctness. The server must reject stale/orphaned tokens even if the
+>   browser still holds them.
 
 ### 9.4 Frontend Reliability & UX Polish
 
@@ -547,7 +579,7 @@ Current client-side genre filtering is unaffected.
 - [ ] Normalize frontend API error handling
       with consistent toast/error display
 
-### 9.4.1 Native Playback Failure Fallback (Pre-Desktop Guardrail)
+### 9.7 Native Playback Failure Fallback (Pre-Desktop Guardrail)
 
 > **Priority:** guardrail-only before desktop. Ensures no black screen if native
 > player init fails. Full libmpv implementation remains in Production Phase 2.
@@ -618,9 +650,17 @@ Current client-side genre filtering is unaffected.
 
 ### 9.6 Configuration & Data Safety
 
-> **Priority:** the pre-desktop guardrail subset is basic safe shutdown
-> handling and preventing duplicate refresh jobs for the same library.
-> The rest of 9.6 is deferred until after the desktop playback milestone.
+> **Priority:** before broader desktop/native and public-network usage,
+> fyom should provide safe operational defaults for self-hosted users.
+> The minimum target is not "perfect security", but reliable safety rails:
+> - predictable config precedence
+> - no dangerous identity carry-over after DB/bootstrap reset
+> - safe startup/runtime defaults
+> - clear operator-facing configuration/docs for auth and data paths
+>
+> This section should bias toward secure defaults and explicit operator
+> understanding, especially for local-network, family/shared, and
+> accidentally-public self-hosted deployments.
 
 - [ ] Define production config precedence:
       CLI flags > env vars > config file > defaults
@@ -640,12 +680,33 @@ Current client-side genre filtering is unaffected.
       DB seed / ensure remains separate from in-memory provider
       registry registration, avoiding startup panic on fresh DBs
 
+- [x] Add explicit auth/session safety rules for reset/bootstrap states:
+      - DB reset / zero-user state must invalidate effective admin access
+      - setup/bootstrap mode must not trust stale existing tokens
+      - old sessions must not survive identity-store replacement
+      - auth truth must remain anchored to current DB state
+
+- [ ] Document secure deployment expectations for self-hosted use:
+      - local-only vs LAN vs public exposure
+      - reverse proxy / TLS expectations
+      - desktop sidecar vs browser runtime auth boundaries
+      - safe handling of long-lived browser sessions
+
 - [ ] Add config documentation for:
       - data directory
       - server address
       - auth/session settings
       - library paths
       - object storage providers
+
+> **Follow-up notes:**
+> - This section is not intended to introduce full enterprise-grade
+>   security controls. It is meant to ensure safe defaults and clear
+>   behavior for real fyom deployment modes.
+> - Advanced security controls such as session revocation sets, token
+>   epochs, multi-device session management, rate limiting, or hardened
+>   public-edge policies can follow later if fyom's deployment surface
+>   expands further.
 
 
 # Production: Scaling & Ecosystem
