@@ -548,6 +548,44 @@ Current client-side genre filtering is unaffected.
 - [ ] Normalize frontend API error handling
       with consistent toast/error display
 
+### 9.4.1 Native Playback Failure Fallback (Pre-Desktop Guardrail)
+
+> **Priority:** guardrail-only before desktop. Ensures no black screen if native
+> player init fails. Full libmpv implementation remains in Production Phase 2.
+
+- [x] Add explicit native player state model:
+      `idle / initializing / ready / failed / unavailable`
+- [x] Add `attempted` flag to distinguish browser-by-default from
+      browser-as-fallback-after-native-failure
+- [x] Reuse repo's canonical `isTauriEnvironment()` for runtime detection
+      instead of ad-hoc globals
+- [x] Add `tryInitializeNativePlayer()` bridge function encapsulating
+      invoke/catch/failure-mapping in one place
+- [x] PlayerView renders loading state during native init, HTML5 fallback
+      on failure, native surface on success
+- [x] Visible fallback banner on native init failure:
+      `Native player unavailable, using browser playback`
+- [x] Fallback banner only shown when native was attempted and failed;
+      not shown during normal browser playback
+- [x] PlayerView attempts native init exactly once per mount lifecycle;
+      no retry loops
+- [x] Wire vitest into frontend: `package.json` test script,
+      `vitest.config.ts`, jsdom environment
+- [x] Add 5 component-level tests for PlayerView fallback behavior:
+      browser-default, loading, fallback-on-failure, native-success, no-retry
+- [x] Add 25 helper/bridge tests for native player state model
+- [x] All 30 frontend tests pass (`vitest run`); frontend build passes
+
+> **Follow-up notes:**
+> - `tryInitializeNativePlayer` calls `invoke('play_media')` which is a
+>   placeholder. The actual libmpv Tauri command name and contract will be
+>   defined in Production Phase 2.
+> - Desktop runtime E2E verification not possible in current environment
+>   (Tauri CLI not available). Component tests validate the fallback path
+>   through mocking.
+> - Historical corrupted DB rows from pre-fix importer output still need
+>   a dedicated repair/backfill path (out of scope for this guardrail task).
+
 ### 9.5 Observability & Diagnostics
 
 > **Priority:** the pre-desktop guardrail subset is `/healthz`, `/readyz`,
