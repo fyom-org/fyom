@@ -99,6 +99,8 @@ router.beforeEach(async (to) => {
         return router.push('/');
       }
     } catch {
+      localStorage.removeItem('token');
+      window.dispatchEvent(new Event('auth:unauthorized'));
       return router.push('/login');
     }
   }

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -71,6 +72,13 @@ func setupTestRouter(t *testing.T) http.Handler {
 	libPermRepo := repository.NewLibraryPermissionRepository(db)
 	statusRepo := repository.NewUserMediaStatusRepository(db)
 
+	require.NoError(t, userRepo.Create(context.Background(), &model.User{
+		ID:       "test-user-id",
+		Username: "testuser",
+		Password: "hash",
+		Role:     "user",
+	}))
+
 	healthHandler := NewHealthHandler("test", "abc123", "now", "go1.26")
 
 	reg := provider.NewRegistry()
@@ -89,7 +97,7 @@ func setupTestRouter(t *testing.T) http.Handler {
 	r.Post("/api/v1/auth/register", authHandler.Register)
 
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.AuthMiddleware(cfg.Auth.JWTSecret))
+		r.Use(middleware.AuthMiddlewareWithUserRepo(cfg.Auth.JWTSecret, userRepo))
 		r.Get("/api/v1/library", mediaHandler.List)
 		r.Get("/api/v1/library/{id}", mediaHandler.Get)
 	})
@@ -105,6 +113,13 @@ func setupAdminMediaTestRouter(t *testing.T) (*repository.DB, *repository.MediaR
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
+	require.NoError(t, repository.NewUserRepository(db).Create(context.Background(), &model.User{
+		ID:       "test-user-id",
+		Username: "testuser",
+		Password: "hash",
+		Role:     "admin",
+	}))
+
 	mediaRepo := repository.NewMediaRepository(db)
 	adminRepo := repository.NewAdminRepository(db)
 	settingRepo := repository.NewSystemSettingRepository(db)
@@ -119,6 +134,38 @@ func setupAdminMediaTestRouter(t *testing.T) (*repository.DB, *repository.MediaR
 		r.Get("/media", adminHandler.ListMedia)
 	})
 	return db, mediaRepo, r
+}
+
+func setupAdminSecurityRouter(t *testing.T) (*repository.DB, *repository.UserRepository, *repository.LibraryRepository, http.Handler) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	db, err := repository.Open(filepath.Join(tmpDir, "fyom.db"), 5, 2, 60)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	userRepo := repository.NewUserRepository(db)
+	libRepo := repository.NewLibraryRepository(db)
+	settingRepo := repository.NewSystemSettingRepository(db)
+	libPermRepo := repository.NewLibraryPermissionRepository(db)
+	adminRepo := repository.NewAdminRepository(db)
+	providerRepo := repository.NewProviderRepository(db)
+	mediaRepo := repository.NewMediaRepository(db)
+	adminHandler := NewAdminHandler(adminRepo, mediaRepo, settingRepo, libPermRepo, db)
+	adminLibHandler := NewAdminLibraryHandler(libRepo, providerRepo, libPermRepo)
+	authService := service.NewAuthService(userRepo, libPermRepo, "test-secret", 24)
+	systemHandler := NewSystemHandler(settingRepo, authService)
+
+	r := chi.NewRouter()
+	r.Use(middleware.ErrorHandler())
+	r.Post("/api/v1/system/initialize", systemHandler.Initialize)
+	r.Route("/api/v1/admin", func(r chi.Router) {
+		r.Use(middleware.AuthMiddlewareWithUserRepo("test-secret", userRepo))
+		r.Use(middleware.RequireAdmin)
+		r.Post("/libraries", adminLibHandler.Create)
+		r.Get("/stats", adminHandler.GetStats)
+	})
+	return db, userRepo, libRepo, r
 }
 
 // mockRefreshCoordinator implements RefreshCoordinator for testing.
@@ -360,6 +407,99 @@ func TestAdminListMedia_WithRealImportedData_NoLongerReturnsEmpty(t *testing.T) 
 	assert.NotEmpty(t, resp.Data.Items[0].RootPath)
 	assert.NotEmpty(t, resp.Data.Items[0].PrimaryPath)
 	assert.NotEmpty(t, resp.Data.Items[0].NFOPath)
+}
+
+func TestAdminRequest_WithTokenForDeletedOrMissingUser_IsRejected(t *testing.T) {
+	db, userRepo, libRepo, router := setupAdminSecurityRouter(t)
+	ctx := context.Background()
+
+	require.NoError(t, userRepo.Create(ctx, &model.User{ID: "test-user-id", Username: "admin", Password: "hash", Role: "admin"}))
+	token := makeTestTokenWithRole("test-secret", "admin")
+	_, err := db.ExecContext(ctx, "DELETE FROM users WHERE id = ?", "test-user-id")
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest("POST", "/api/v1/admin/libraries", strings.NewReader(`{"name":"Missing User Library","type":"movie","provider_id":"local","source_path":"/tmp/media"}`))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, 401, w.Code)
+	libs, err := libRepo.List(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, libs)
+}
+
+func TestAdminRequest_WithStaleToken_AfterDBReset_IsRejected(t *testing.T) {
+	db, userRepo, libRepo, router := setupAdminSecurityRouter(t)
+	ctx := context.Background()
+
+	require.NoError(t, userRepo.Create(ctx, &model.User{ID: "test-user-id", Username: "admin", Password: "hash", Role: "admin"}))
+	token := makeTestTokenWithRole("test-secret", "admin")
+	_, err := db.ExecContext(ctx, "DELETE FROM users")
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest("POST", "/api/v1/admin/libraries", strings.NewReader(`{"name":"Reset DB Library","type":"movie","provider_id":"local","source_path":"/tmp/media"}`))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, 401, w.Code)
+	libs, err := libRepo.List(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, libs)
+}
+
+func TestAdminRequest_RequiresCurrentDBAdminRole_NotJustTokenClaim(t *testing.T) {
+	db, userRepo, libRepo, router := setupAdminSecurityRouter(t)
+	ctx := context.Background()
+
+	require.NoError(t, userRepo.Create(ctx, &model.User{ID: "test-user-id", Username: "admin", Password: "hash", Role: "admin"}))
+	token := makeTestTokenWithRole("test-secret", "admin")
+	_, err := db.ExecContext(ctx, "UPDATE users SET role = 'user' WHERE id = ?", "test-user-id")
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest("POST", "/api/v1/admin/libraries", strings.NewReader(`{"name":"Downgraded Library","type":"movie","provider_id":"local","source_path":"/tmp/media"}`))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, 403, w.Code)
+	libs, err := libRepo.List(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, libs)
+}
+
+func TestSetupMode_DoesNotAcceptOrphanedAdminToken(t *testing.T) {
+	_, _, _, router := setupAdminSecurityRouter(t)
+	token := makeTestTokenWithRole("test-secret", "admin")
+
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest("GET", "/api/v1/admin/stats", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+	assert.Equal(t, 401, w.Code)
+
+	w = httptest.NewRecorder()
+	req, err = http.NewRequest("POST", "/api/v1/system/initialize", strings.NewReader(`{"username":"setup-admin","password":"setup-password","allow_registration":false}`))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+	assert.Equal(t, 200, w.Code)
+
+	w = httptest.NewRecorder()
+	req, err = http.NewRequest("GET", "/api/v1/admin/stats", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+	assert.Equal(t, 401, w.Code)
 }
 
 func TestImportJobStatusResponse_IncludesImportSummary(t *testing.T) {

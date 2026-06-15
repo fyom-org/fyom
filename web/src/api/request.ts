@@ -44,6 +44,13 @@ request.interceptors.response.use(
     return response.data as any;
   },
   (error: unknown) => {
+    const status = error instanceof Error && 'response' in error ? (error as any).response?.status : undefined;
+    const body = error instanceof Error && 'response' in error ? (error as any).response?.data as ApiResponse | undefined : undefined;
+    const isUnauthorized = status === 401 || status === 403 || body?.code === 401 || body?.code === 403;
+    if (isUnauthorized) {
+      localStorage.removeItem('token');
+      window.dispatchEvent(new Event('auth:unauthorized'));
+    }
     return Promise.reject(error);
   }
 );

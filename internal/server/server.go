@@ -26,18 +26,18 @@ import (
 )
 
 type Server struct {
-	httpServer       *http.Server
-	router           *chi.Mux
-	logger           *slog.Logger
-	cfg              *config.Config
-	db               *repository.DB
-	libRepo          *repository.LibraryRepository
-	settingRepo      *repository.SystemSettingRepository
-	mediaRepo        *repository.MediaRepository
+	httpServer         *http.Server
+	router             *chi.Mux
+	logger             *slog.Logger
+	cfg                *config.Config
+	db                 *repository.DB
+	libRepo            *repository.LibraryRepository
+	settingRepo        *repository.SystemSettingRepository
+	mediaRepo          *repository.MediaRepository
 	refreshCoordinator *RefreshCoordinator
-	importWG         sync.WaitGroup
-	shutdownOnce     sync.Once
-	shutdownCh       chan struct{}
+	importWG           sync.WaitGroup
+	shutdownOnce       sync.Once
+	shutdownCh         chan struct{}
 }
 
 func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gitCommit, buildTime, goVer string) *Server {
@@ -109,7 +109,7 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 
 	// User-facing routes (auth + permissions)
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.AuthMiddleware(cfg.Auth.JWTSecret))
+		r.Use(middleware.AuthMiddlewareWithUserRepo(cfg.Auth.JWTSecret, userRepo))
 		r.Use(middleware.ResolvePermissions(libPermRepo))
 		r.Get("/api/v1/library/jobs/{id}", mediaHandler.GetJob)
 		r.Get("/api/v1/library/{id}/episodes", mediaHandler.ListEpisodes)
@@ -129,7 +129,7 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 
 	// Admin routes
 	r.Route("/api/v1/admin", func(r chi.Router) {
-		r.Use(middleware.AuthMiddleware(cfg.Auth.JWTSecret))
+		r.Use(middleware.AuthMiddlewareWithUserRepo(cfg.Auth.JWTSecret, userRepo))
 		r.Use(middleware.RequireAdmin)
 		r.Get("/stats", adminHandler.GetStats)
 		r.Get("/import-jobs", adminHandler.ListImportJobs)
@@ -497,7 +497,7 @@ func (s *Server) checkAndRefreshLibraries(ctx context.Context) {
 // are intercepted before route matching returns 405.
 func corsMiddleware(next http.Handler) http.Handler {
 	allowedOrigins := map[string]bool{
-		"http://localhost:5173":  true,
+		"http://localhost:5173": true,
 		"http://127.0.0.1:5173": true,
 	}
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fyom/fyom/internal/repository"
 	"github.com/fyom/fyom/pkg/response"
 	"github.com/golang-jwt/jwt/v5"
 	"net/http"
@@ -37,8 +38,14 @@ func GetRole(r *http.Request) interface{} {
 }
 
 // AuthMiddleware validates JWT tokens from the Authorization header.
-// On success, it injects user_id, username, and role into the request context.
+// Deprecated: use AuthMiddlewareWithUserRepo for protected routes that must reject deleted/downgraded users.
 func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
+	return AuthMiddlewareWithUserRepo(jwtSecret, nil)
+}
+
+// AuthMiddlewareWithUserRepo validates JWT tokens and rehydrates the user from the current DB.
+// Protected handlers should use this form so deleted/downgraded users are rejected immediately.
+func AuthMiddlewareWithUserRepo(jwtSecret string, userRepo *repository.UserRepository) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -56,6 +63,25 @@ func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
 			claims, err := parseAndValidateToken(parts[1], jwtSecret)
 			if err != nil {
 				response.Error(w, 401, err.Error())
+				return
+			}
+
+			userID, _ := claims["sub"].(string)
+			if userID == "" {
+				response.Error(w, 401, "token missing subject claim")
+				return
+			}
+
+			if userRepo != nil {
+				user, err := userRepo.GetByID(r.Context(), userID)
+				if err != nil || user == nil {
+					response.Error(w, 401, "unauthorized")
+					return
+				}
+				ctx := context.WithValue(r.Context(), keyUserID, user.ID)
+				ctx = context.WithValue(ctx, keyUsername, user.Username)
+				ctx = context.WithValue(ctx, keyRole, user.Role)
+				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 

@@ -26,11 +26,19 @@ export const useUserStore = defineStore('user', () => {
     user.value = res.data;
   }
 
-  function logout(): void {
+  function clearStaleSession(): void {
     token.value = '';
     user.value = null;
     localStorage.removeItem('token');
   }
 
-  return { token, user, isLoggedIn, isAdmin, doLogin, fetchMe, logout };
+  function logout(): void {
+    clearStaleSession();
+  }
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('auth:unauthorized', clearStaleSession);
+  }
+
+  return { token, user, isLoggedIn, isAdmin, doLogin, fetchMe, logout, clearStaleSession };
 });
