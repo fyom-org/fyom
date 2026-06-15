@@ -119,10 +119,10 @@
           export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.adwaita-icon-theme}/share:$XDG_DATA_DIRS"
           export GIO_EXTRA_MODULES="${pkgs.dconf.lib}/lib/gio/modules"
 
-          export PLAYWRIGHT_BROWSERS_PATH=${pkgs.playwright-driver.browsers}
+          export PLAYWRIGHT_BROWSERS_PATH="${pkgs.playwright-driver.browsers}"
           export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
           export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-          echo "✅ Vitest Browser Mode (Playwright) ready on NixOS"
+          export NIX_PLAYWRIGHT_VERSION="${pkgs.playwright-driver.version}"
         '';
 
         darwinShellHook = lib.optionalString pkgs.stdenv.isDarwin ''

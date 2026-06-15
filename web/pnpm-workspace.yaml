@@ -1,2 +1,5 @@
 allowBuilds:
   esbuild: false
+minimumReleaseAgeExclude:
+  - playwright-core@1.61.0
+  - playwright@1.61.0

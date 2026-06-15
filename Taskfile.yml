@@ -122,7 +122,23 @@ tasks:
     desc: "Run frontend Vitest Browser Mode tests with Playwright"
     dir: web
     cmds:
+      - pnpm exec vitest run --config vitest.browser.config.ts
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: "true"
+      NO_PROXY: "localhost,127.0.0.1,::1"
+      no_proxy: "localhost,127.0.0.1,::1"
+
+  test:playwright-headless:
+    desc: "Run frontend Vitest Browser Mode tests with Playwright"
+    dir: web
+    cmds:
       - pnpm exec vitest run --browser.headless --reporter=verbose
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: "true"
+      NO_PROXY: "localhost,127.0.0.1,::1"
+      no_proxy: "localhost,127.0.0.1,::1"
 
   test:race:
     desc: "Run Go race tests"

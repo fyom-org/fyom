@@ -60,3 +60,4 @@ src-tauri/gen/
 .env
 .env.*
 !.env.example
+web/tests/__screenshots__/
