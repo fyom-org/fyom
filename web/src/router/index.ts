@@ -1,12 +1,12 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import MainLayout from '@/layouts/MainLayout.vue';
 import AdminLayout from '@/layouts/AdminLayout.vue';
-import { getMe } from '@/api/auth';
+import { useUserStore } from '@/stores/user';
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/login', name: 'login', component: () => import('@/views/LoginView.vue') },
+    { path: '/login', name: 'Login', component: () => import('@/views/LoginView.vue') },
     { path: '/register', name: 'Register', component: () => import('@/views/RegisterView.vue') },
     { path: '/setup', name: 'Setup', component: () => import('@/views/SetupView.vue') },
     { path: '/home', redirect: '/' },
@@ -76,33 +76,31 @@ const router = createRouter({
   ],
 });
 
-// Security: role is verified server-side via /auth/me endpoint.
-// localStorage is never used for role storage.
-router.beforeEach(async (to) => {
-  const token = localStorage.getItem('token');
+// Public routes — always accessible
+const PUBLIC_PATHS = new Set(['/login', '/register', '/setup']);
 
-  // Public routes
-  if (to.path === '/login' || to.path === '/register' || to.path === '/setup') {
+router.beforeEach(async (to) => {
+  const store = useUserStore();
+
+  // Public routes — pass through
+  if (PUBLIC_PATHS.has(to.path)) {
     return;
   }
 
-  // Not authenticated — redirect to login
-  if (!token) {
-    return router.push('/login');
+  // Not yet bootstrapped — trigger rehydration and wait.
+  if (!store.isAuthReady) {
+    await store.rehydrateSession();
   }
 
-  // Admin routes: verify role via API, not localStorage
-  if (to.path.startsWith('/admin')) {
-    try {
-      const { data } = await getMe();
-      if (data?.role !== 'admin') {
-        return router.push('/');
-      }
-    } catch {
-      localStorage.removeItem('token');
-      window.dispatchEvent(new Event('auth:unauthorized'));
-      return router.push('/login');
-    }
+  // After rehydration, if still not authenticated — redirect.
+  if (!store.isAuthenticated) {
+    // No users yet? → setup flow
+    return '/setup';
+  }
+
+  // Admin routes — check role from server-verified user, not localStorage token.
+  if (to.meta.requiresAdmin && !store.isAdmin) {
+    return '/';
   }
 });
 

@@ -44,13 +44,20 @@ request.interceptors.response.use(
     return response.data as any;
   },
   (error: unknown) => {
-    const status = error instanceof Error && 'response' in error ? (error as any).response?.status : undefined;
-    const body = error instanceof Error && 'response' in error ? (error as any).response?.data as ApiResponse | undefined : undefined;
-    const isUnauthorized = status === 401 || status === 403 || body?.code === 401 || body?.code === 403;
-    if (isUnauthorized) {
+    // Distinguish real auth failure from transient/network errors.
+    // Only HTTP 401/403 means "session is invalid now".
+    // Network errors, timeouts, 5xx, etc. mean "try again later".
+    const axiosError = error as any;
+    const status: number | undefined = axiosError?.response?.status;
+
+    if (status === 401 || status === 403) {
+      // Real auth rejection from server — clear session immediately.
       localStorage.removeItem('token');
       window.dispatchEvent(new Event('auth:unauthorized'));
     }
+    // For all other errors (network, timeout, 5xx) do NOT touch the token.
+    // The session may still be valid.
+
     return Promise.reject(error);
   }
 );

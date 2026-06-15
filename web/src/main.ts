@@ -4,13 +4,20 @@ import router from './router';
 import App from './App.vue';
 import './style.css';
 import { initTauriListeners } from './lib/runtime/tauri';
+import { useUserStore } from './stores/user';
 
 const app = createApp(App);
 
-app.use(createPinia());
+const pinia = createPinia();
+app.use(pinia);
 app.use(router);
 
-// Mount the app first
+// Bootstrap auth session before mount so the router guard and components
+// see the correct state on first render.
+const userStore = useUserStore();
+userStore.rehydrateSession();
+
+// Mount the app
 app.mount('#app');
 
 // Initialize Tauri event listeners after app is mounted
