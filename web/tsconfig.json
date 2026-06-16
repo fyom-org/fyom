@@ -20,5 +20,6 @@
       "@e2e/*": ["./tests/e2e/*"]
     },
   },
-  "include": ["src", "tests"]
+  "include": ["src", "tests"],
+  "exclude": ["tests/*.e2e.test.ts", "tests/e2e/**"]
 }
