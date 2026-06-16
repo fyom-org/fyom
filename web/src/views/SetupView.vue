@@ -38,7 +38,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { apiRequest, authRequest } from '@/api/request';
+import { apiRequest } from '@/api/request';
 import { useUserStore } from '@/stores/user';
 import { useSystemStore } from '@/stores/system';
 
@@ -70,7 +70,7 @@ async function submit() {
     });
 
     // Step 2: Login to get token
-    const loginRes = await authRequest.post('/auth/login', {
+    const loginRes = await apiRequest.post('/api/v1/auth/login', {
       username: username.value,
       password: password.value,
     });

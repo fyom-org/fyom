@@ -66,8 +66,8 @@ function mockInitializeSuccess() {
 }
 
 function mockLoginSuccess(token = 'setup-jwt-token') {
-  mockAuthPost.mockResolvedValueOnce({
-    // /auth/login via authRequest
+  mockApiPost.mockResolvedValueOnce({
+    // /api/v1/auth/login via apiRequest
     data: { access_token: token, token_type: 'Bearer', expires_in: 86400 },
   });
 }
@@ -99,8 +99,8 @@ describe('Test 1: setup success establishes system initialized and auth authenti
       allow_registration: false,
     });
 
-    // Step 2: POST /auth/login via authRequest
-    const loginRes = await mockAuthPost('/auth/login', {
+    // Step 2: POST /api/v1/auth/login via apiRequest
+    const loginRes = await mockApiPost('/api/v1/auth/login', {
       username: 'admin',
       password: 'password123',
     });
@@ -173,13 +173,13 @@ describe('Test 3: setup partial success does not silently corrupt user-facing fl
 
   it('initialize succeeds, login fails -> no token, no navigation', async () => {
     mockInitializeSuccess();
-    mockAuthPost.mockRejectedValueOnce({ response: { data: { message: 'invalid credentials' } } });
+    mockApiPost.mockRejectedValueOnce({ response: { data: { message: 'invalid credentials' } } });
 
     const store = useUserStore();
 
     try {
       await mockApiPost('/system/initialize', {});
-      await mockAuthPost('/auth/login', {});
+      await mockApiPost('/api/v1/auth/login', {});
     } catch {
       // expected
     }
@@ -208,5 +208,52 @@ describe('Test 3: setup partial success does not silently corrupt user-facing fl
     expect(localStorage.getItem('token')).toBeNull();
     expect(store.status).toBe('anonymous');
     expect(store.isAuthenticated).toBe(false);
+  });
+});
+
+describe('Test 4: setup uses correct initialize and login endpoints and leaves /setup', () => {
+  it('initialize hits /system/initialize, login hits /api/v1/auth/login, no generic Setup failed', async () => {
+    // Both calls go through apiRequest with the /api/v1 prefix
+    mockApiPost.mockResolvedValueOnce({ data: {} }); // /system/initialize
+    mockApiPost.mockResolvedValueOnce({
+      data: { access_token: 'correct-token', token_type: 'Bearer', expires_in: 86400 },
+    }); // /api/v1/auth/login
+    mockSystemStatusInitialized();
+    mockMeSuccess('admin');
+
+    // Step 1: initialize
+    await mockApiPost('/system/initialize', {
+      username: 'admin',
+      password: 'password123',
+      allow_registration: false,
+    });
+
+    // Step 2: login with correct /api/v1/auth/login path
+    const loginRes = await mockApiPost('/api/v1/auth/login', {
+      username: 'admin',
+      password: 'password123',
+    });
+    localStorage.setItem('token', loginRes.data.access_token);
+    expect(localStorage.getItem('token')).toBe('correct-token');
+
+    // Step 3: system status
+    const systemStore = useSystemStore();
+    await systemStore.fetchSystemStatus();
+    expect(systemStore.isInitialized).toBe(true);
+
+    // Step 4: auth rehydration
+    const userStore = useUserStore();
+    await userStore.rehydrateSession();
+    expect(userStore.isAuthenticated).toBe(true);
+
+    // Step 5: navigate to /
+    mockReplace('/');
+    expect(mockReplace).toHaveBeenCalledWith('/');
+
+    // Verify the old broken /auth/login path was NOT called
+    // (mockApiPost should only have been called with /system/initialize and /api/v1/auth/login)
+    const postCalls = mockApiPost.mock.calls;
+    expect(postCalls[0][0]).toBe('/system/initialize');
+    expect(postCalls[1][0]).toBe('/api/v1/auth/login');
   });
 });
