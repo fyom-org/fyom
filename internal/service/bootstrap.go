@@ -61,7 +61,7 @@ func (s *BootstrapService) EnsureInitialBootstrap(ctx context.Context, mode Boot
 	username := "admin"
 	password := generateBootstrapPassword()
 
-	user, err := s.authService.Register(ctx, username, password)
+	user, err := s.authService.RegisterWithFlag(ctx, username, password, true)
 	if err != nil {
 		return nil, err
 	}

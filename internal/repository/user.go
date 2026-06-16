@@ -23,9 +23,9 @@ func NewUserRepository(db *DB) *UserRepository {
 func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*model.User, error) {
 	var u model.User
 	err := r.db.QueryRowContext(ctx,
-		"SELECT id, username, password, role, created_at, updated_at FROM users WHERE username = ?",
+		"SELECT id, username, password, role, password_change_required, created_at, updated_at FROM users WHERE username = ?",
 		username,
-	).Scan(&u.ID, &u.Username, &u.Password, &u.Role, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Username, &u.Password, &u.Role, &u.PasswordChangeRequired, &u.CreatedAt, &u.UpdatedAt)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -46,8 +46,8 @@ func (r *UserRepository) Create(ctx context.Context, u *model.User) error {
 	u.UpdatedAt = now
 
 	_, err := r.db.ExecContext(ctx,
-		"INSERT INTO users (id, username, password, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-		u.ID, u.Username, u.Password, u.Role, u.CreatedAt, u.UpdatedAt)
+		"INSERT INTO users (id, username, password, role, password_change_required, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		u.ID, u.Username, u.Password, u.Role, u.PasswordChangeRequired, u.CreatedAt, u.UpdatedAt)
 	return err
 }
 
@@ -62,9 +62,9 @@ func (r *UserRepository) Count(ctx context.Context) (int, error) {
 func (r *UserRepository) GetByID(ctx context.Context, id string) (*model.User, error) {
 	var u model.User
 	err := r.db.QueryRowContext(ctx,
-		"SELECT id, username, password, role, created_at, updated_at FROM users WHERE id = ?",
+		"SELECT id, username, password, role, password_change_required, created_at, updated_at FROM users WHERE id = ?",
 		id,
-	).Scan(&u.ID, &u.Username, &u.Password, &u.Role, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Username, &u.Password, &u.Role, &u.PasswordChangeRequired, &u.CreatedAt, &u.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -77,5 +77,13 @@ func (r *UserRepository) GetByID(ctx context.Context, id string) (*model.User, e
 // UpdatePassword updates a user's password hash.
 func (r *UserRepository) UpdatePassword(ctx context.Context, id, hashedPassword string) error {
 	_, err := r.db.ExecContext(ctx, "UPDATE users SET password = ? WHERE id = ?", hashedPassword, id)
+	return err
+}
+
+// UpdatePasswordAndFlag updates a user's password hash and password_change_required flag.
+func (r *UserRepository) UpdatePasswordAndFlag(ctx context.Context, id, hashedPassword string, passwordChangeRequired bool) error {
+	_, err := r.db.ExecContext(ctx,
+		"UPDATE users SET password = ?, password_change_required = ? WHERE id = ?",
+		hashedPassword, passwordChangeRequired, id)
 	return err
 }

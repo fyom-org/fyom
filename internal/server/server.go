@@ -106,6 +106,11 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	r.Post("/api/v1/auth/login", authHandler.Login)
 	// Desktop bootstrap token endpoint (no auth, localhost only in practice)
 	r.Get("/api/v1/auth/desktop-bootstrap", authHandler.DesktopBootstrap)
+	// Internal bootstrap session bridge (localhost only, for desktop auto-auth)
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.AllowLocalOnly)
+		r.Get("/api/v1/internal/bootstrap-session", authHandler.InternalBootstrapSession)
+	})
 
 	// Observability endpoints (no auth, no SPA fallback)
 	diagHandler := handler.NewDiagHandler(db, FrontendAssetHash(web.Dist))

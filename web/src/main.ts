@@ -4,7 +4,7 @@ import router from './router';
 import App from './App.vue';
 import './style.css';
 import { initTauriListeners, isTauriEnvironment } from './lib/runtime/tauri';
-import { useUserStore } from './stores/user';
+import { useUserStore } from '@/stores/user';
 import { useSystemStore } from '@/stores/system';
 
 const app = createApp(App);
@@ -19,7 +19,7 @@ const systemStore = useSystemStore();
 const userStore = useUserStore();
 await systemStore.fetchSystemStatus();
 
-// In Tauri desktop mode, try to bootstrap from backend-issued token
+// In Tauri desktop mode, try to bootstrap from internal session endpoint
 // if no local token exists.
 if (isTauriEnvironment() && !localStorage.getItem('token')) {
   await userStore.bootstrapDesktopAuth();

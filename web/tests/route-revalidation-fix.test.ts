@@ -180,7 +180,7 @@ describe('F4: ProfileView should not call router.replace on logout', () => {
     const store = useUserStore();
     // Manually set authenticated state
     store.status = 'authenticated';
-    store.user = { user_id: 'u1', username: 'test', role: 'user' };
+    store.user = { user_id: 'u1', username: 'test', role: 'user', password_change_required: false };
     store.token = 'fake-token';
     localStorage.setItem('token', 'fake-token');
 
@@ -233,7 +233,7 @@ describe('Invariant I6: logout() → status=anonymous (synchronous)', () => {
   it('clearStaleSession sets anonymous synchronously', () => {
     const store = useUserStore();
     store.status = 'authenticated';
-    store.user = { user_id: 'u1', username: 'test', role: 'admin' };
+    store.user = { user_id: 'u1', username: 'test', role: 'admin', password_change_required: false };
     store.token = 'some-token';
 
     store.clearStaleSession();

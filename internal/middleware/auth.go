@@ -145,3 +145,24 @@ func parseAndValidateToken(tokenString string, secret string) (jwt.MapClaims, er
 
 	return claims, nil
 }
+
+// AllowLocalOnly is a middleware that only allows requests from localhost/loopback.
+// This is used to restrict internal endpoints like the desktop bootstrap session bridge.
+func AllowLocalOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := r.RemoteAddr
+		// Handle IPv6 loopback (::1) and IPv4 loopback (127.0.0.1)
+		// Also handle cases where port is included (e.g., "127.0.0.1:12345")
+		host := ip
+		if idx := strings.LastIndex(ip, ":"); idx != -1 {
+			host = ip[:idx]
+		}
+
+		if host != "127.0.0.1" && host != "::1" && host != "localhost" {
+			response.Error(w, 403, "forbidden: localhost only")
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}

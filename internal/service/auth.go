@@ -37,6 +37,11 @@ func bytesToStr(b []byte) string {
 // Register creates a new user with a bcrypt-hashed password.
 // The first user (count == 0) is automatically assigned the "admin" role.
 func (s *AuthService) Register(ctx context.Context, username, password string) (*model.User, error) {
+	return s.RegisterWithFlag(ctx, username, password, false)
+}
+
+// RegisterWithFlag creates a new user with explicit password_change_required flag.
+func (s *AuthService) RegisterWithFlag(ctx context.Context, username, password string, passwordChangeRequired bool) (*model.User, error) {
 	if username == "" || password == "" {
 		return nil, errors.Wrap(nil, errors.ErrValidation)
 	}
@@ -66,12 +71,16 @@ func (s *AuthService) Register(ctx context.Context, username, password string) (
 		return nil, errors.Wrap(err, errors.ErrInternal)
 	}
 
-	return s.createUserWithRole(ctx, username, hashedBytes, role)
+	return s.createUserWithRoleAndFlag(ctx, username, hashedBytes, role, passwordChangeRequired)
 }
 
-// createUserWithRole stores a new user with a pre-hashed password and explicit role.
-func (s *AuthService) createUserWithRole(ctx context.Context, username string, hashedBytes []byte, role string) (*model.User, error) {
-	user := &model.User{Username: username, Role: role}
+// createUserWithRoleAndFlag stores a new user with a pre-hashed password, explicit role, and password_change_required flag.
+func (s *AuthService) createUserWithRoleAndFlag(ctx context.Context, username string, hashedBytes []byte, role string, passwordChangeRequired bool) (*model.User, error) {
+	user := &model.User{
+		Username:              username,
+		Role:                  role,
+		PasswordChangeRequired: passwordChangeRequired,
+	}
 	user.Password = bytesToStr(hashedBytes)
 
 	if err := s.userRepo.Create(ctx, user); err != nil {
@@ -87,7 +96,7 @@ func (s *AuthService) createUserWithRole(ctx context.Context, username string, h
 	return user, nil
 }
 
-// Login validates credentials and returns a JWT token string.
+// Login validates credentials and returns a JWT token string and the user.
 func (s *AuthService) Login(ctx context.Context, username, password string) (string, *model.User, error) {
 	user, err := s.userRepo.GetByUsername(ctx, username)
 	if err != nil {
@@ -125,7 +134,15 @@ func (s *AuthService) GetUserByID(ctx context.Context, id string) (*model.User, 
 	return s.userRepo.GetByID(ctx, id)
 }
 
-// UpdatePassword updates a user's password hash.
-func (s *AuthService) UpdatePassword(ctx context.Context, id, hashedPassword string) error {
+// GetUserByUsername returns a user by username.
+func (s *AuthService) GetUserByUsername(ctx context.Context, username string) (*model.User, error) {
+	return s.userRepo.GetByUsername(ctx, username)
+}
+
+// UpdatePassword updates a user's password hash and optionally clears password_change_required.
+func (s *AuthService) UpdatePassword(ctx context.Context, id, hashedPassword string, clearPasswordChangeRequired bool) error {
+	if clearPasswordChangeRequired {
+		return s.userRepo.UpdatePasswordAndFlag(ctx, id, hashedPassword, false)
+	}
 	return s.userRepo.UpdatePassword(ctx, id, hashedPassword)
 }

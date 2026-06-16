@@ -3,12 +3,13 @@ package model
 
 // User represents a fyom user.
 type User struct {
-	ID        string `json:"id" db:"id"`
-	Username  string `json:"username" db:"username"`
-	Password  string `json:"-" db:"password"`
-	Role      string `json:"role" db:"role"`
-	CreatedAt string `json:"created_at" db:"created_at"`
-	UpdatedAt string `json:"updated_at" db:"updated_at"`
+	ID                   string `json:"id" db:"id"`
+	Username             string `json:"username" db:"username"`
+	Password             string `json:"-" db:"password"`
+	Role                 string `json:"role" db:"role"`
+	PasswordChangeRequired bool   `json:"password_change_required" db:"password_change_required"`
+	CreatedAt            string `json:"created_at" db:"created_at"`
+	UpdatedAt            string `json:"updated_at" db:"updated_at"`
 }
 
 // MediaItem represents a single media entry (movie, episode, or show).

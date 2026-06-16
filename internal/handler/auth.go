@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/fyom/fyom/internal/model"
 	"github.com/fyom/fyom/internal/repository"
 	"github.com/fyom/fyom/internal/service"
 	fyommiddleware "github.com/fyom/fyom/internal/middleware"
@@ -53,9 +54,10 @@ type LoginRequest struct {
 
 // LoginResponse represents a login response.
 type LoginResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int    `json:"expires_in"`
+	AccessToken string      `json:"access_token"`
+	TokenType   string      `json:"token_type"`
+	ExpiresIn   int         `json:"expires_in"`
+	User        *model.User `json:"user"`
 }
 
 // Register creates a new user account.
@@ -98,7 +100,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, _, err := h.authService.Login(r.Context(), req.Username, req.Password)
+	token, user, err := h.authService.Login(r.Context(), req.Username, req.Password)
 	if err != nil {
 		if appErr, ok := errors.IsAppError(err); ok {
 			response.Error(w, appErr.Code, appErr.Message)
@@ -113,25 +115,34 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		AccessToken: token,
 		TokenType:   "Bearer",
 		ExpiresIn:   expiry,
+		User:        user,
 	})
 }
 
 // Me returns the current authenticated user.
 func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
-	userID := fyommiddleware.GetUserID(r)
-	username := fyommiddleware.GetUsername(r)
-	role := fyommiddleware.GetRole(r)
+	userID, _ := fyommiddleware.GetUserID(r).(string)
+	if userID == "" {
+		response.Error(w, 401, "unauthorized")
+		return
+	}
 
-	response.Success(w, map[string]interface{}{
-		"user_id":  userID,
-		"username": username,
-		"role":     role,
-	})
+	user, err := h.authService.GetUserByID(r.Context(), userID)
+	if err != nil || user == nil {
+		response.Error(w, 401, "unauthorized")
+		return
+	}
+
+	// Never return the password hash
+	user.Password = ""
+
+	response.Success(w, user)
 }
 
 // DesktopBootstrap returns the desktop bootstrap token if one was created.
 // This endpoint is used by the Tauri frontend on first run to auto-authenticate.
 // It consumes the token (deletes it) so it can only be used once.
+// Returns both the token and the user with password_change_required flag.
 func (h *AuthHandler) DesktopBootstrap(w http.ResponseWriter, r *http.Request) {
 	// Only allow in desktop/sidecar mode - check if setting exists
 	token, err := h.settingRepo.GetSetting(r.Context(), "desktop_bootstrap_token")
@@ -143,8 +154,57 @@ func (h *AuthHandler) DesktopBootstrap(w http.ResponseWriter, r *http.Request) {
 	// Consume the token - delete it so it can't be reused
 	_ = h.settingRepo.SetSetting(r.Context(), "desktop_bootstrap_token", "")
 
-	response.Success(w, map[string]string{
+	// Get the bootstrap admin user by username
+	user, err := h.authService.GetUserByUsername(r.Context(), "admin")
+	if err != nil || user == nil {
+		// Fallback: just return the token
+		response.Success(w, map[string]string{
+			"token": token,
+		})
+		return
+	}
+
+	// Never return the password hash
+	user.Password = ""
+
+	response.Success(w, map[string]interface{}{
 		"token": token,
+		"user":  user,
+	})
+}
+
+// InternalBootstrapSession returns the desktop bootstrap session if one exists
+// and the user still has password_change_required=true.
+// This is a localhost-only endpoint for the desktop bridge.
+func (h *AuthHandler) InternalBootstrapSession(w http.ResponseWriter, r *http.Request) {
+	// Only allow in desktop/sidecar mode
+	token, err := h.settingRepo.GetSetting(r.Context(), "desktop_bootstrap_token")
+	if err != nil || token == "" {
+		response.Error(w, 404, "no bootstrap session available")
+		return
+	}
+
+	// Get the bootstrap admin user
+	user, err := h.authService.GetUserByUsername(r.Context(), "admin")
+	if err != nil || user == nil {
+		response.Error(w, 404, "no bootstrap session available")
+		return
+	}
+
+	// Only return session if user still has password_change_required=true
+	if !user.PasswordChangeRequired {
+		// Clean up the token since it's no longer valid for bootstrap
+		_ = h.settingRepo.SetSetting(r.Context(), "desktop_bootstrap_token", "")
+		response.Error(w, 404, "bootstrap session no longer valid")
+		return
+	}
+
+	// Never return the password hash
+	user.Password = ""
+
+	response.Success(w, map[string]interface{}{
+		"token": token,
+		"user":  user,
 	})
 }
 
@@ -186,10 +246,21 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.authService.UpdatePassword(r.Context(), userID, string(hashedBytes)); err != nil {
+	// Update password and clear password_change_required
+	if err := h.authService.UpdatePassword(r.Context(), userID, string(hashedBytes), true); err != nil {
 		response.Error(w, 500, "internal server error")
 		return
 	}
 
-	response.Success(w, map[string]string{"message": "ok"})
+	// Return updated user with cleared password_change_required
+	user, err = h.authService.GetUserByID(r.Context(), userID)
+	if err != nil || user == nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	user.Password = ""
+
+	response.Success(w, map[string]interface{}{
+		"user": user,
+	})
 }
