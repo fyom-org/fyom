@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { login, getMe, type MeData } from '@/api/auth';
+import { authRequest, apiRequest } from '@/api/request';
 
 export type AuthStatus = 'unknown' | 'rehydrating' | 'authenticated' | 'anonymous' | 'error';
 
@@ -50,7 +51,7 @@ export const useUserStore = defineStore('user', () => {
       } catch (err: unknown) {
         // Only clear token on explicit 401/403 HTTP responses.
         // Network errors, timeouts, 5xx etc. mean "try again later" —
-        // keep the token so a future rehydration can succeed.
+        // keep the token so a future rehydration attempt can succeed.
         const httpStatus = (err as any)?.response?.status;
         if (httpStatus === 401 || httpStatus === 403) {
           clearStaleSession();
@@ -65,6 +66,40 @@ export const useUserStore = defineStore('user', () => {
     })();
 
     return rehydrationPromise;
+  }
+
+  /**
+   * Bootstrap desktop authentication from backend-issued bootstrap token.
+   * Called on Tauri startup if no local token exists.
+   * Returns true if bootstrap succeeded and user is now authenticated.
+   */
+  async function bootstrapDesktopAuth(): Promise<boolean> {
+    if (status.value === 'authenticated') return true;
+
+    // Only attempt in Tauri environment
+    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
+      return false;
+    }
+
+    try {
+      // Try to get desktop bootstrap token from backend
+      const res = await apiRequest.get<{ token: string }>('/auth/desktop-bootstrap');
+      const bootstrapToken = res.data.token;
+      if (!bootstrapToken) return false;
+
+      // Store token and rehydrate
+      token.value = bootstrapToken;
+      localStorage.setItem('token', bootstrapToken);
+
+      const meRes = await getMe();
+      user.value = meRes.data;
+      status.value = 'authenticated';
+
+      return true;
+    } catch {
+      // No bootstrap token available or failed - fall through to normal flow
+      return false;
+    }
   }
 
   /** F2: Explicitly set anonymous state (no token, not "unknown") */
@@ -88,23 +123,15 @@ export const useUserStore = defineStore('user', () => {
     token.value = accessToken;
     localStorage.setItem('token', accessToken);
 
-    // Verify the token by calling /auth/me using fetch() directly.
-    // This bypasses any potential issues with the axios interceptor.
+    // Verify the token by calling /auth/me using the auth-specific axios instance.
+    // This uses the correct baseURL (empty, so /auth/me resolves to origin/auth/me)
+    // and the authRequest instance which has the auth interceptor.
     try {
-      const apiBase = window.location.origin + '/api/v1';
-      const meRes = await fetch(apiBase + '/auth/me', {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (meRes.ok) {
-        const meData = (await meRes.json()) as { data: MeData };
-        user.value = meData.data;
-        status.value = 'authenticated';
-      } else {
-        // Token verification failed — fall back to rehydrateSession
-        await rehydrateSession();
-      }
+      const meRes = await authRequest.get<MeData>('/auth/me');
+      user.value = meRes.data;
+      status.value = 'authenticated';
     } catch {
-      // Network error — fall back to rehydrateSession
+      // Token verification failed — fall back to rehydrateSession
       await rehydrateSession();
     }
 
@@ -128,6 +155,7 @@ export const useUserStore = defineStore('user', () => {
     isAuthReady,
     isAdmin,
     rehydrateSession,
+    bootstrapDesktopAuth,
     setAnonymous,
     clearStaleSession,
     doLogin,

@@ -5,7 +5,6 @@ import { apiRequest } from '@/api/request';
 export type SystemStatus =
   | 'unknown'
   | 'checking'
-  | 'needs_setup'
   | 'initialized'
   | 'error';
 
@@ -13,10 +12,6 @@ export const useSystemStore = defineStore('system', () => {
   const status = ref<SystemStatus>('unknown');
   const checkedOnce = ref(false);
 
-  const isSystemReady = computed(
-    () => status.value === 'needs_setup' || status.value === 'initialized'
-  );
-  const needsSetup = computed(() => status.value === 'needs_setup');
   const isInitialized = computed(() => status.value === 'initialized');
 
   async function fetchSystemStatus(): Promise<void> {
@@ -24,7 +19,7 @@ export const useSystemStore = defineStore('system', () => {
     status.value = 'checking';
     try {
       const res = await apiRequest.get<{ initialized: boolean }>('/system/status');
-      status.value = res.data.initialized ? 'initialized' : 'needs_setup';
+      status.value = res.data.initialized ? 'initialized' : 'error';
       checkedOnce.value = true;
     } catch {
       status.value = 'error';
@@ -40,8 +35,6 @@ export const useSystemStore = defineStore('system', () => {
   return {
     status,
     checkedOnce,
-    isSystemReady,
-    needsSetup,
     isInitialized,
     fetchSystemStatus,
     reset,

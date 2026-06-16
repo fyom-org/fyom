@@ -3,9 +3,9 @@ import { createPinia } from 'pinia';
 import router from './router';
 import App from './App.vue';
 import './style.css';
-import { initTauriListeners } from './lib/runtime/tauri';
+import { initTauriListeners, isTauriEnvironment } from './lib/runtime/tauri';
 import { useUserStore } from './stores/user';
-import { useSystemStore } from './stores/system';
+import { useSystemStore } from '@/stores/system';
 
 const app = createApp(App);
 
@@ -17,8 +17,16 @@ app.use(router);
 // and components see the correct state on first render.
 const systemStore = useSystemStore();
 const userStore = useUserStore();
-systemStore.fetchSystemStatus();
-userStore.rehydrateSession();
+await systemStore.fetchSystemStatus();
+
+// In Tauri desktop mode, try to bootstrap from backend-issued token
+// if no local token exists.
+if (isTauriEnvironment() && !localStorage.getItem('token')) {
+  await userStore.bootstrapDesktopAuth();
+}
+
+// Then rehydrate session (will use the bootstrap token if it was stored)
+await userStore.rehydrateSession();
 
 // Mount the app
 app.mount('#app');

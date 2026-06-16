@@ -11,7 +11,6 @@ const router = createRouter({
   routes: [
     { path: '/login', name: 'Login', component: () => import('@/views/LoginView.vue') },
     { path: '/register', name: 'Register', component: () => import('@/views/RegisterView.vue') },
-    { path: '/setup', name: 'Setup', component: () => import('@/views/SetupView.vue') },
     { path: '/home', redirect: '/' },
     {
       path: '/',
@@ -84,8 +83,8 @@ const router = createRouter({
  *
  * Re-runs resolveNavigationTarget against the current route whenever
  * system/auth/role state changes. This ensures that state transitions
- * (logout, login, setup completion, auth invalidation) immediately
- * invalidate the current page — not just future navigations.
+ * (logout, login, auth invalidation) immediately invalidate the current
+ * page — not just future navigations.
  *
  * Uses nextTick() to defer navigation, preventing conflicts with
  * Vue Router's internal navigation state when the subscriber fires
@@ -109,13 +108,10 @@ function revalidateCurrentRoute() {
     systemStatus: systemStore.status,
     authStatus: userStore.status,
     isAdmin: userStore.isAdmin,
-    targetPath,
+    targetPath: router.currentRoute.value.path,
   });
 
-  if (decision.type === 'redirect' && decision.to !== targetPath) {
-    // F1: Defer navigation to nextTick to avoid conflicting with
-    // Vue Router's internal state when subscriber fires synchronously
-    // during an async operation (e.g., inside rehydrateSession's await).
+  if (decision.type === 'redirect' && decision.to !== router.currentRoute.value.path) {
     nextTick(() => {
       router.replace(decision.to).catch(() => {
         // ignore duplicate navigation
@@ -133,7 +129,6 @@ function setupRouteRevalidation() {
   const systemStore = useSystemStore();
   const userStore = useUserStore();
 
-  // Watch all three truth sources
   const stopSystem = systemStore.$subscribe(() => {
     revalidateCurrentRoute();
   });
@@ -149,7 +144,7 @@ function setupRouteRevalidation() {
 
 // Unified route guard — single decision point using system + auth state machines
 router.beforeEach(async (to) => {
-  // F1: Always install revalidation watcher first, regardless of decision outcome
+  // Always install revalidation watcher first, regardless of decision outcome
   setupRouteRevalidation();
 
   const systemStore = useSystemStore();
@@ -160,7 +155,7 @@ router.beforeEach(async (to) => {
     await systemStore.fetchSystemStatus();
   }
 
-  // 2. F2: Eliminate authStatus=unknown passthrough
+  // 2. Eliminate authStatus=unknown passthrough
   // When system is initialized, auth MUST be resolved before entering resolver
   if (systemStore.isInitialized) {
     if (userStore.status === 'unknown') {
@@ -187,10 +182,13 @@ router.beforeEach(async (to) => {
     case 'redirect':
       return decision.to;
     case 'wait':
-      if (systemStore.isInitialized) {
-        return '/login';
+      // If navigating to a protected route and auth is rehydrating, allow navigation
+      // to proceed. The revalidation watcher will redirect if auth fails.
+      const isProtectedRoute = to.path !== '/login' && to.path !== '/register';
+      if (userStore.status === 'rehydrating' && isProtectedRoute) {
+        return;
       }
-      // F5: System truth not yet known — cancel navigation, don't silently allow
+      // For non-protected routes or non-rehydrating states, cancel navigation
       return false;
   }
 });

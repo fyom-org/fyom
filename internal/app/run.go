@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/fyom/fyom/internal/config"
 	"github.com/fyom/fyom/internal/repository"
+	"github.com/fyom/fyom/internal/service"
 	fyomserver "github.com/fyom/fyom/internal/server"
 	"github.com/fyom/fyom/internal/version"
 	"github.com/fyom/fyom/pkg/logger"
@@ -111,9 +113,37 @@ func Run(opts RunOptions) error {
 	log := logger.New(cfg.Log.Level, cfg.Log.Format)
 
 	// Create and run server.
-	srv := fyomserver.New(cfg, log, db, version.Version, version.Commit, version.BuildTime, runtime.Version())
+_svc := service.BootstrapMode(opts.Mode)
+	srv := fyomserver.New(cfg, log, db, version.Version, version.Commit, version.BuildTime, runtime.Version(), _svc)
 	addr := cfg.Server.Address()
 	slog.Info("server listening", "addr", addr)
+
+	// Run bootstrap: auto-create initial admin if zero users.
+	bootstrapResult, err := srv.RunBootstrap(context.Background(), _svc)
+	if err != nil {
+		slog.Error("bootstrap failed", "error", err)
+		return fmt.Errorf("bootstrap: %w", err)
+	}
+	if bootstrapResult.Created {
+		switch _svc {
+		case service.BootstrapModeServer:
+			slog.Info("fyom first run — admin credentials",
+				"username", bootstrapResult.Username,
+				"password", bootstrapResult.GeneratedPassword,
+			)
+			fmt.Fprintf(os.Stderr, "\n========================================\n")
+			fmt.Fprintf(os.Stderr, " fyom first run — admin credentials\n")
+			fmt.Fprintf(os.Stderr, " username: %s\n", bootstrapResult.Username)
+			fmt.Fprintf(os.Stderr, " password: %s\n", bootstrapResult.GeneratedPassword)
+			fmt.Fprintf(os.Stderr, " change this after first login\n")
+			fmt.Fprintf(os.Stderr, "========================================\n\n")
+		case service.BootstrapModeDesktop:
+			slog.Info("fyom desktop first run — auto-created admin",
+				"username", bootstrapResult.Username,
+				"user_id", bootstrapResult.UserID,
+			)
+		}
+	}
 
 	if opts.Mode == RunModeSidecar {
 		time.Sleep(100 * time.Millisecond)

@@ -35,12 +35,13 @@ type Server struct {
 	settingRepo        *repository.SystemSettingRepository
 	mediaRepo          *repository.MediaRepository
 	refreshCoordinator *RefreshCoordinator
+	bootstrapSvc       *service.BootstrapService
 	importWG           sync.WaitGroup
 	shutdownOnce       sync.Once
 	shutdownCh         chan struct{}
 }
 
-func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gitCommit, buildTime, goVer string) *Server {
+func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gitCommit, buildTime, goVer string, runMode service.BootstrapMode) *Server {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger(logger))
 	r.Use(corsMiddleware)
@@ -93,6 +94,9 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	adminHandler := handler.NewAdminHandler(adminRepo, mediaRepo, settingRepo, libPermRepo, db)
 	adminLibHandler := handler.NewAdminLibraryHandler(libRepo, providerRepo, libPermRepo)
 
+	// Bootstrap: auto-create initial admin on first boot.
+	bootstrapSvc := service.NewBootstrapService(authHandler.GetAuthService(), userRepo, settingRepo)
+
 	// Public routes
 	r.Get("/api/v1/health", healthHandler.Health)
 	r.Get("/api/v1/version", healthHandler.Version)
@@ -100,6 +104,8 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 	r.Post("/api/v1/system/initialize", systemHandler.Initialize)
 	r.Post("/api/v1/auth/register", authHandler.Register)
 	r.Post("/api/v1/auth/login", authHandler.Login)
+	// Desktop bootstrap token endpoint (no auth, localhost only in practice)
+	r.Get("/api/v1/auth/desktop-bootstrap", authHandler.DesktopBootstrap)
 
 	// Observability endpoints (no auth, no SPA fallback)
 	diagHandler := handler.NewDiagHandler(db, FrontendAssetHash(web.Dist))
@@ -188,8 +194,16 @@ func New(cfg *config.Config, logger *slog.Logger, db *repository.DB, version, gi
 		settingRepo:        settingRepo,
 		mediaRepo:          mediaRepo,
 		refreshCoordinator: refreshCoordinator,
+		bootstrapSvc:       bootstrapSvc,
 		shutdownCh:         make(chan struct{}),
 	}
+}
+
+// RunBootstrap executes the initial bootstrap if needed.
+// It should be called once after the server is created but before it starts listening.
+// The returned BootstrapResult contains credentials (server mode) or a session token (desktop mode).
+func (s *Server) RunBootstrap(ctx context.Context, mode service.BootstrapMode) (*service.BootstrapResult, error) {
+	return s.bootstrapSvc.EnsureInitialBootstrap(ctx, mode)
 }
 
 // staticFileHandler returns an http.Handler that serves static files from

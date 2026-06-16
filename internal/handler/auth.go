@@ -129,6 +129,25 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// DesktopBootstrap returns the desktop bootstrap token if one was created.
+// This endpoint is used by the Tauri frontend on first run to auto-authenticate.
+// It consumes the token (deletes it) so it can only be used once.
+func (h *AuthHandler) DesktopBootstrap(w http.ResponseWriter, r *http.Request) {
+	// Only allow in desktop/sidecar mode - check if setting exists
+	token, err := h.settingRepo.GetSetting(r.Context(), "desktop_bootstrap_token")
+	if err != nil || token == "" {
+		response.Error(w, 404, "no bootstrap token available")
+		return
+	}
+
+	// Consume the token - delete it so it can't be reused
+	_ = h.settingRepo.SetSetting(r.Context(), "desktop_bootstrap_token", "")
+
+	response.Success(w, map[string]string{
+		"token": token,
+	})
+}
+
 // ChangePasswordRequest holds the password change form data.
 type ChangePasswordRequest struct {
 	OldPassword string `json:"old_password"`

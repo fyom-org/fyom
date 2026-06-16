@@ -27,44 +27,7 @@ describe('resolveNavigationTarget state matrix', () => {
     })).toEqual({ type: 'wait' });
   });
 
-  // 2. needs_setup → only /setup allowed
-  it('needs_setup + /setup → allow', () => {
-    expect(resolveNavigationTarget({
-      systemStatus: 'needs_setup', authStatus: 'unknown', isAdmin: false, targetPath: '/setup',
-    })).toEqual({ type: 'allow' });
-  });
-
-  it('needs_setup + / → redirect /setup', () => {
-    expect(resolveNavigationTarget({
-      systemStatus: 'needs_setup', authStatus: 'unknown', isAdmin: false, targetPath: '/',
-    })).toEqual({ type: 'redirect', to: '/setup' });
-  });
-
-  it('needs_setup + /login → redirect /setup', () => {
-    expect(resolveNavigationTarget({
-      systemStatus: 'needs_setup', authStatus: 'anonymous', isAdmin: false, targetPath: '/login',
-    })).toEqual({ type: 'redirect', to: '/setup' });
-  });
-
-  it('needs_setup + /register → redirect /setup', () => {
-    expect(resolveNavigationTarget({
-      systemStatus: 'needs_setup', authStatus: 'anonymous', isAdmin: false, targetPath: '/register',
-    })).toEqual({ type: 'redirect', to: '/setup' });
-  });
-
-  it('needs_setup + /admin/stats → redirect /setup', () => {
-    expect(resolveNavigationTarget({
-      systemStatus: 'needs_setup', authStatus: 'authenticated', isAdmin: true, targetPath: '/admin/stats',
-    })).toEqual({ type: 'redirect', to: '/setup' });
-  });
-
-  it('needs_setup + /profile → redirect /setup', () => {
-    expect(resolveNavigationTarget({
-      systemStatus: 'needs_setup', authStatus: 'authenticated', isAdmin: false, targetPath: '/profile',
-    })).toEqual({ type: 'redirect', to: '/setup' });
-  });
-
-  // 3. initialized + unknown/rehydrating auth → wait
+  // 2. initialized + unknown/rehydrating auth → wait
   it('initialized + unknown auth → wait', () => {
     expect(resolveNavigationTarget({
       systemStatus: 'initialized', authStatus: 'unknown', isAdmin: false, targetPath: '/',
@@ -77,7 +40,7 @@ describe('resolveNavigationTarget state matrix', () => {
     })).toEqual({ type: 'wait' });
   });
 
-  // 4. initialized + anonymous
+  // 3. initialized + anonymous
   it('initialized + anonymous + /login → allow', () => {
     expect(resolveNavigationTarget({
       systemStatus: 'initialized', authStatus: 'anonymous', isAdmin: false, targetPath: '/login',
@@ -120,7 +83,7 @@ describe('resolveNavigationTarget state matrix', () => {
     })).toEqual({ type: 'redirect', to: '/login' });
   });
 
-  // 5. initialized + authenticated + user role
+  // 4. initialized + authenticated + user role
   it('initialized + authenticated user + / → allow', () => {
     expect(resolveNavigationTarget({
       systemStatus: 'initialized', authStatus: 'authenticated', isAdmin: false, targetPath: '/',
@@ -139,10 +102,10 @@ describe('resolveNavigationTarget state matrix', () => {
     })).toEqual({ type: 'allow' });
   });
 
-  it('initialized + authenticated user + /setup → redirect /', () => {
+  it('initialized + authenticated user + /setup → redirect /login', () => {
     expect(resolveNavigationTarget({
       systemStatus: 'initialized', authStatus: 'authenticated', isAdmin: false, targetPath: '/setup',
-    })).toEqual({ type: 'redirect', to: '/' });
+    })).toEqual({ type: 'redirect', to: '/login' });
   });
 
   it('initialized + authenticated user + /login → redirect /', () => {
@@ -163,7 +126,7 @@ describe('resolveNavigationTarget state matrix', () => {
     })).toEqual({ type: 'redirect', to: '/' });
   });
 
-  // 6. initialized + authenticated + admin role
+  // 5. initialized + authenticated + admin role
   it('initialized + authenticated admin + /admin/stats → allow', () => {
     expect(resolveNavigationTarget({
       systemStatus: 'initialized', authStatus: 'authenticated', isAdmin: true, targetPath: '/admin/stats',
@@ -182,10 +145,10 @@ describe('resolveNavigationTarget state matrix', () => {
     })).toEqual({ type: 'allow' });
   });
 
-  it('initialized + authenticated admin + /setup → redirect /', () => {
+  it('initialized + authenticated admin + /setup → redirect /login', () => {
     expect(resolveNavigationTarget({
       systemStatus: 'initialized', authStatus: 'authenticated', isAdmin: true, targetPath: '/setup',
-    })).toEqual({ type: 'redirect', to: '/' });
+    })).toEqual({ type: 'redirect', to: '/login' });
   });
 
   it('initialized + authenticated admin + /login → redirect /', () => {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/fyom/fyom/internal/config"
 	"github.com/fyom/fyom/internal/repository"
+	"github.com/fyom/fyom/internal/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,6 +35,6 @@ func TestServerNew_DoesNotDoubleRegisterLocalProvider(t *testing.T) {
 
 	// This must not panic
 	require.NotPanics(t, func() {
-		New(cfg, logger, db, "test", "abc123", "now", "go1.26")
+		New(cfg, logger, db, "test", "abc123", "now", "go1.26", service.BootstrapModeServer)
 	}, "server.New should not panic from duplicate local provider registration")
 }

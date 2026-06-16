@@ -16,14 +16,11 @@ export interface ResolveNavigationInput {
  * Single decision table for all navigation in fyom.
  *
  * | System           | Auth                | Target              | Decision            |
- * | ---------------- | ------------------- | ------------------ | ------------------- |
+ * | ---------------- | ------------------- | ------------------- | ------------------- |
  * | unknown/checking | *                   | *                   | wait                |
- * | needs_setup      | *                   | /setup              | allow               |
- * | needs_setup      | *                   | != /setup           | redirect /setup     |
  * | initialized      | unknown/rehydrating | *                   | wait                |
  * | initialized      | anonymous           | /login, /register   | allow               |
  * | initialized      | anonymous           | protected/admin     | redirect /login     |
- * | initialized      | authenticated       | /setup              | redirect /          |
  * | initialized      | authenticated       | /login, /register   | redirect /          |
  * | initialized      | authenticated       | protected          | allow               |
  * | initialized      | authenticated       | admin + isAdmin     | allow               |
@@ -40,16 +37,13 @@ export function resolveNavigationTarget(
     return { type: 'wait' };
   }
 
-  // 2. System needs setup — only /setup is allowed
-  if (systemStatus === 'needs_setup') {
-    if (targetPath === '/setup') {
-      return { type: 'allow' };
-    }
-    return { type: 'redirect', to: '/setup' };
-  }
-
-  // 3. System is initialized
+  // 2. System is initialized (backend guarantees bootstrap before frontend needs routes)
   if (systemStatus === 'initialized') {
+    // /setup no longer exists — redirect to login
+    if (targetPath === '/setup') {
+      return { type: 'redirect', to: '/login' };
+    }
+
     // Auth not yet determined — wait
     if (authStatus === 'unknown' || authStatus === 'rehydrating') {
       return { type: 'wait' };
@@ -57,10 +51,6 @@ export function resolveNavigationTarget(
 
     // Authenticated users
     if (authStatus === 'authenticated') {
-      // /setup is no longer valid after initialization
-      if (targetPath === '/setup') {
-        return { type: 'redirect', to: '/' };
-      }
       // /login, /register — redirect away if already logged in
       if (targetPath === '/login' || targetPath === '/register') {
         return { type: 'redirect', to: '/' };
@@ -81,10 +71,6 @@ export function resolveNavigationTarget(
       // /login and /register are the correct landing
       if (targetPath === '/login' || targetPath === '/register') {
         return { type: 'allow' };
-      }
-      // /setup should not be reachable after initialization
-      if (targetPath === '/setup') {
-        return { type: 'redirect', to: '/login' };
       }
       // Everything else requires auth
       return { type: 'redirect', to: '/login' };

@@ -9,6 +9,7 @@ import (
 
 	"github.com/fyom/fyom/internal/config"
 	"github.com/fyom/fyom/internal/repository"
+	"github.com/fyom/fyom/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,7 +32,7 @@ func TestServer_Shutdown_Idempotent(t *testing.T) {
 	}
 
 	logger := slog.Default()
-	srv := New(cfg, logger, db, "test", "abc123", "now", "go1.26")
+	srv := New(cfg, logger, db, "test", "abc123", "now", "go1.26", service.BootstrapModeServer)
 
 	// Start server in background
 	go func() {
@@ -71,7 +72,7 @@ func TestServer_ShutdownStopsScheduler(t *testing.T) {
 	}
 
 	logger := slog.Default()
-	srv := New(cfg, logger, db, "test", "abc123", "now", "go1.26")
+	srv := New(cfg, logger, db, "test", "abc123", "now", "go1.26", service.BootstrapModeServer)
 
 	// Start server in background
 	go func() {
@@ -114,7 +115,7 @@ func TestServer_WaitForImports(t *testing.T) {
 	}
 
 	logger := slog.Default()
-	srv := New(cfg, logger, db, "test", "abc123", "now", "go1.26")
+	srv := New(cfg, logger, db, "test", "abc123", "now", "go1.26", service.BootstrapModeServer)
 
 	// Add some work to the waitgroup
 	srv.importWG.Add(2)
@@ -160,7 +161,7 @@ func TestServer_WaitForImports_Timeout(t *testing.T) {
 	}
 
 	logger := slog.Default()
-	srv := New(cfg, logger, db, "test", "abc123", "now", "go1.26")
+	srv := New(cfg, logger, db, "test", "abc123", "now", "go1.26", service.BootstrapModeServer)
 
 	// Add work that takes longer than timeout
 	srv.importWG.Add(1)
@@ -202,7 +203,7 @@ func TestServer_HealthEndpoints(t *testing.T) {
 	}
 
 	logger := slog.Default()
-	srv := New(cfg, logger, db, "v1.0.0", "abc123def", "2024-01-01T00:00:00Z", "go1.26")
+	srv := New(cfg, logger, db, "v1.0.0", "abc123def", "2024-01-01T00:00:00Z", "go1.26", service.BootstrapModeServer)
 
 	// Start server
 	go func() {
