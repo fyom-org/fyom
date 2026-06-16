@@ -579,44 +579,6 @@ Current client-side genre filtering is unaffected.
 - [ ] Normalize frontend API error handling
       with consistent toast/error display
 
-### 9.7 Native Playback Failure Fallback (Pre-Desktop Guardrail)
-
-> **Priority:** guardrail-only before desktop. Ensures no black screen if native
-> player init fails. Full libmpv implementation remains in Production Phase 2.
-
-- [x] Add explicit native player state model:
-      `idle / initializing / ready / failed / unavailable`
-- [x] Add `attempted` flag to distinguish browser-by-default from
-      browser-as-fallback-after-native-failure
-- [x] Reuse repo's canonical `isTauriEnvironment()` for runtime detection
-      instead of ad-hoc globals
-- [x] Add `tryInitializeNativePlayer()` bridge function encapsulating
-      invoke/catch/failure-mapping in one place
-- [x] PlayerView renders loading state during native init, HTML5 fallback
-      on failure, native surface on success
-- [x] Visible fallback banner on native init failure:
-      `Native player unavailable, using browser playback`
-- [x] Fallback banner only shown when native was attempted and failed;
-      not shown during normal browser playback
-- [x] PlayerView attempts native init exactly once per mount lifecycle;
-      no retry loops
-- [x] Wire vitest into frontend: `package.json` test script,
-      `vitest.config.ts`, jsdom environment
-- [x] Add 5 component-level tests for PlayerView fallback behavior:
-      browser-default, loading, fallback-on-failure, native-success, no-retry
-- [x] Add 25 helper/bridge tests for native player state model
-- [x] All 30 frontend tests pass (`vitest run`); frontend build passes
-
-> **Follow-up notes:**
-> - `tryInitializeNativePlayer` calls `invoke('play_media')` which is a
->   placeholder. The actual libmpv Tauri command name and contract will be
->   defined in Production Phase 2.
-> - Desktop runtime E2E verification not possible in current environment
->   (Tauri CLI not available). Component tests validate the fallback path
->   through mocking.
-> - Historical corrupted DB rows from pre-fix importer output still need
->   a dedicated repair/backfill path (out of scope for this guardrail task).
-
 ### 9.5 Observability & Diagnostics
 
 > **Priority:** the pre-desktop guardrail subset is `/healthz`, `/readyz`,
@@ -708,6 +670,174 @@ Current client-side genre filtering is unaffected.
 >   public-edge policies can follow later if fyom's deployment surface
 >   expands further.
 
+### 9.7 Native Playback Failure Fallback (Pre-Desktop Guardrail)
+
+> **Priority:** guardrail-only before desktop. Ensures no black screen if native
+> player init fails. Full libmpv implementation remains in Production Phase 2.
+
+- [x] Add explicit native player state model:
+      `idle / initializing / ready / failed / unavailable`
+- [x] Add `attempted` flag to distinguish browser-by-default from
+      browser-as-fallback-after-native-failure
+- [x] Reuse repo's canonical `isTauriEnvironment()` for runtime detection
+      instead of ad-hoc globals
+- [x] Add `tryInitializeNativePlayer()` bridge function encapsulating
+      invoke/catch/failure-mapping in one place
+- [x] PlayerView renders loading state during native init, HTML5 fallback
+      on failure, native surface on success
+- [x] Visible fallback banner on native init failure:
+      `Native player unavailable, using browser playback`
+- [x] Fallback banner only shown when native was attempted and failed;
+      not shown during normal browser playback
+- [x] PlayerView attempts native init exactly once per mount lifecycle;
+      no retry loops
+- [x] Wire vitest into frontend: `package.json` test script,
+      `vitest.config.ts`, jsdom environment
+- [x] Add 5 component-level tests for PlayerView fallback behavior:
+      browser-default, loading, fallback-on-failure, native-success, no-retry
+- [x] Add 25 helper/bridge tests for native player state model
+- [x] All 30 frontend tests pass (`vitest run`); frontend build passes
+
+> **Follow-up notes:**
+> - `tryInitializeNativePlayer` calls `invoke('play_media')` which is a
+>   placeholder. The actual libmpv Tauri command name and contract will be
+>   defined in Production Phase 2.
+> - Desktop runtime E2E verification not possible in current environment
+>   (Tauri CLI not available). Component tests validate the fallback path
+>   through mocking.
+> - Historical corrupted DB rows from pre-fix importer output still need
+>   a dedicated repair/backfill path (out of scope for this guardrail task).
+
+### 9.8 First-Run Bootstrap & Entry Routing Simplification
+
+> **Priority:** high. The historical `/setup` browser flow has become a
+> disproportionate source of frontend route complexity and state-machine
+> fragility. fyom should stop treating first-run bootstrap as a browser
+> route concern and instead move initial admin provisioning into the backend.
+>
+> The goal of this phase is to:
+> - remove `/setup` from normal frontend routing
+> - simplify production entry semantics to `anonymous -> /login`,
+>   `authenticated -> /`
+> - keep bootstrap logic in the backend where it belongs
+> - preserve database portability across machines
+> - support both server/headless mode and Tauri desktop mode without
+>   reintroducing route-state pollution
+
+- [ ] **Remove `/setup` as a frontend/browser route**
+      - `/setup` must no longer exist as a normal route in the SPA
+      - direct browser access to `/setup` must no longer act as a valid
+        initialization flow
+      - initialized systems must never route anonymous users to `/setup`
+
+- [ ] **Replace browser setup with backend first-run bootstrap**
+      - when `userCount == 0`, backend performs initial admin bootstrap
+      - frontend should no longer depend on `/api/v1/system/initialize`
+        as part of normal browser first-run flow
+      - bootstrap becomes a backend/system concern, not a route concern
+
+- [ ] **Server mode first-run bootstrap**
+      - on first boot with zero users:
+        - create admin user `admin`
+        - generate a strong random password
+        - print credentials once to stdout/stderr in a clearly readable block
+      - frontend unauthenticated landing remains `/login`
+      - no browser setup wizard/page is involved
+
+- [ ] **Desktop mode first-run bootstrap**
+      - on first boot with zero users:
+        - create a local admin user
+        - issue a local bootstrap session for the Tauri desktop runtime
+      - desktop app should enter the main UI directly on first run
+      - browser `/setup` does not exist here either
+      - bootstrap session must remain local-only and must not become a
+        remote/public auth bypass
+
+- [ ] **Introduce `password_change_required` as a user attribute**
+      - add persistent user-level field:
+        - `password_change_required BOOLEAN NOT NULL DEFAULT FALSE`
+      - bootstrap-created admin accounts must be created with
+        `password_change_required = true`
+      - this flag is a user/auth concern, not a system/bootstrap route state
+
+- [ ] **Extend auth responses with password-change requirement**
+      - login/session bootstrap responses must include:
+        - `access_token`
+        - current `user`
+        - `password_change_required`
+      - both server-mode manual login and desktop-mode bootstrap session
+        must converge on the same frontend auth state shape
+
+- [ ] **Replace `/setup` UX with a blocking password-change modal**
+      - when `userStore.isAuthenticated && userStore.requiresPasswordChange`,
+        show a global blocking modal/overlay from `App.vue`
+      - the modal is:
+        - not a route
+        - not directly addressable by URL
+        - not dismissible without completing the password change
+      - after successful password update:
+        - backend sets `password_change_required = false`
+        - frontend updates current user state
+        - modal disappears automatically
+
+- [ ] **Ensure migration-safe credential semantics**
+      - credentials must live in the database, not only in local device state
+      - desktop auto-session is only a convenience layer
+      - if the database is moved to another machine:
+        - server mode: user logs in with the password they set
+        - desktop mode: if no local session exists, user logs in normally
+      - database portability must not depend on the original device retaining
+        a hidden session secret
+
+- [ ] **Simplify frontend entry-state semantics**
+      - after this refactor, frontend system state should no longer model
+        `needs_setup` as a stable routing destination
+      - production route semantics should simplify to:
+        - initialized + anonymous -> `/login`
+        - initialized + authenticated -> `/`
+        - authenticated + non-admin -> no `/admin`
+      - `/setup` must not remain as a generic or accidental fallback
+
+- [ ] **Refactor route gate and route revalidation around the simplified model**
+      - route decisions must be based on:
+        - system initialized truth
+        - auth session truth
+        - current user role
+      - removing `/setup` should reduce route leakage and eliminate a major
+        source of route/bootstrap ambiguity
+      - login success and logout must revalidate the current route correctly
+
+- [ ] **Deprecate or demote `/api/v1/system/initialize`**
+      - frontend must stop using it as a normal browser bootstrap endpoint
+      - if retained, it should be clearly scoped to controlled internal/admin
+        or recovery use only
+      - it must not imply that `/setup` remains part of the normal UI flow
+
+- [ ] **Add backend bootstrap regression coverage**
+      - zero-user server bootstrap creates admin exactly once
+      - zero-user desktop bootstrap creates admin and local bootstrap session
+      - existing users prevent repeated bootstrap
+      - generated credentials are not static/predictable
+      - stdout credential output is emitted once, not on every restart
+
+- [ ] **Add frontend regression coverage for the post-`/setup` world**
+      - initialized fresh anonymous session lands on `/login`
+      - `/setup` is no longer reachable as a normal route
+      - login success lands on `/`
+      - logout from protected routes lands on `/login`
+      - password-change modal appears when required
+      - password-change modal blocks app use until completion
+      - completion clears `password_change_required` and unlocks the app
+
+> **Follow-up notes:**
+> - This phase intentionally does **not** introduce guest/public capability
+>   policy yet. Public browsing, demo behavior, and guest/user/admin
+>   capability configuration should be layered on top of the simplified
+>   entry/auth model afterward.
+> - The `password_change_required` flow is intentionally modeled as a
+>   user-level auth property, not a route or system bootstrap state.
+> - Desktop bootstrap convenience must never supersede the long-term truth
+>   that database-backed credentials are the portable source of identity.
 
 # Production: Scaling & Ecosystem
 
