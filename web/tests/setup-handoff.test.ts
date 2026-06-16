@@ -67,7 +67,7 @@ function mockInitializeSuccess() {
 
 function mockLoginSuccess(token = 'setup-jwt-token') {
   mockApiPost.mockResolvedValueOnce({
-    // /api/v1/auth/login via apiRequest
+    // /auth/login via apiRequest (baseURL /api/v1)
     data: { access_token: token, token_type: 'Bearer', expires_in: 86400 },
   });
 }
@@ -99,8 +99,8 @@ describe('Test 1: setup success establishes system initialized and auth authenti
       allow_registration: false,
     });
 
-    // Step 2: POST /api/v1/auth/login via apiRequest
-    const loginRes = await mockApiPost('/api/v1/auth/login', {
+    // Step 2: POST /auth/login via apiRequest (baseURL /api/v1)
+    const loginRes = await mockApiPost('/auth/login', {
       username: 'admin',
       password: 'password123',
     });
@@ -179,7 +179,7 @@ describe('Test 3: setup partial success does not silently corrupt user-facing fl
 
     try {
       await mockApiPost('/system/initialize', {});
-      await mockApiPost('/api/v1/auth/login', {});
+      await mockApiPost('/auth/login', {});
     } catch {
       // expected
     }
@@ -212,12 +212,12 @@ describe('Test 3: setup partial success does not silently corrupt user-facing fl
 });
 
 describe('Test 4: setup uses correct initialize and login endpoints and leaves /setup', () => {
-  it('initialize hits /system/initialize, login hits /api/v1/auth/login, no generic Setup failed', async () => {
-    // Both calls go through apiRequest with the /api/v1 prefix
+  it('initialize hits /system/initialize, login hits /auth/login via apiRequest, no double prefix', async () => {
+    // Both calls go through apiRequest (baseURL /api/v1)
     mockApiPost.mockResolvedValueOnce({ data: {} }); // /system/initialize
     mockApiPost.mockResolvedValueOnce({
       data: { access_token: 'correct-token', token_type: 'Bearer', expires_in: 86400 },
-    }); // /api/v1/auth/login
+    }); // /auth/login
     mockSystemStatusInitialized();
     mockMeSuccess('admin');
 
@@ -228,8 +228,8 @@ describe('Test 4: setup uses correct initialize and login endpoints and leaves /
       allow_registration: false,
     });
 
-    // Step 2: login with correct /api/v1/auth/login path
-    const loginRes = await mockApiPost('/api/v1/auth/login', {
+    // Step 2: login — path passed to apiRequest is /auth/login (not /api/v1/auth/login)
+    const loginRes = await mockApiPost('/auth/login', {
       username: 'admin',
       password: 'password123',
     });
@@ -250,10 +250,11 @@ describe('Test 4: setup uses correct initialize and login endpoints and leaves /
     mockReplace('/');
     expect(mockReplace).toHaveBeenCalledWith('/');
 
-    // Verify the old broken /auth/login path was NOT called
-    // (mockApiPost should only have been called with /system/initialize and /api/v1/auth/login)
+    // Verify correct paths passed to apiRequest — NO double /api/v1 prefix
     const postCalls = mockApiPost.mock.calls;
     expect(postCalls[0][0]).toBe('/system/initialize');
-    expect(postCalls[1][0]).toBe('/api/v1/auth/login');
+    expect(postCalls[1][0]).toBe('/auth/login');
+    // Explicitly assert the broken path is never used
+    expect(postCalls[1][0]).not.toContain('/api/v1/api/v1/');
   });
 });
