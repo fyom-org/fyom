@@ -102,10 +102,10 @@ describe('resolveNavigationTarget state matrix', () => {
     })).toEqual({ type: 'allow' });
   });
 
-  it('initialized + authenticated user + /setup → redirect /login', () => {
+  it('initialized + authenticated user + /setup → allow', () => {
     expect(resolveNavigationTarget({
       systemStatus: 'initialized', authStatus: 'authenticated', isAdmin: false, targetPath: '/setup',
-    })).toEqual({ type: 'redirect', to: '/login' });
+    })).toEqual({ type: 'allow' });
   });
 
   it('initialized + authenticated user + /login → redirect /', () => {
@@ -145,10 +145,10 @@ describe('resolveNavigationTarget state matrix', () => {
     })).toEqual({ type: 'allow' });
   });
 
-  it('initialized + authenticated admin + /setup → redirect /login', () => {
+  it('initialized + authenticated admin + /setup → allow', () => {
     expect(resolveNavigationTarget({
       systemStatus: 'initialized', authStatus: 'authenticated', isAdmin: true, targetPath: '/setup',
-    })).toEqual({ type: 'redirect', to: '/login' });
+    })).toEqual({ type: 'allow' });
   });
 
   it('initialized + authenticated admin + /login → redirect /', () => {

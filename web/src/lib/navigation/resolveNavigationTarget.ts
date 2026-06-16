@@ -39,11 +39,6 @@ export function resolveNavigationTarget(
 
   // 2. System is initialized (backend guarantees bootstrap before frontend needs routes)
   if (systemStatus === 'initialized') {
-    // /setup no longer exists — redirect to login
-    if (targetPath === '/setup') {
-      return { type: 'redirect', to: '/login' };
-    }
-
     // Auth not yet determined — wait
     if (authStatus === 'unknown' || authStatus === 'rehydrating') {
       return { type: 'wait' };

@@ -54,10 +54,11 @@ type LoginRequest struct {
 
 // LoginResponse represents a login response.
 type LoginResponse struct {
-	AccessToken string      `json:"access_token"`
-	TokenType   string      `json:"token_type"`
-	ExpiresIn   int         `json:"expires_in"`
-	User        *model.User `json:"user"`
+	AccessToken            string      `json:"access_token"`
+	TokenType              string      `json:"token_type"`
+	ExpiresIn              int         `json:"expires_in"`
+	User                   *model.User `json:"user"`
+	PasswordChangeRequired bool        `json:"password_change_required"`
 }
 
 // Register creates a new user account.
@@ -112,10 +113,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	expiry := int((24 * 3600)) // seconds
 	response.Success(w, LoginResponse{
-		AccessToken: token,
-		TokenType:   "Bearer",
-		ExpiresIn:   expiry,
-		User:        user,
+		AccessToken:            token,
+		TokenType:              "Bearer",
+		ExpiresIn:              expiry,
+		User:                   user,
+		PasswordChangeRequired: user.PasswordChangeRequired,
 	})
 }
 
