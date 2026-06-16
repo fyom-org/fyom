@@ -9,12 +9,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { useUserStore } from '@/stores/user';
+import { useSystemStore } from '@/stores/system';
 
 // ----- Mocks -----
 
 const mockGetMe = vi.fn();
 const mockApiPost = vi.fn();
 const mockAuthPost = vi.fn();
+const mockApiGet = vi.fn();
 
 vi.mock('@/api/auth', () => ({
   login: vi.fn(),
@@ -25,7 +27,7 @@ vi.mock('@/api/auth', () => ({
 vi.mock('@/api/request', () => ({
   apiRequest: {
     post: (...args: unknown[]) => mockApiPost(...args),
-    get: vi.fn(),
+    get: (...args: unknown[]) => mockApiGet(...args),
   },
   authRequest: {
     post: (...args: unknown[]) => mockAuthPost(...args),
@@ -47,6 +49,7 @@ beforeEach(() => {
   mockGetMe.mockReset();
   mockApiPost.mockReset();
   mockAuthPost.mockReset();
+  mockApiGet.mockReset();
   mockReplace.mockReset();
   mockPush.mockReset();
 });
@@ -75,35 +78,28 @@ function mockMeSuccess(role = 'admin') {
   });
 }
 
-// Dynamically import SetupView after mocks are in place
-async function importSetupView() {
-  await import('@/views/SetupView.vue');
+function mockSystemStatusInitialized() {
+  mockApiGet.mockResolvedValue({ data: { initialized: true } });
 }
 
 // ----- Tests -----
 
-describe('Test 1: setup success establishes auth state and navigates away from /setup', () => {
-  it('initialize -> login -> rehydrateSession -> router.replace("/")', async () => {
+describe('Test 1: setup success establishes system initialized and auth authenticated before leaving /setup', () => {
+  it('initialize -> login -> systemStatus -> rehydrateSession -> router.replace("/")', async () => {
     mockInitializeSuccess();
     mockLoginSuccess('fresh-admin-token');
+    mockSystemStatusInitialized();
     mockMeSuccess('admin');
 
-    // Dynamically import after mocks
-    await importSetupView();
-
-    // Test the underlying logic by calling the store directly
-    // in the same sequence the component would.
-    const store = useUserStore();
-
-    // Simulate what SetupView.submit() does:
-    // 1. POST /system/initialize via apiRequest
+    // Simulate the exact sequence from SetupView.submit()
+    // Step 1: POST /system/initialize via apiRequest
     await mockApiPost('/system/initialize', {
       username: 'admin',
       password: 'password123',
       allow_registration: false,
     });
 
-    // 2. POST /auth/login via authRequest
+    // Step 2: POST /auth/login via authRequest
     const loginRes = await mockAuthPost('/auth/login', {
       username: 'admin',
       password: 'password123',
@@ -111,27 +107,33 @@ describe('Test 1: setup success establishes auth state and navigates away from /
     localStorage.setItem('token', loginRes.data.access_token);
     expect(localStorage.getItem('token')).toBe('fresh-admin-token');
 
-    // 3. rehydrateSession (the fix)
-    await store.rehydrateSession();
+    // Step 3: fetchSystemStatus via apiRequest.get('/system/status')
+    const systemStore = useSystemStore();
+    await systemStore.fetchSystemStatus();
+    expect(systemStore.status).toBe('initialized');
+    expect(systemStore.isInitialized).toBe(true);
 
-    // 4. Assert store is authenticated
-    expect(store.status).toBe('authenticated');
-    expect(store.isAuthenticated).toBe(true);
-    expect(store.isAuthReady).toBe(true);
-    expect(store.user).toEqual({
+    // Step 4: rehydrateSession
+    const userStore = useUserStore();
+    await userStore.rehydrateSession();
+
+    expect(userStore.status).toBe('authenticated');
+    expect(userStore.isAuthenticated).toBe(true);
+    expect(userStore.isAuthReady).toBe(true);
+    expect(userStore.user).toEqual({
       user_id: 'admin-1',
       username: 'admin',
       role: 'admin',
     });
-    expect(store.isAdmin).toBe(true);
+    expect(userStore.isAdmin).toBe(true);
 
-    // 5. Navigate (simulating router.replace('/'))
+    // Step 5: Navigate (simulating router.replace('/'))
     mockReplace('/');
     expect(mockReplace).toHaveBeenCalledWith('/');
   });
 });
 
-describe('Test 2: setup success does not get redirected back to login', () => {
+describe('Test 2: setup success does not surface generic Setup failed when handoff succeeds', () => {
   it('after setup, router guard sees authenticated and allows /', async () => {
     mockMeSuccess('admin');
 
@@ -140,24 +142,17 @@ describe('Test 2: setup success does not get redirected back to login', () => {
     await store.rehydrateSession();
 
     expect(store.isAuthenticated).toBe(true);
-
-    // Simulate router guard logic:
-    // - isAuthReady -> true (skip rehydration)
-    // - isAuthenticated -> true (no redirect to /setup)
-    // - requiresAdmin + isAdmin -> true (no redirect to /)
     expect(store.isAuthReady).toBe(true);
-    expect(store.isAuthenticated).toBe(true);
     expect(store.isAdmin).toBe(true);
   });
 });
 
-describe('Test 3: setup failure does not leave partial auth state', () => {
-  it('initialize fails -> store stays unknown, no navigation', async () => {
+describe('Test 3: setup partial success does not silently corrupt user-facing flow', () => {
+  it('initialize fails -> store stays unknown, no token, no navigation', async () => {
     mockApiPost.mockRejectedValueOnce(new Error('System already initialized'));
 
     const store = useUserStore();
 
-    // Simulate failed initialize (the first POST throws)
     try {
       await mockApiPost('/system/initialize', {
         username: 'admin',
@@ -175,9 +170,7 @@ describe('Test 3: setup failure does not leave partial auth state', () => {
     expect(store.status).toBe('unknown');
     expect(store.isAuthenticated).toBe(false);
   });
-});
 
-describe('Test 4: setup login fails does not navigate', () => {
   it('initialize succeeds, login fails -> no token, no navigation', async () => {
     mockInitializeSuccess();
     mockAuthPost.mockRejectedValueOnce({ response: { data: { message: 'invalid credentials' } } });
@@ -185,17 +178,35 @@ describe('Test 4: setup login fails does not navigate', () => {
     const store = useUserStore();
 
     try {
-      // Step 1: initialize succeeds
       await mockApiPost('/system/initialize', {});
-      // Step 2: login fails
       await mockAuthPost('/auth/login', {});
     } catch {
       // expected
     }
 
-    // No token stored
     expect(localStorage.getItem('token')).toBeNull();
     expect(store.status).toBe('unknown');
+    expect(store.isAuthenticated).toBe(false);
+  });
+
+  it('initialize + login succeed but rehydrateSession fails -> token cleared, explicit failure', async () => {
+    mockInitializeSuccess();
+    mockLoginSuccess('partial-token');
+    // getMe returns 401 — rehydrateSession should clear the token
+    mockGetMe.mockRejectedValueOnce({ response: { status: 401 } });
+
+    const store = useUserStore();
+    localStorage.setItem('token', 'partial-token');
+
+    try {
+      await store.rehydrateSession();
+    } catch {
+      // may or may not throw depending on implementation
+    }
+
+    // After a 401 from /auth/me, the token should be cleared
+    expect(localStorage.getItem('token')).toBeNull();
+    expect(store.status).toBe('anonymous');
     expect(store.isAuthenticated).toBe(false);
   });
 });

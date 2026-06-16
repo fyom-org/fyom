@@ -38,7 +38,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { apiRequest } from '@/api/request';
+import { apiRequest, authRequest } from '@/api/request';
 import { useUserStore } from '@/stores/user';
 import { useSystemStore } from '@/stores/system';
 
@@ -63,14 +63,14 @@ async function submit() {
   loading.value = true;
   try {
     // Step 1: Initialize system (create admin account)
-    await request.post('/system/initialize', {
+    await apiRequest.post('/system/initialize', {
       username: username.value,
       password: password.value,
       allow_registration: allowRegistration.value,
     });
 
     // Step 2: Login to get token
-    const loginRes = await request.post('/auth/login', {
+    const loginRes = await authRequest.post('/auth/login', {
       username: username.value,
       password: password.value,
     });
