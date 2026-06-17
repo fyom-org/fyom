@@ -72,9 +72,16 @@ func IsUnrestrictedLibraryAccess(r *http.Request) bool {
 }
 
 // IsLibraryAllowed reports whether the request can access the given library ID.
+// IsLibraryAllowed reports whether the request can access the given library ID.
 func IsLibraryAllowed(r *http.Request, libraryID string) bool {
 	if libraryID == "" {
 		return false
+	}
+
+	// A valid presigned URL authorizes direct access to the signed media
+	// resource path. Presigned media URLs are path-bound and time-limited.
+	if IsPresignedAccess(r) {
+		return true
 	}
 
 	allowedIDs := GetAllowedLibraryIDs(r)
