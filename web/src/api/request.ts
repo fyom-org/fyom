@@ -6,6 +6,7 @@ import axios, {
   type InternalAxiosRequestConfig,
 } from 'axios';
 import { getApiBaseUrl } from '@/lib/runtime/tauri';
+import { getCurrentLocale } from '@/composables/useLocale';
 
 export type AuthFailureMode =
   /**
@@ -109,6 +110,48 @@ function attachAuthInterceptor(instance: AxiosInstance): void {
       }
 
       setAuthorizationHeader(config, token);
+
+      return config;
+    },
+    (error: unknown) => Promise.reject(error)
+  );
+}
+
+/**
+ * Attach `Accept-Language` header so the backend can locale-aware log,
+ * validate, or (Phase 3+) select error_code metadata.
+ *
+ * The backend does NOT translate messages today; the header is a forward-
+ * compatibility signal. Reading the locale at request time (not at module
+ * load) ensures locale switches mid-session propagate to subsequent calls
+ * without re-creating the axios instance.
+ */
+function attachAcceptLanguageInterceptor(instance: AxiosInstance): void {
+  instance.interceptors.request.use(
+    (config: InternalAxiosRequestConfig) => {
+      const locale = getCurrentLocale();
+
+      if (!config.headers) {
+        // `Accept-Language` is not a known AxiosHeaders property, so cast
+        // through `unknown` to satisfy the strict AxiosRequestHeaders type.
+        config.headers = {
+          'Accept-Language': locale,
+        } as unknown as InternalAxiosRequestConfig['headers'];
+
+        return config;
+      }
+
+      const headersWithSet = config.headers as {
+        set?: (name: string, value: string) => void;
+        'Accept-Language'?: string;
+      };
+
+      if (typeof headersWithSet.set === 'function') {
+        headersWithSet.set('Accept-Language', locale);
+        return config;
+      }
+
+      headersWithSet['Accept-Language'] = locale;
 
       return config;
     },
@@ -246,6 +289,9 @@ function isBrowser(): boolean {
 
 attachAuthInterceptor(apiRequest);
 attachAuthInterceptor(authRequest);
+
+attachAcceptLanguageInterceptor(apiRequest);
+attachAcceptLanguageInterceptor(authRequest);
 
 attachAuthFailurePolicyInterceptor(apiRequest);
 attachAuthFailurePolicyInterceptor(authRequest);

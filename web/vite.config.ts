@@ -124,6 +124,10 @@ export default defineConfig(({ mode }) => {
               return 'axios';
             }
 
+            if (id.includes('vue-i18n') || id.includes('@intlify')) {
+              return 'i18n';
+            }
+
             return 'vendor';
           },
         },
