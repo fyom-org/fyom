@@ -62,7 +62,7 @@ async function loadSettings(): Promise<void> {
     const status = err?.response?.status;
 
     if (status === 401 || status === 403) {
-      // 由 router / store 统一处理，不污染控制台
+      // Handled centrally by router / store; do not pollute the console
       return;
     }
 

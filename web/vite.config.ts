@@ -12,7 +12,7 @@ export default defineConfig(({ mode }) => {
     plugins: [
       vue(),
 
-      // 生产环境启用压缩
+      // Enable compression in production
       isProd &&
         compression({
           algorithm: 'gzip',
@@ -21,7 +21,7 @@ export default defineConfig(({ mode }) => {
           deleteOriginFile: false,
         }),
 
-      // 生产环境启用 bundle 分析
+      // Enable bundle analysis in production
       isProd &&
         visualizer({
           filename: 'dist/stats.html',
@@ -72,39 +72,39 @@ export default defineConfig(({ mode }) => {
 
     // Build config
     build: {
-      // 生产环境不生成 source map
+      // Disable source maps in production
       sourcemap: false,
 
-      // 目标浏览器
+      // Target browsers
       target: 'esnext',
 
-      // 使用 esbuild 压缩
+      // Use esbuild for minification
       minify: 'esbuild',
 
-      // 移除调试相关
+      // Strip debug primitives (console, debugger)
       esbuild: {
         drop: ['console', 'debugger'],
         legalComments: 'none',
       },
 
-      // 报告压缩大小
+      // Report compressed size
       reportCompressedSize: true,
 
-      // 禁用 module preload polyfill
+      // Disable module preload polyfill
       modulePreload: {
         polyfill: false,
       },
 
-      // CSS 代码分割
+      // CSS code splitting
       cssCodeSplit: true,
 
-      // 内联资源大小限制
+      // Inline asset size limit
       assetsInlineLimit: 4096,
 
-      // Rollup 配置
+      // Rollup configuration
       rollupOptions: {
         output: {
-          // 手动分割依赖
+          // Manually split dependencies
           manualChunks(id) {
             if (!id.includes('node_modules')) return;
 
