@@ -19,6 +19,7 @@ export type JobStatusValue =
   | 'pending'
   | 'running'
   | 'processing'
+  | 'done'
   | 'completed'
   | 'success'
   | 'failed'
@@ -169,7 +170,6 @@ export type TryTriggerImportResult = LibraryImportStarted | LibraryImportConflic
 export interface StartLibraryRefreshOptions {
   /**
    * Use the admin refresh configuration endpoint.
-   * Admin LibrariesView should use this mode.
    */
   admin?: boolean;
 }
@@ -222,6 +222,14 @@ function unwrapEnvelope<T>(value: ApiEnvelope<T> | T): T {
   return value as T;
 }
 
+function unwrapUnknownEnvelope(value: unknown): unknown {
+  if (isRecord(value) && 'data' in value) {
+    return value.data;
+  }
+
+  return value;
+}
+
 function normalizeImportResponse(value: unknown): ImportResponse {
   const data = unwrapUnknownEnvelope(value);
 
@@ -238,14 +246,6 @@ function normalizeImportResponse(value: unknown): ImportResponse {
     job_id: String(raw.job_id || raw.id || ''),
     status: String(raw.status || 'queued'),
   };
-}
-
-function unwrapUnknownEnvelope(value: unknown): unknown {
-  if (isRecord(value) && 'data' in value) {
-    return value.data;
-  }
-
-  return value;
 }
 
 function normalizeMediaListResponse(value: unknown): MediaListResponse {
@@ -285,6 +285,39 @@ function normalizeProgress(value: unknown): MediaProgress | null {
     finished: Boolean(data.finished),
     updated_at: typeof data.updated_at === 'string' ? data.updated_at : undefined,
   };
+}
+
+function normalizeJobStatus(value: unknown, fallbackId = ''): JobStatus {
+  const data = unwrapUnknownEnvelope(value);
+
+  if (!isRecord(data)) {
+    return {
+      id: fallbackId,
+      status: 'unknown',
+      total_items: 0,
+      done_items: 0,
+    };
+  }
+
+  return {
+    id: typeof data.id === 'string' ? data.id : fallbackId,
+    source_path: typeof data.source_path === 'string' ? data.source_path : undefined,
+    status: typeof data.status === 'string' ? data.status : 'unknown',
+    total_items: toOptionalNumber(data.total_items),
+    done_items: toOptionalNumber(data.done_items),
+    progress: toOptionalNumber(data.progress),
+    message: typeof data.message === 'string' ? data.message : undefined,
+    error_msg: typeof data.error_msg === 'string' ? data.error_msg : undefined,
+    error: typeof data.error === 'string' ? data.error : undefined,
+    created_at: typeof data.created_at === 'string' ? data.created_at : undefined,
+    updated_at: typeof data.updated_at === 'string' ? data.updated_at : undefined,
+  };
+}
+
+function toOptionalNumber(value: unknown): number | undefined {
+  const numberValue = Number(value);
+
+  return Number.isFinite(numberValue) ? numberValue : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -351,7 +384,8 @@ export function getImportConflictReason(error: unknown): LibraryImportConflictRe
   if (
     message.includes('already in progress') ||
     message.includes('in progress') ||
-    message.includes('already running')
+    message.includes('already running') ||
+    message.includes('already refreshing')
   ) {
     return 'already_in_progress';
   }
@@ -361,6 +395,22 @@ export function getImportConflictReason(error: unknown): LibraryImportConflictRe
 
 export function isImportAlreadyInProgress(error: unknown): boolean {
   return getImportConflictReason(error) === 'already_in_progress';
+}
+
+export function isTerminalJobStatus(status: JobStatusValue | undefined): boolean {
+  if (!status) return false;
+
+  const normalized = status.toLowerCase();
+
+  return ['done', 'completed', 'success', 'failed', 'error', 'cancelled'].includes(normalized);
+}
+
+export function isFailedJobStatus(status: JobStatusValue | undefined): boolean {
+  if (!status) return false;
+
+  const normalized = status.toLowerCase();
+
+  return ['failed', 'error', 'cancelled'].includes(normalized);
 }
 
 /* =========================
@@ -434,11 +484,14 @@ export async function tryStartLibraryImport(
 }
 
 export async function getJobStatus(jobId: string): Promise<JobStatus> {
-  return unwrap(
-    authRequest.get<ApiEnvelope<JobStatus>>(`/library/jobs/${encodeURIComponent(jobId)}`, {
+  const response = await authRequest.get<ApiEnvelope<JobStatus>>(
+    `/library/jobs/${encodeURIComponent(jobId)}`,
+    {
       authFailureMode: 'soft',
-    })
+    }
   );
+
+  return normalizeJobStatus(response.data, jobId);
 }
 
 /**
@@ -449,11 +502,14 @@ export async function getJobStatus(jobId: string): Promise<JobStatus> {
  */
 export async function getJobStatusSilent(jobId: string): Promise<JobStatus | null> {
   try {
-    return await unwrap(
-      authRequest.get<ApiEnvelope<JobStatus>>(`/library/jobs/${encodeURIComponent(jobId)}`, {
+    const response = await authRequest.get<ApiEnvelope<JobStatus>>(
+      `/library/jobs/${encodeURIComponent(jobId)}`,
+      {
         authFailureMode: 'silent',
-      })
+      }
     );
+
+    return normalizeJobStatus(response.data, jobId);
   } catch (error: unknown) {
     const status = getHttpStatus(error);
 
@@ -493,12 +549,6 @@ export async function getAdminLibraryRefreshConfig(id: string): Promise<LibraryR
   );
 }
 
-/**
- * Start a refresh by obtaining refresh config and creating an import job.
- *
- * This throws on 409. Use tryStartLibraryRefresh() if the caller wants a typed
- * conflict result instead of an exception.
- */
 export async function startLibraryRefresh(
   id: string,
   options: StartLibraryRefreshOptions = {}
@@ -518,21 +568,12 @@ export async function startLibraryRefresh(
   };
 }
 
-/**
- * Admin LibrariesView should prefer this helper.
- */
 export async function startAdminLibraryRefresh(id: string): Promise<StartLibraryRefreshStarted> {
   return startLibraryRefresh(id, {
     admin: true,
   });
 }
 
-/**
- * Same as startLibraryRefresh(), but returns a typed result for 409 Conflict.
- *
- * This handles backend responses such as:
- * "refresh already in progress for this library"
- */
 export async function tryStartLibraryRefresh(
   id: string,
   options: StartLibraryRefreshOptions = {}
