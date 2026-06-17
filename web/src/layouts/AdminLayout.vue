@@ -1,8 +1,8 @@
 <template>
   <div class="admin-layout">
-    <aside class="admin-sidebar" aria-label="Admin navigation">
+    <aside class="admin-sidebar" :aria-label="$t('nav.adminNavigation')">
       <div class="brand">
-        <router-link to="/admin/libraries" class="brand-link"> fyom admin </router-link>
+        <router-link to="/admin/libraries" class="brand-link"> {{ $t('nav.fyomAdmin') }} </router-link>
       </div>
 
       <nav class="admin-nav">
@@ -12,7 +12,7 @@
       </nav>
 
       <div class="sidebar-bottom">
-        <router-link to="/" class="nav-link back-link"> Back to Library </router-link>
+        <router-link to="/" class="nav-link back-link"> {{ $t('nav.backToLibrary') }} </router-link>
 
         <div class="user-info">
           <div class="user-meta">
@@ -25,7 +25,7 @@
           </div>
 
           <button type="button" class="logout-btn" :disabled="loggingOut" @click="handleLogout">
-            {{ loggingOut ? 'Signing out...' : 'Logout' }}
+            {{ loggingOut ? $t('nav.signingOut') : $t('nav.logout') }}
           </button>
         </div>
       </div>
@@ -40,6 +40,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { useUserStore } from '@/stores/user';
 
 interface AdminNavItem {
@@ -49,42 +50,43 @@ interface AdminNavItem {
 
 const router = useRouter();
 const userStore = useUserStore();
+const { t } = useI18n();
 
 const loggingOut = ref(false);
 
-const navItems: AdminNavItem[] = [
+const navItems = computed<AdminNavItem[]>(() => [
   {
-    label: 'Libraries',
+    label: t('nav.libraries'),
     to: '/admin/libraries',
   },
   {
-    label: 'Access Control',
+    label: t('nav.accessControl'),
     to: '/admin/permissions',
   },
   {
-    label: 'Media',
+    label: t('nav.media'),
     to: '/admin/media',
   },
   {
-    label: 'Missing Items',
+    label: t('nav.missingItems'),
     to: '/admin/missing',
   },
   {
-    label: 'Providers',
+    label: t('nav.providers'),
     to: '/admin/providers',
   },
   {
-    label: 'System',
+    label: t('nav.system'),
     to: '/admin/system',
   },
   {
-    label: 'Settings',
+    label: t('nav.settings'),
     to: '/admin/settings',
   },
-];
+]);
 
 const username = computed(() => {
-  return userStore.user?.username?.trim() || 'Admin';
+  return userStore.user?.username?.trim() || t('nav.admin');
 });
 
 const roleLabel = computed(() => {

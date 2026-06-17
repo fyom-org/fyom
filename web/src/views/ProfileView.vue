@@ -2,34 +2,34 @@
   <main class="profile-view">
     <header class="page-header">
       <div>
-        <h2 class="page-title">Profile</h2>
-        <p class="page-subtitle">Manage your account, preferences, and password.</p>
+        <h2 class="page-title">{{ $t('profile.title') }}</h2>
+        <p class="page-subtitle">{{ $t('profile.subtitle') }}</p>
       </div>
     </header>
 
     <section v-if="loading" class="card">
-      <p class="hint">Loading profile...</p>
+      <p class="hint">{{ $t('profile.loadingProfile') }}</p>
     </section>
 
     <section v-else-if="loadError" class="card error-card" role="alert">
       <div>
-        <p class="error-title">Unable to load profile</p>
+        <p class="error-title">{{ $t('profile.unableToLoad') }}</p>
         <p class="error">{{ loadError }}</p>
       </div>
 
-      <button type="button" class="secondary-btn" @click="loadProfile">Retry</button>
+      <button type="button" class="secondary-btn" @click="loadProfile">{{ $t('common.retry') }}</button>
     </section>
 
     <section v-else-if="currentUser" class="card">
-      <h3>Account</h3>
+      <h3>{{ $t('profile.account') }}</h3>
 
       <div class="info-row">
-        <span class="label">Username</span>
+        <span class="label">{{ $t('auth.username') }}</span>
         <span class="value">{{ currentUser.username }}</span>
       </div>
 
       <div class="info-row">
-        <span class="label">Role</span>
+        <span class="label">{{ $t('profile.role') }}</span>
 
         <button
           v-if="canAccessAdmin"
@@ -46,19 +46,19 @@
       </div>
 
       <div v-if="currentUser.password_change_required" class="info-row">
-        <span class="label">Password Status</span>
-        <span class="warning-text">Password change required</span>
+        <span class="label">{{ $t('profile.passwordStatus') }}</span>
+        <span class="warning-text">{{ $t('profile.passwordChangeRequired') }}</span>
       </div>
     </section>
 
     <section class="card">
-      <h3>Preferences</h3>
+      <h3>{{ $t('profile.preferences') }}</h3>
 
       <div class="pref-row">
         <div>
-          <span class="pref-label">Default expand seasons</span>
+          <span class="pref-label">{{ $t('profile.defaultExpandSeasons') }}</span>
           <p class="hint">
-            When enabled, all season groups in TV show pages are expanded by default.
+            {{ $t('profile.defaultExpandSeasonsHint') }}
           </p>
         </div>
 
@@ -73,21 +73,32 @@
         </label>
       </div>
 
+      <div class="pref-row language-pref">
+        <div>
+          <span class="pref-label">{{ $t('profile.interfaceLanguage') }}</span>
+          <p class="hint">
+            {{ $t('profile.interfaceLanguageHint') }}
+          </p>
+        </div>
+
+        <LanguageSwitcher variant="full" />
+      </div>
+
       <p v-if="prefMessage" class="msg">
         {{ prefMessage }}
       </p>
     </section>
 
     <section class="card">
-      <h3>Change Password</h3>
+      <h3>{{ $t('profile.changePassword') }}</h3>
 
       <p v-if="currentUser?.password_change_required" class="warning-box">
-        Your account requires a password change before continuing.
+        {{ $t('profile.passwordChangeWarning') }}
       </p>
 
       <form class="password-form" novalidate @submit.prevent="submitPasswordChange">
         <div class="field">
-          <label for="old-password">Current Password</label>
+          <label for="old-password">{{ $t('profile.currentPassword') }}</label>
 
           <div class="password-wrap">
             <input
@@ -107,10 +118,10 @@
               type="button"
               class="password-toggle"
               :disabled="passwordSaving || oldPassword.length === 0"
-              :aria-label="showOldPassword ? 'Hide current password' : 'Show current password'"
+              :aria-label="showOldPassword ? $t('profile.hideCurrentPassword') : $t('profile.showCurrentPassword')"
               @click="showOldPassword = !showOldPassword"
             >
-              {{ showOldPassword ? 'Hide' : 'Show' }}
+              {{ showOldPassword ? $t('auth.hide') : $t('auth.show') }}
             </button>
           </div>
 
@@ -120,7 +131,7 @@
         </div>
 
         <div class="field">
-          <label for="new-password">New Password</label>
+          <label for="new-password">{{ $t('auth.newPassword') }}</label>
 
           <div class="password-wrap">
             <input
@@ -140,10 +151,10 @@
               type="button"
               class="password-toggle"
               :disabled="passwordSaving || newPassword.length === 0"
-              :aria-label="showNewPassword ? 'Hide new password' : 'Show new password'"
+              :aria-label="showNewPassword ? $t('auth.forceChangeHideNewPassword') : $t('auth.forceChangeShowNewPassword')"
               @click="showNewPassword = !showNewPassword"
             >
-              {{ showNewPassword ? 'Hide' : 'Show' }}
+              {{ showNewPassword ? $t('auth.hide') : $t('auth.show') }}
             </button>
           </div>
 
@@ -153,7 +164,7 @@
         </div>
 
         <div class="field">
-          <label for="confirm-password">Confirm New Password</label>
+          <label for="confirm-password">{{ $t('auth.confirmNewPassword') }}</label>
 
           <div class="password-wrap">
             <input
@@ -174,11 +185,11 @@
               class="password-toggle"
               :disabled="passwordSaving || confirmPassword.length === 0"
               :aria-label="
-                showConfirmPassword ? 'Hide password confirmation' : 'Show password confirmation'
+                showConfirmPassword ? $t('auth.forceChangeHideConfirm') : $t('auth.forceChangeShowConfirm')
               "
               @click="showConfirmPassword = !showConfirmPassword"
             >
-              {{ showConfirmPassword ? 'Hide' : 'Show' }}
+              {{ showConfirmPassword ? $t('auth.hide') : $t('auth.show') }}
             </button>
           </div>
 
@@ -196,19 +207,19 @@
         </p>
 
         <button type="submit" class="primary-btn" :disabled="passwordSaving || !canSubmitPassword">
-          {{ passwordSaving ? 'Updating...' : 'Update Password' }}
+          {{ passwordSaving ? $t('profile.updating') : $t('profile.updatePassword') }}
         </button>
       </form>
     </section>
 
     <section class="card danger-card">
       <div>
-        <h3>Session</h3>
-        <p class="hint">Sign out of this device.</p>
+        <h3>{{ $t('profile.session') }}</h3>
+        <p class="hint">{{ $t('profile.signOutDevice') }}</p>
       </div>
 
       <button type="button" class="btn-logout" :disabled="loggingOut" @click="handleLogout">
-        {{ loggingOut ? 'Signing out...' : 'Logout' }}
+        {{ loggingOut ? $t('profile.signingOut') : $t('profile.logout') }}
       </button>
     </section>
   </main>
@@ -217,8 +228,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import type { User } from '@/api/auth';
 import { useUserStore } from '@/stores/user';
+import { getSafeApiErrorMessage, isUnauthorizedOrForbidden } from '@/lib/api/errors';
+import LanguageSwitcher from '@/components/LanguageSwitcher.vue';
 
 type PasswordField = 'oldPassword' | 'newPassword' | 'confirmPassword';
 
@@ -227,6 +241,7 @@ const MIN_PASSWORD_LENGTH = 6;
 
 const router = useRouter();
 const userStore = useUserStore();
+const { t } = useI18n();
 
 const loading = ref(false);
 const loadError = ref('');
@@ -291,9 +306,9 @@ function saveSeasonsPref(): void {
   try {
     window.localStorage.setItem(SEASONS_COLLAPSED_KEY, seasonsExpanded.value ? 'false' : 'true');
 
-    prefMessage.value = 'Preference saved.';
+    prefMessage.value = t('profile.preferenceSaved');
   } catch {
-    prefMessage.value = 'Unable to save preference in this browser.';
+    prefMessage.value = t('profile.preferenceSaveFailed');
   } finally {
     prefSaving.value = false;
   }
@@ -312,13 +327,13 @@ async function loadProfile(): Promise<void> {
     const verified = await userStore.verifySession();
 
     if (!verified) {
-      loadError.value = 'Unable to verify your session.';
+      loadError.value = t('profile.sessionVerifyFailed');
       return;
     }
 
     profile.value = userStore.user;
   } catch (unknownError) {
-    loadError.value = getUserFacingErrorMessage(unknownError, 'Failed to load profile.');
+    loadError.value = getSafeApiErrorMessage(unknownError, 'profile.loadFailed');
   } finally {
     loading.value = false;
   }
@@ -339,19 +354,17 @@ async function submitPasswordChange(): Promise<void> {
     await userStore.updatePassword(oldPassword.value, newPassword.value);
 
     profile.value = userStore.user;
-    passwordMessage.value = 'Password updated.';
+    passwordMessage.value = t('profile.passwordUpdated');
 
     resetPasswordForm();
   } catch (unknownError) {
-    const status = getHttpStatus(unknownError);
-
-    if (status === 401 || status === 403) {
+    if (isUnauthorizedOrForbidden(unknownError)) {
       void userStore.verifySession();
-      passwordError.value = 'Unable to update password because the session could not be verified.';
+      passwordError.value = t('profile.passwordUpdateSessionError');
       return;
     }
 
-    passwordError.value = getUserFacingErrorMessage(unknownError, 'Failed to update password.');
+    passwordError.value = getSafeApiErrorMessage(unknownError, 'errors.generic');
   } finally {
     passwordSaving.value = false;
   }
@@ -363,28 +376,28 @@ function validatePasswordForm(): boolean {
   const passwordChangeRequired = currentUser.value?.password_change_required === true;
 
   if (!passwordChangeRequired && !oldPassword.value) {
-    fieldErrors.oldPassword = 'Current password is required.';
+    fieldErrors.oldPassword = t('profile.currentPasswordRequired');
     valid = false;
   }
 
   if (!newPassword.value) {
-    fieldErrors.newPassword = 'New password is required.';
+    fieldErrors.newPassword = t('auth.newPasswordRequired');
     valid = false;
   } else if (newPassword.value.length < MIN_PASSWORD_LENGTH) {
-    fieldErrors.newPassword = `New password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
+    fieldErrors.newPassword = t('profile.newPasswordMinLength', { n: MIN_PASSWORD_LENGTH });
     valid = false;
   }
 
   if (!confirmPassword.value) {
-    fieldErrors.confirmPassword = 'Please confirm your new password.';
+    fieldErrors.confirmPassword = t('auth.forceChangeConfirmRequired');
     valid = false;
   } else if (newPassword.value !== confirmPassword.value) {
-    fieldErrors.confirmPassword = 'Passwords do not match.';
+    fieldErrors.confirmPassword = t('auth.passwordMismatch');
     valid = false;
   }
 
   if (oldPassword.value && oldPassword.value === newPassword.value) {
-    fieldErrors.newPassword = 'New password must be different from the current password.';
+    fieldErrors.newPassword = t('profile.newPasswordMustDiffer');
     valid = false;
   }
 
@@ -438,81 +451,6 @@ function navigateToAdmin(): void {
   if (!canAccessAdmin.value) return;
 
   void router.push('/admin/libraries');
-}
-
-function getUserFacingErrorMessage(unknownError: unknown, fallback: string): string {
-  const message = extractErrorMessage(unknownError);
-
-  if (message && isSafeUserFacingMessage(message)) {
-    return message;
-  }
-
-  return fallback;
-}
-
-function extractErrorMessage(unknownError: unknown): string {
-  if (isRecord(unknownError)) {
-    const response = unknownError.response;
-
-    if (isRecord(response)) {
-      const data = response.data;
-
-      if (isRecord(data)) {
-        const message = data.message || data.error || data.detail;
-
-        if (typeof message === 'string' && message.trim()) {
-          return message.trim();
-        }
-      }
-
-      if (typeof data === 'string' && data.trim()) {
-        return data.trim();
-      }
-    }
-
-    const message = unknownError.message;
-
-    if (typeof message === 'string' && message.trim()) {
-      return message.trim();
-    }
-  }
-
-  return '';
-}
-
-function getHttpStatus(unknownError: unknown): number | undefined {
-  if (!isRecord(unknownError)) return undefined;
-
-  const response = unknownError.response;
-
-  if (!isRecord(response)) return undefined;
-
-  const status = response.status;
-
-  return typeof status === 'number' ? status : undefined;
-}
-
-function isSafeUserFacingMessage(message: string): boolean {
-  const normalized = message.toLowerCase();
-
-  const unsafeFragments = [
-    'sql',
-    'stack',
-    'trace',
-    'exception',
-    'internal server',
-    'jwt',
-    'token',
-    'undefined',
-    'null',
-    'request failed with status code',
-  ];
-
-  return !unsafeFragments.some((fragment) => normalized.includes(fragment));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 </script>
 
@@ -632,6 +570,12 @@ h3 {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.language-pref {
+  padding-top: 14px;
+  margin-top: 14px;
+  border-top: 1px solid rgb(255 255 255 / 5%);
 }
 
 .pref-label {

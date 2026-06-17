@@ -34,7 +34,7 @@
         class="job-action-btn"
         @click="emitUnavailableReload"
       >
-        Reload libraries
+        {{ $t('admin.libraries.reloadLibraries') }}
       </button>
 
       <button
@@ -44,7 +44,7 @@
         :disabled="checking"
         @click="fetchStatusNow"
       >
-        {{ checking ? 'Checking...' : 'Check now' }}
+        {{ checking ? $t('admin.libraries.checking') : $t('admin.libraries.checkNow') }}
       </button>
     </div>
   </div>
@@ -52,6 +52,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import {
   getApiErrorMessage,
   getJobStatusSilent,
@@ -80,6 +81,8 @@ const emit = defineEmits<{
   (event: 'reload-requested'): void;
 }>();
 
+const { t } = useI18n();
+
 const jobStatus = ref<JobStatusType>(createInitialJob(props.jobId));
 const jobError = ref('');
 const statusUnavailable = ref(false);
@@ -106,7 +109,7 @@ const statusClass = computed(() => {
 
 const statusMessage = computed(() => {
   if (statusUnavailable.value) {
-    return 'Refresh started, but job status is unavailable. New media may still appear after the scan completes.';
+    return t('admin.libraries.refreshNoJobStatus');
   }
 
   if (jobStatus.value.message) {
@@ -116,26 +119,26 @@ const statusMessage = computed(() => {
   const status = jobStatus.value.status.toLowerCase();
 
   if (status === 'queued' || status === 'pending') {
-    return 'Refresh job is waiting to start.';
+    return t('admin.libraries.refreshQueued');
   }
 
   if (status === 'running' || status === 'processing') {
-    return 'Refresh job is running.';
+    return t('admin.libraries.refreshRunning');
   }
 
   if (status === 'done' || status === 'completed' || status === 'success') {
-    return 'Refresh completed.';
+    return t('admin.libraries.refreshCompleted');
   }
 
   if (status === 'failed' || status === 'error') {
-    return 'Refresh failed.';
+    return t('admin.libraries.refreshFailed');
   }
 
   if (status === 'cancelled') {
-    return 'Refresh was cancelled.';
+    return t('admin.libraries.refreshCancelled');
   }
 
-  return 'Refresh status unknown.';
+  return t('admin.libraries.refreshUnknown');
 });
 
 const hasProgress = computed(() => {
@@ -201,7 +204,7 @@ function createInitialJob(jobId: string): JobStatusType {
     status: 'pending',
     total_items: 0,
     done_items: 0,
-    message: 'Refresh job has been created.',
+    message: t('admin.libraries.refreshJobCreated'),
   };
 }
 
@@ -256,7 +259,7 @@ async function fetchStatus(currentGeneration: number): Promise<void> {
       jobStatus.value = {
         ...jobStatus.value,
         status: 'unknown',
-        message: 'Refresh started, but this client is not authorized to read job status.',
+        message: t('admin.libraries.refreshNoJobStatus'),
       };
 
       stopPolling();
@@ -273,7 +276,7 @@ async function fetchStatus(currentGeneration: number): Promise<void> {
 
       if (isFailedJobStatus(nextStatus.status)) {
         jobError.value =
-          nextStatus.error_msg || nextStatus.error || 'Refresh job ended with an error.';
+          nextStatus.error_msg || nextStatus.error || t('admin.libraries.jobEndedError');
         emit('failed', nextStatus);
       } else {
         emit('completed', nextStatus);
@@ -290,7 +293,7 @@ async function fetchStatus(currentGeneration: number): Promise<void> {
 
     jobError.value = getApiErrorMessage(
       error,
-      'Failed to read job status. The scan may still be running.'
+      t('admin.libraries.jobStatusReadFailed')
     );
 
     stopPolling();

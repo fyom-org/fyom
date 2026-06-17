@@ -8,18 +8,17 @@
       aria-describedby="modal-description"
     >
       <header class="modal-header">
-        <h2 id="modal-title">Password Change Required</h2>
+        <h2 id="modal-title">{{ $t('auth.forceChangeTitle') }}</h2>
       </header>
 
       <div class="modal-body">
         <p id="modal-description" class="modal-message">
-          You must change your password before continuing. This is required because your account was
-          created with a temporary password.
+          {{ $t('auth.forceChangeBody') }}
         </p>
 
         <form class="password-form" novalidate @submit.prevent="handleSubmit">
           <div class="field">
-            <label for="new-password">New Password</label>
+            <label for="new-password">{{ $t('auth.forceChangeNewPassword') }}</label>
 
             <div class="password-wrap">
               <input
@@ -41,10 +40,12 @@
                 type="button"
                 class="password-toggle"
                 :disabled="loading || newPassword.length === 0"
-                :aria-label="showNewPassword ? 'Hide new password' : 'Show new password'"
+                :aria-label="
+                  showNewPassword ? $t('auth.forceChangeHideNewPassword') : $t('auth.forceChangeShowNewPassword')
+                "
                 @click="showNewPassword = !showNewPassword"
               >
-                {{ showNewPassword ? 'Hide' : 'Show' }}
+                {{ showNewPassword ? $t('auth.hide') : $t('auth.show') }}
               </button>
             </div>
 
@@ -54,7 +55,7 @@
           </div>
 
           <div class="field">
-            <label for="confirm-password">Confirm New Password</label>
+            <label for="confirm-password">{{ $t('auth.forceChangeConfirm') }}</label>
 
             <div class="password-wrap">
               <input
@@ -78,11 +79,13 @@
                 class="password-toggle"
                 :disabled="loading || confirmPassword.length === 0"
                 :aria-label="
-                  showConfirmPassword ? 'Hide password confirmation' : 'Show password confirmation'
+                  showConfirmPassword
+                    ? $t('auth.forceChangeHideConfirm')
+                    : $t('auth.forceChangeShowConfirm')
                 "
                 @click="showConfirmPassword = !showConfirmPassword"
               >
-                {{ showConfirmPassword ? 'Hide' : 'Show' }}
+                {{ showConfirmPassword ? $t('auth.hide') : $t('auth.show') }}
               </button>
             </div>
 
@@ -97,7 +100,7 @@
 
           <button type="submit" class="submit-btn" :disabled="loading || !canSubmit">
             <span v-if="loading" class="spinner" aria-hidden="true"></span>
-            <span>{{ loading ? 'Changing...' : 'Change Password' }}</span>
+            <span>{{ loading ? $t('auth.forceChangeChanging') : $t('auth.forceChangeButton') }}</span>
           </button>
         </form>
       </div>
@@ -107,13 +110,16 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { useUserStore } from '@/stores/user';
+import { getSafeApiErrorMessage, isUnauthorizedOrForbidden } from '@/lib/api/errors';
 
 type PasswordField = 'newPassword' | 'confirmPassword';
 
 const MIN_PASSWORD_LENGTH = 8;
 
 const store = useUserStore();
+const { t } = useI18n();
 
 const newPasswordInput = ref<HTMLInputElement | null>(null);
 
@@ -168,7 +174,12 @@ async function handleSubmit(): Promise<void> {
      * the modal will unmount automatically.
      */
   } catch (unknownError) {
-    error.value = getPasswordChangeErrorMessage(unknownError);
+    if (isUnauthorizedOrForbidden(unknownError)) {
+      void store.verifySession();
+      error.value = t('auth.forceChangeSessionError');
+    } else {
+      error.value = getSafeApiErrorMessage(unknownError, 'auth.forceChangeFailed');
+    }
 
     await nextTick();
     newPasswordInput.value?.focus();
@@ -181,18 +192,18 @@ function validateForm(): boolean {
   let valid = true;
 
   if (!newPassword.value) {
-    fieldErrors.newPassword = 'New password is required.';
+    fieldErrors.newPassword = t('auth.passwordRequired');
     valid = false;
   } else if (newPassword.value.length < MIN_PASSWORD_LENGTH) {
-    fieldErrors.newPassword = `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
+    fieldErrors.newPassword = t('auth.passwordMinLength');
     valid = false;
   }
 
   if (!confirmPassword.value) {
-    fieldErrors.confirmPassword = 'Please confirm your new password.';
+    fieldErrors.confirmPassword = t('auth.forceChangeConfirmRequired');
     valid = false;
   } else if (newPassword.value !== confirmPassword.value) {
-    fieldErrors.confirmPassword = 'Passwords do not match.';
+    fieldErrors.confirmPassword = t('auth.passwordMismatch');
     valid = false;
   }
 
@@ -225,89 +236,6 @@ function resetForm(): void {
   showConfirmPassword.value = false;
   error.value = '';
   clearAllFieldErrors();
-}
-
-function getPasswordChangeErrorMessage(unknownError: unknown): string {
-  const status = getHttpStatus(unknownError);
-
-  if (status === 401 || status === 403) {
-    void store.verifySession();
-
-    return 'Unable to verify your session. Please sign in again if the problem continues.';
-  }
-
-  const message = extractErrorMessage(unknownError);
-
-  if (message && isSafeUserFacingMessage(message)) {
-    return message;
-  }
-
-  return 'Password change failed. Please try again.';
-}
-
-function extractErrorMessage(unknownError: unknown): string {
-  if (isRecord(unknownError)) {
-    const response = unknownError.response;
-
-    if (isRecord(response)) {
-      const data = response.data;
-
-      if (isRecord(data)) {
-        const message = data.message || data.error || data.detail;
-
-        if (typeof message === 'string' && message.trim()) {
-          return message.trim();
-        }
-      }
-
-      if (typeof data === 'string' && data.trim()) {
-        return data.trim();
-      }
-    }
-
-    const message = unknownError.message;
-
-    if (typeof message === 'string' && message.trim()) {
-      return message.trim();
-    }
-  }
-
-  return '';
-}
-
-function getHttpStatus(unknownError: unknown): number | undefined {
-  if (!isRecord(unknownError)) return undefined;
-
-  const response = unknownError.response;
-
-  if (!isRecord(response)) return undefined;
-
-  const status = response.status;
-
-  return typeof status === 'number' ? status : undefined;
-}
-
-function isSafeUserFacingMessage(message: string): boolean {
-  const normalized = message.toLowerCase();
-
-  const unsafeFragments = [
-    'sql',
-    'stack',
-    'trace',
-    'exception',
-    'internal server',
-    'jwt',
-    'token',
-    'undefined',
-    'null',
-    'request failed with status code',
-  ];
-
-  return !unsafeFragments.some((fragment) => normalized.includes(fragment));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 </script>
 

@@ -1,7 +1,7 @@
 <template>
   <div class="library-view">
     <router-link v-if="currentLibraryId && showBackLink" to="/library" class="back-link">
-      Back to all libraries
+      {{ $t('library.backToAll') }}
     </router-link>
 
     <header class="library-header">
@@ -20,10 +20,10 @@
         <input
           v-model.trim="searchQuery"
           type="search"
-          placeholder="Search library..."
+          :placeholder="$t('library.searchPlaceholder')"
           class="search-input"
           autocomplete="off"
-          aria-label="Search library"
+          :aria-label="$t('library.searchAriaLabel')"
           @input="onSearchInput"
         />
       </div>
@@ -35,9 +35,9 @@
         aria-label="Filter by media type"
         @change="resetAndFetch"
       >
-        <option :value="TYPE_ALL">All</option>
-        <option :value="TYPE_MOVIE">Movies</option>
-        <option :value="TYPE_SHOW">Shows</option>
+        <option :value="TYPE_ALL">{{ $t('library.all') }}</option>
+        <option :value="TYPE_MOVIE">{{ $t('library.movies') }}</option>
+        <option :value="TYPE_SHOW">{{ $t('library.shows') }}</option>
       </select>
 
       <div v-if="!activeStatus" class="filter-group desktop-only" aria-label="Media type">
@@ -46,21 +46,21 @@
           :class="['filter-btn', { active: activeType === TYPE_ALL }]"
           @click="setType(TYPE_ALL)"
         >
-          All
+          {{ $t('library.all') }}
         </button>
         <button
           type="button"
           :class="['filter-btn', { active: activeType === TYPE_MOVIE }]"
           @click="setType(TYPE_MOVIE)"
         >
-          Movies
+          {{ $t('library.movies') }}
         </button>
         <button
           type="button"
           :class="['filter-btn', { active: activeType === TYPE_SHOW }]"
           @click="setType(TYPE_SHOW)"
         >
-          Shows
+          {{ $t('library.shows') }}
         </button>
       </div>
 
@@ -70,35 +70,35 @@
           :class="['filter-btn', { active: activeStatus === STATUS_ALL }]"
           @click="setStatus(STATUS_ALL)"
         >
-          All
+          {{ $t('library.all') }}
         </button>
         <button
           type="button"
           :class="['filter-btn', 'status-watching', { active: activeStatus === STATUS_WATCHING }]"
           @click="setStatus(STATUS_WATCHING)"
         >
-          Watching
+          {{ $t('library.watching') }}
         </button>
         <button
           type="button"
           :class="['filter-btn', 'status-want', { active: activeStatus === STATUS_WANT }]"
           @click="setStatus(STATUS_WANT)"
         >
-          Want
+          {{ $t('library.want') }}
         </button>
         <button
           type="button"
           :class="['filter-btn', 'status-watched', { active: activeStatus === STATUS_WATCHED }]"
           @click="setStatus(STATUS_WATCHED)"
         >
-          Watched
+          {{ $t('library.watched') }}
         </button>
         <button
           type="button"
           :class="['filter-btn', 'status-dropped', { active: activeStatus === STATUS_DROPPED }]"
           @click="setStatus(STATUS_DROPPED)"
         >
-          Dropped
+          {{ $t('library.dropped') }}
         </button>
       </div>
 
@@ -109,12 +109,12 @@
         aria-label="Sort library"
         @change="resetAndFetch"
       >
-        <option value="title_asc">Title A-Z</option>
+        <option value="title_asc">{{ $t('library.titleAZ') }}</option>
         <option value="title_desc">Title Z-A</option>
-        <option value="year_desc">Newest First</option>
+        <option value="year_desc">{{ $t('library.newestFirst') }}</option>
         <option value="year_asc">Oldest First</option>
-        <option value="rating_desc">Top Rated</option>
-        <option value="created_desc">Recently Added</option>
+        <option value="rating_desc">{{ $t('library.topRated') }}</option>
+        <option value="created_desc">{{ $t('library.recentlyAdded') }}</option>
       </select>
     </section>
 
@@ -128,7 +128,7 @@
         :class="['genre-tag-btn', { active: !selectedGenre }]"
         @click="filterByGenre('')"
       >
-        All genres
+        {{ $t('library.allGenres') }}
       </button>
       <button
         v-for="genre in availableGenres"
@@ -147,13 +147,13 @@
       </div>
 
       <button v-if="hasActiveFilters" type="button" class="clear-filters-btn" @click="clearFilters">
-        Clear filters
+        {{ $t('library.clearFilters') }}
       </button>
     </div>
 
     <div v-if="error" class="error-banner" role="alert">
       <span>{{ error }}</span>
-      <button type="button" class="retry-btn" @click="retryFetch">Retry</button>
+      <button type="button" class="retry-btn" @click="retryFetch">{{ $t('library.retry') }}</button>
     </div>
 
     <div v-if="displayItems.length > 0" class="grid">
@@ -165,21 +165,21 @@
       />
     </div>
 
-    <div v-else-if="loading && !hasFetched" class="loading-state">Loading library...</div>
+    <div v-else-if="loading && !hasFetched" class="loading-state">{{ $t('library.loadingLibrary') }}</div>
 
     <div
       v-else-if="displayItems.length === 0 && !loading && hasFetched && !error"
       class="empty-state"
     >
-      <p v-if="searchQuery">No results for "{{ searchQuery }}".</p>
+      <p v-if="searchQuery">{{ $t('library.noResultsFor', { query: searchQuery }) }}</p>
       <p v-else-if="selectedGenre">No items found in "{{ selectedGenre }}".</p>
       <p v-else-if="activeStatus">No items with this status yet.</p>
-      <p v-else>Your library is empty. Import some media to get started.</p>
+      <p v-else>{{ $t('library.emptyLibrary') }}</p>
     </div>
 
     <div v-if="canLoadMore" class="load-more-wrap">
       <button type="button" class="load-more-btn" :disabled="loading" @click="fetchPage">
-        {{ loading ? 'Loading...' : 'Load more' }}
+        {{ loading ? $t('common.loading') : $t('common.loadMore') }}
       </button>
     </div>
   </div>
@@ -188,9 +188,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { getMediaByStatus, getMediaList } from '@/api/library';
 import { apiRequest } from '@/api/request';
+import { getSafeApiErrorMessage, isRecord } from '@/lib/api/errors';
+import { useLocaleFormat } from '@/composables/useLocaleFormat';
 import MediaCard from '@/components/MediaCard.vue';
+
+const { t } = useI18n();
+const { formatNumber } = useLocaleFormat();
 
 interface MediaItem {
   id: string;
@@ -241,14 +247,14 @@ const currentLibraryName = computed(() => {
 const showBackLink = computed(() => librariesCount.value >= 2);
 
 const pageTitle = computed(() => {
-  if (searchQuery.value) return 'Search results';
+  if (searchQuery.value) return t('library.searchResults');
   if (activeStatus.value) return statusTitle.value;
   return currentLibraryName.value;
 });
 
 const pageSubtitle = computed(() => {
   if (searchQuery.value && currentLibraryId.value) {
-    return `Searching in ${currentLibraryName.value}`;
+    return t('library.searchingIn', { libraryName: currentLibraryName.value });
   }
 
   if (activeStatus.value && currentLibraryId.value) {
@@ -261,13 +267,13 @@ const pageSubtitle = computed(() => {
 const statusTitle = computed(() => {
   switch (activeStatus.value) {
     case STATUS_WATCHING:
-      return 'Watching';
+      return t('library.watching');
     case STATUS_WANT:
-      return 'Want to watch';
+      return t('library.wantToWatch');
     case STATUS_WATCHED:
-      return 'Watched';
+      return t('library.watched');
     case STATUS_DROPPED:
-      return 'Dropped';
+      return t('library.dropped');
     default:
       return currentLibraryName.value;
   }
@@ -320,7 +326,18 @@ const resultLabel = computed(() => {
       ? displayItems.value.length
       : total.value || displayItems.value.length;
 
-  return `${count} item${count === 1 ? '' : 's'}`;
+  // Phase 11: manual plural selection with locale-aware number formatting.
+  // We avoid vue-i18n's plural pipe syntax here because it auto-fills {n}
+  // with the RAW count, overriding any formatted value we pass. By selecting
+  // the key manually and using named-params interpolation, {n} receives the
+  // formatNumber() output (e.g. "1,234" instead of "1234").
+  // en: 0 → "no items", 1 → "1 item", N → "N items"
+  // zh: 0 → "无项目", 1 → "1 项", N → "N 项" (no plural distinction)
+  // ja: 0 → "アイテムなし", 1 → "1 件", N → "N 件" (no plural distinction)
+  const n = formatNumber(count);
+  if (count === 0) return t('library.resultCountZero');
+  if (count === 1) return t('library.resultCountOne', { n });
+  return t('library.resultCountMany', { n });
 });
 
 const hasActiveFilters = computed(() => {
@@ -451,7 +468,7 @@ async function fetchPage() {
   } catch (unknownError) {
     if (generation !== fetchGeneration) return;
 
-    error.value = getFriendlyErrorMessage(unknownError);
+    error.value = getSafeApiErrorMessage(unknownError, 'library.loadFailed');
     allLoaded.value = true;
   } finally {
     if (generation === fetchGeneration) {
@@ -531,10 +548,6 @@ function isLibraryItem(value: unknown): value is LibraryItem {
   return isRecord(value) && typeof value.id === 'string' && typeof value.name === 'string';
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
 function mergeUniqueItems(currentItems: MediaItem[], nextItems: MediaItem[]) {
   const seen = new Set(currentItems.map((item) => item.id));
   const merged = [...currentItems];
@@ -547,14 +560,6 @@ function mergeUniqueItems(currentItems: MediaItem[], nextItems: MediaItem[]) {
   }
 
   return merged;
-}
-
-function getFriendlyErrorMessage(unknownError: unknown) {
-  if (unknownError instanceof Error && unknownError.message) {
-    return 'Failed to load library. Please try again.';
-  }
-
-  return 'Failed to load library. Please try again.';
 }
 
 function onStatusChanged(id: string, newStatus: string) {

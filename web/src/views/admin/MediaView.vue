@@ -1,13 +1,13 @@
 <template>
   <div class="admin-page">
-    <h1>Media Items</h1>
+    <h1>{{ $t('admin.media.title') }}</h1>
 
     <div class="toolbar">
       <input
         v-model="searchQuery"
         @input="onSearchInput"
         type="text"
-        placeholder="Search items..."
+        :placeholder="$t('admin.media.searchPlaceholder')"
         class="search-input"
       />
       <select
@@ -18,10 +18,10 @@
         "
         class="filter-select"
       >
-        <option value="">All Types</option>
+        <option value="">{{ $t('admin.media.allTypes') }}</option>
         <option value="movie">Movies</option>
         <option value="show">Shows</option>
-        <option value="episode">Episodes</option>
+        <option value="episode">{{ $t('admin.media.episodes') }}</option>
       </select>
       <select
         v-model="libraryFilter"
@@ -31,12 +31,12 @@
         "
         class="filter-select"
       >
-        <option value="">All Libraries</option>
+        <option value="">{{ $t('admin.media.allLibraries') }}</option>
         <option v-for="lib in libraries" :key="lib.id" :value="lib.id">{{ lib.name }}</option>
       </select>
     </div>
 
-    <div class="result-info" v-if="total > 0">{{ total }} items</div>
+    <div class="result-info" v-if="total > 0">{{ total }} {{ $t('admin.media.itemsCount') }}</div>
 
     <!-- Grouped view (shows with nested episodes; movies standalone) -->
     <div class="media-list" v-if="groupedItems.length > 0">
@@ -50,8 +50,8 @@
           <span class="item-library">{{ g.library_id }}</span>
           <span class="item-provider">{{ g.provider_id }}</span>
           <span class="item-date">{{ formatDate(g.created_at) }}</span>
-          <span class="ep-count">{{ g.episodeCount }} ep.</span>
-          <button class="delete-btn" @click.stop="deleteItem(g)">Delete</button>
+          <span class="ep-count">{{ g.episodeCount }} {{ $t('admin.media.episodeAbbr') }}</span>
+          <button class="delete-btn" @click.stop="deleteItem(g)">{{ $t('common.delete') }}</button>
         </div>
         <!-- Episode rows (nested under show) -->
         <div v-if="g.type === 'show' && expandedShows.has(g.id)" class="episode-children">
@@ -64,7 +64,7 @@
             <span class="item-library">{{ ep.library_id }}</span>
             <span class="item-provider">{{ ep.provider_id }}</span>
             <span class="item-date">{{ formatDate(ep.created_at) }}</span>
-            <button class="delete-btn" @click.stop="deleteItem(ep)">Delete</button>
+            <button class="delete-btn" @click.stop="deleteItem(ep)">{{ $t('common.delete') }}</button>
           </div>
         </div>
         <!-- Movie row (standalone, no expand) -->
@@ -76,7 +76,7 @@
           <span class="item-library">{{ g.library_id }}</span>
           <span class="item-provider">{{ g.provider_id }}</span>
           <span class="item-date">{{ formatDate(g.created_at) }}</span>
-          <button class="delete-btn" @click.stop="deleteItem(g)">Delete</button>
+          <button class="delete-btn" @click.stop="deleteItem(g)">{{ $t('common.delete') }}</button>
         </div>
       </template>
     </div>
@@ -89,9 +89,9 @@
           fetchItems();
         "
       >
-        &larr; Previous
+        &larr; {{ $t('common.previous') }}
       </button>
-      <span class="page-info">Page {{ page }}</span>
+      <span class="page-info">{{ $t('admin.media.page', { n: page }) }}</span>
       <button
         :disabled="page * limit >= total"
         @click="
@@ -99,18 +99,29 @@
           fetchItems();
         "
       >
-        Next &rarr;
+        {{ $t('common.next') }} &rarr;
       </button>
     </div>
 
-    <p class="empty" v-else-if="!loading && items.length === 0">No items found.</p>
+    <p class="empty" v-else-if="!loading && items.length === 0">{{ $t('admin.media.noItems') }}</p>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { authRequest } from '@/api/request';
+import { getSafeApiErrorMessage, isUnauthorizedOrForbidden } from '@/lib/api/errors';
+import { useNotifications } from '@/composables/useNotifications';
+import { useLocaleFormat } from '@/composables/useLocaleFormat';
 import type { ApiEnvelope } from '@/api/types';
+
+const { t } = useI18n();
+const { confirmDialog, notifyError } = useNotifications();
+// Phase 8: locale-aware date formatting. Previously this view called
+// `new Date(iso).toLocaleDateString()` which used the BROWSER locale, not the
+// app locale — so a Japanese-UI user still saw English-formatted dates.
+const { formatDate: formatDateForLocale } = useLocaleFormat();
 
 /* =========================
    Types
@@ -216,7 +227,7 @@ async function loadLibraries(): Promise<void> {
     const res = await authRequest.get<ApiEnvelope<Library[]>>('/admin/libraries');
     libraries.value = res.data.data || [];
   } catch (err: any) {
-    if (err?.response?.status === 401) return;
+    if (isUnauthorizedOrForbidden(err)) return;
     console.error('[media] loadLibraries failed', err);
   }
 }
@@ -240,7 +251,7 @@ async function fetchItems(): Promise<void> {
     items.value = res.data.data.items || [];
     total.value = res.data.data.total || 0;
   } catch (err: any) {
-    if (err?.response?.status === 401) return;
+    if (isUnauthorizedOrForbidden(err)) return;
     console.error('[media] fetchItems failed', err);
   } finally {
     loading.value = false;
@@ -288,17 +299,20 @@ function toggleShow(id: string): void {
 }
 
 async function deleteItem(item: AdminItem): Promise<void> {
-  const label = item.type === 'show' ? `"${item.title}" and all episodes` : `"${item.title}"`;
+  const label =
+    item.type === 'show'
+      ? t('admin.media.confirmDeleteWithEpisodes', { title: item.title })
+      : t('admin.media.confirmDeleteSingle', { title: item.title });
 
-  if (!confirm(`Delete ${label}?`)) return;
+  if (!(await confirmDialog(t('admin.media.confirmDelete', { label })))) return;
 
   try {
     await authRequest.delete(`/admin/media/${item.id}`);
     await fetchItems();
   } catch (err: any) {
-    if (err?.response?.status === 401) return;
+    if (isUnauthorizedOrForbidden(err)) return;
 
-    alert('Delete failed: ' + (err?.response?.data?.message || 'Unknown error'));
+    notifyError(t('admin.media.deleteFailed') + getSafeApiErrorMessage(err, 'admin.media.unknownError'));
   }
 }
 
@@ -307,8 +321,9 @@ async function deleteItem(item: AdminItem): Promise<void> {
    ========================= */
 
 function formatDate(iso: string): string {
-  if (!iso) return '';
-  return new Date(iso).toLocaleDateString();
+  // Delegate to the locale-aware composable. Preserve the original '' fallback
+  // for empty input so the table layout doesn't shift (a '—' would add a row).
+  return formatDateForLocale(iso, '');
 }
 
 /* =========================

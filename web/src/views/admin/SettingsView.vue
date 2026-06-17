@@ -1,25 +1,50 @@
 <template>
   <div class="admin-page">
-    <h1>Settings</h1>
+    <h1>{{ $t('admin.settings.title') }}</h1>
 
-    <div v-if="loading" class="loading">Loading...</div>
+    <div v-if="loading" class="loading">{{ $t('common.loading') }}</div>
 
     <div v-else-if="error" class="error">{{ error }}</div>
 
     <template v-else>
       <div class="settings-section">
-        <h2>Registration</h2>
+        <h2>{{ $t('admin.settings.registration') }}</h2>
 
         <label class="toggle-row">
           <input type="checkbox" v-model="allowRegistration" :disabled="saving" />
-          <span>Allow public registration</span>
+          <span>{{ $t('admin.settings.allowRegistration') }}</span>
         </label>
 
-        <p class="hint">When disabled, only admins can create new accounts.</p>
+        <p class="hint">{{ $t('admin.settings.allowRegistrationHint') }}</p>
+      </div>
+
+      <div class="settings-section">
+        <h2>{{ $t('admin.settings.systemDefaultLanguage') }}</h2>
+
+        <div class="locale-row">
+          <label for="default-locale" class="locale-label">
+            {{ $t('admin.settings.defaultLocale') }}
+          </label>
+
+          <select
+            id="default-locale"
+            v-model="defaultLocale"
+            :disabled="saving"
+            class="locale-select"
+          >
+            <option v-for="loc in supportedLocales" :key="loc" :value="loc">
+              {{ localeFlag(loc) }} {{ localeDisplayName(loc) }}
+            </option>
+          </select>
+        </div>
+
+        <p class="hint">
+          {{ $t('admin.settings.defaultLocaleHint') }}
+        </p>
       </div>
 
       <button class="save-btn" :disabled="saving" @click="saveSettings">
-        {{ saving ? 'Saving...' : 'Save Settings' }}
+        {{ saving ? $t('admin.settings.saving') : $t('admin.settings.saveButton') }}
       </button>
 
       <p v-if="message" class="msg">{{ message }}</p>
@@ -28,19 +53,30 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { authRequest } from '@/api/request';
+import { useSystemStore } from '@/stores/system';
+import { getSafeApiErrorMessage, isUnauthorizedOrForbidden } from '@/lib/api/errors';
+import { localeDisplayName, localeFlag, supportedLocales as i18nSupportedLocales } from '@/plugins/i18n';
 import type { ApiEnvelope } from '@/api/types';
+
+const { t } = useI18n();
 
 /**
  * Backend shape assumption:
- * GET /admin/settings -> { allow_registration: "true" | "false" }
+ * GET /admin/settings -> { allow_registration: "true" | "false", default_locale: "en" }
+ * PUT /admin/settings -> { allow_registration: "...", default_locale: "..." }
  */
 interface SettingsData {
   allow_registration: string;
+  default_locale: string;
 }
 
+const systemStore = useSystemStore();
+
 const allowRegistration = ref(false);
+const defaultLocale = ref<string>('en');
 
 const loading = ref(true);
 const saving = ref(false);
@@ -48,26 +84,52 @@ const saving = ref(false);
 const message = ref('');
 const error = ref('');
 
+/**
+ * The list of locale codes the admin can choose from.
+ *
+ * Phase 4: this is now a reactive computed that reads from the i18n
+ * module's runtime supported-locales list. That list is initialized to
+ * the static BUNDLED_LOCALES (['en','zh']) and updated automatically when
+ * `systemStore.runFetchSystemStatus()` calls `setSupportedLocales()` with
+ * the backend-advertised list. So this dropdown stays in sync with both
+ * the backend configuration and the LanguageSwitcher shown to end users.
+ */
+const supportedLocales = computed<readonly string[]>(() => i18nSupportedLocales.value);
+
 async function loadSettings(): Promise<void> {
   loading.value = true;
   error.value = '';
 
   try {
+    // Ensure the i18n module's runtime supported-locales list is populated
+    // from the backend. The reactive `supportedLocales` computed above will
+    // pick up the result automatically; we don't need to assign it here.
+    if (systemStore.supportedLocales.length === 0) {
+      await systemStore.fetchSystemStatus();
+    }
+
     const res = await authRequest.get<ApiEnvelope<SettingsData>>('/admin/settings');
 
     const data = res.data.data;
 
     allowRegistration.value = data.allow_registration === 'true';
-  } catch (err: any) {
-    const status = err?.response?.status;
 
-    if (status === 401 || status === 403) {
+    // Use the backend's default_locale if present and valid, otherwise fall
+    // back to the systemStore's value (which defaults to 'en').
+    const backendLocale = data.default_locale;
+    if (backendLocale && supportedLocales.value.includes(backendLocale)) {
+      defaultLocale.value = backendLocale;
+    } else if (systemStore.defaultLocale) {
+      defaultLocale.value = systemStore.defaultLocale;
+    }
+  } catch (err: any) {
+    if (isUnauthorizedOrForbidden(err)) {
       // Handled centrally by router / store; do not pollute the console
       return;
     }
 
     console.error('[settings] loadSettings failed:', err);
-    error.value = 'Failed to load settings';
+    error.value = t('admin.settings.loadFailed');
   } finally {
     loading.value = false;
   }
@@ -81,20 +143,18 @@ async function saveSettings(): Promise<void> {
   try {
     await authRequest.put<ApiEnvelope<null>>('/admin/settings', {
       allow_registration: allowRegistration.value ? 'true' : 'false',
+      default_locale: defaultLocale.value,
     });
 
-    message.value = 'Settings saved';
+    message.value = t('admin.settings.saved');
   } catch (err: any) {
-    const status = err?.response?.status;
-
-    if (status === 401 || status === 403) {
+    if (isUnauthorizedOrForbidden(err)) {
       return;
     }
 
     console.error('[settings] saveSettings failed:', err);
 
-    message.value =
-      err?.response?.data?.message || err?.response?.data?.error || 'Failed to save settings';
+    message.value = getSafeApiErrorMessage(err, 'admin.settings.saveFailed');
   } finally {
     saving.value = false;
   }
@@ -148,6 +208,48 @@ h2 {
   accent-color: #6c63ff;
   width: 18px;
   height: 18px;
+}
+
+.locale-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.locale-label {
+  color: #ccccee;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.locale-select {
+  min-width: 180px;
+  min-height: 36px;
+  padding: 6px 12px;
+  color: #e0e0e0;
+  background: #0f0f1a;
+  border: 1px solid #2a2a3e;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.locale-select:hover:not(:disabled) {
+  border-color: #3a3a5e;
+}
+
+.locale-select:focus {
+  outline: 2px solid #6c63ff;
+  outline-offset: 1px;
+  border-color: #6c63ff;
+}
+
+.locale-select option {
+  color: #1a1a2e;
+  background: #fff;
 }
 
 .hint {

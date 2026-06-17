@@ -6,8 +6,8 @@
       </router-link>
 
       <header class="login-header">
-        <h1 id="login-title" class="title">Welcome back</h1>
-        <p class="subtitle">Sign in to continue to your library</p>
+        <h1 id="login-title" class="title">{{ $t('auth.welcomeBack') }}</h1>
+        <p class="subtitle">{{ $t('auth.signInSubtitle') }}</p>
       </header>
 
       <div v-if="registeredMessage" class="success-banner" role="status">
@@ -16,7 +16,7 @@
 
       <form class="login-form" novalidate @submit.prevent="handleLogin">
         <div class="field">
-          <label for="username">Username</label>
+          <label for="username">{{ $t('auth.username') }}</label>
           <input
             id="username"
             ref="usernameInput"
@@ -38,7 +38,7 @@
         </div>
 
         <div class="field">
-          <label for="password">Password</label>
+          <label for="password">{{ $t('auth.password') }}</label>
 
           <div class="password-wrap">
             <input
@@ -60,10 +60,10 @@
               type="button"
               class="password-toggle"
               :disabled="loading || password.length === 0"
-              :aria-label="showPassword ? 'Hide password' : 'Show password'"
+              :aria-label="showPassword ? $t('auth.hidePassword') : $t('auth.showPassword')"
               @click="showPassword = !showPassword"
             >
-              {{ showPassword ? 'Hide' : 'Show' }}
+              {{ showPassword ? $t('auth.hide') : $t('auth.show') }}
             </button>
           </div>
 
@@ -78,14 +78,18 @@
 
         <button type="submit" class="submit-btn" :disabled="loading || !canSubmit">
           <span v-if="loading" class="spinner" aria-hidden="true"></span>
-          <span>{{ loading ? 'Signing in...' : 'Sign in' }}</span>
+          <span>{{ loading ? $t('auth.signingIn') : $t('auth.signIn') }}</span>
         </button>
       </form>
 
       <p class="bottom-link">
-        No account?
-        <router-link to="/register"> Create one </router-link>
+        {{ $t('auth.noAccount') }}
+        <router-link to="/register"> {{ $t('auth.createOne') }} </router-link>
       </p>
+
+      <div class="locale-row">
+        <LanguageSwitcher variant="compact" />
+      </div>
     </section>
   </main>
 </template>
@@ -93,7 +97,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { useUserStore } from '@/stores/user';
+import LanguageSwitcher from '@/components/LanguageSwitcher.vue';
+
+const { t } = useI18n();
 
 type LoginField = 'username' | 'password';
 
@@ -120,7 +128,7 @@ const canSubmit = computed(() => {
 });
 
 const registeredMessage = computed(() => {
-  return route.query.registered === '1' ? 'Account created successfully. Please sign in.' : '';
+  return route.query.registered === '1' ? t('auth.accountCreated') : '';
 });
 
 onMounted(async () => {
@@ -166,12 +174,12 @@ function validateForm(): boolean {
   let valid = true;
 
   if (!username.value.trim()) {
-    fieldErrors.username = 'Username is required.';
+    fieldErrors.username = t('auth.usernameRequired');
     valid = false;
   }
 
   if (!password.value) {
-    fieldErrors.password = 'Password is required.';
+    fieldErrors.password = t('auth.passwordRequired');
     valid = false;
   }
 
@@ -229,7 +237,7 @@ function getLoginErrorMessage(unknownError: unknown): string {
   const status = getHttpStatus(unknownError);
 
   if (status === 401 || status === 403) {
-    return 'Unable to sign in. Please check your username and password.';
+    return t('auth.signInFailed');
   }
 
   const message = extractErrorMessage(unknownError);
@@ -238,7 +246,7 @@ function getLoginErrorMessage(unknownError: unknown): string {
     return message;
   }
 
-  return 'Unable to sign in. Please check your username and password.';
+  return t('auth.signInFailed');
 }
 
 function extractErrorMessage(unknownError: unknown): string {
@@ -562,6 +570,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   to {
     transform: rotate(360deg);
   }
+}
+
+.locale-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgb(255 255 255 / 5%);
+}
+
+.locale-row :deep(.ls-label) {
+  color: #777799;
+}
+
+.locale-row :deep(.ls-select) {
+  color: #c8c8e0;
+  background: rgb(255 255 255 / 4%);
+  border-color: rgb(255 255 255 / 10%);
+}
+
+.locale-row :deep(.ls-select:hover:not(:disabled)) {
+  border-color: rgb(255 255 255 / 20%);
+  background: rgb(255 255 255 / 7%);
 }
 
 @media (max-width: 520px) {

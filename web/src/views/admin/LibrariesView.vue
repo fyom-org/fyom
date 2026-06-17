@@ -2,47 +2,47 @@
   <div class="admin-page">
     <div class="page-header">
       <div>
-        <h1>Libraries</h1>
+        <h1>{{ $t('admin.libraries.title') }}</h1>
         <p class="page-subtitle">
-          Manage library sources, refresh scans, schedules, and missing media checks.
+          {{ $t('admin.libraries.subtitle') }}
         </p>
       </div>
 
       <button type="button" class="add-btn" @click="toggleForm">
-        {{ showForm ? 'Cancel' : '+ New Library' }}
+        {{ showForm ? $t('common.cancel') : $t('admin.libraries.newLibrary') }}
       </button>
     </div>
 
     <div v-if="error" class="error-banner" role="alert">
       <span>{{ error }}</span>
-      <button type="button" class="error-action" @click="clearError">Dismiss</button>
+      <button type="button" class="error-action" @click="clearError">{{ $t('common.dismiss') }}</button>
     </div>
 
     <div v-if="showForm" class="form-card">
       <div class="form-grid">
         <div class="field">
-          <label for="library-name">Name</label>
+          <label for="library-name">{{ $t('admin.libraries.nameLabel') }}</label>
           <input
             id="library-name"
             v-model.trim="form.name"
-            placeholder="e.g. Kids Movies"
+            :placeholder="$t('admin.libraries.namePlaceholder')"
             :disabled="saving"
           />
         </div>
 
         <div class="field">
-          <label for="library-type">Type</label>
+          <label for="library-type">{{ $t('admin.libraries.typeLabel') }}</label>
           <select id="library-type" v-model="form.type" :disabled="saving">
-            <option value="mixed">Mixed</option>
-            <option value="movie">Movies Only</option>
-            <option value="show">TV Shows Only</option>
+            <option value="mixed">{{ $t('admin.libraries.typeMixed') }}</option>
+            <option value="movie">{{ $t('admin.libraries.typeMovies') }}</option>
+            <option value="show">{{ $t('admin.libraries.typeShows') }}</option>
           </select>
         </div>
 
         <div class="field">
-          <label for="library-provider">Storage Provider</label>
+          <label for="library-provider">{{ $t('admin.libraries.storageProvider') }}</label>
           <select id="library-provider" v-model="form.provider_id" :disabled="saving">
-            <option value="local">Local Disk</option>
+            <option value="local">{{ $t('admin.libraries.localDisk') }}</option>
             <option v-for="provider in providers" :key="provider.id" :value="provider.id">
               {{ provider.display_name }} ({{ provider.type }})
             </option>
@@ -50,19 +50,19 @@
         </div>
 
         <div class="field">
-          <label for="metadata-source">Metadata Source</label>
+          <label for="metadata-source">{{ $t('admin.libraries.metadataSource') }}</label>
           <select id="metadata-source" v-model="form.metadata_source" :disabled="saving">
-            <option value="nfo">NFO Files (Kodi/tinyMediaManager)</option>
-            <option value="filename">Filename Only</option>
+            <option value="nfo">{{ $t('admin.libraries.nfoFiles') }}</option>
+            <option value="filename">{{ $t('admin.libraries.filenameOnly') }}</option>
           </select>
         </div>
 
         <div class="field full-width">
-          <label for="source-path">Source Path</label>
+          <label for="source-path">{{ $t('admin.libraries.sourcePath') }}</label>
           <input
             id="source-path"
             v-model.trim="form.source_path"
-            placeholder="/path/to/media or S3 prefix"
+            :placeholder="$t('admin.libraries.sourcePathPlaceholder')"
             :disabled="saving"
           />
         </div>
@@ -79,12 +79,12 @@
           :disabled="saving || !canCreateLibrary"
           @click="createLibrary"
         >
-          {{ saving ? 'Creating...' : 'Create Library' }}
+          {{ saving ? $t('admin.libraries.creating') : $t('admin.libraries.createButton') }}
         </button>
       </div>
     </div>
 
-    <div v-if="loading" class="loading-text">Loading libraries...</div>
+    <div v-if="loading" class="loading-text">{{ $t('admin.libraries.loadingLibraries') }}</div>
 
     <div v-else-if="libraries.length > 0" class="library-list">
       <div v-for="lib in libraries" :key="lib.id" class="library-card">
@@ -108,7 +108,7 @@
             :disabled="isLibraryBusy(lib.id)"
             @click="refreshLibrary(lib)"
           >
-            {{ refreshing === lib.id ? 'Starting...' : 'Refresh' }}
+            {{ refreshing === lib.id ? $t('admin.libraries.starting') : $t('admin.libraries.refresh') }}
           </button>
 
           <button
@@ -117,7 +117,7 @@
             :disabled="isLibraryBusy(lib.id)"
             @click="checkMissing(lib)"
           >
-            {{ checking === lib.id ? 'Checking...' : 'Check Missing' }}
+            {{ checking === lib.id ? $t('admin.libraries.checking') : $t('admin.libraries.checkMissing') }}
           </button>
 
           <select
@@ -126,11 +126,11 @@
             :disabled="savingSchedule === lib.id"
             @change="setSchedule(lib.id, ($event.target as HTMLSelectElement).value)"
           >
-            <option value="0">Manual</option>
-            <option value="3600">Every hour</option>
-            <option value="21600">Every 6 hours</option>
-            <option value="86400">Daily</option>
-            <option value="604800">Weekly</option>
+            <option value="0">{{ $t('admin.libraries.scheduleManual') }}</option>
+            <option value="3600">{{ $t('admin.libraries.scheduleHourly') }}</option>
+            <option value="21600">{{ $t('admin.libraries.schedule6h') }}</option>
+            <option value="86400">{{ $t('admin.libraries.scheduleDaily') }}</option>
+            <option value="604800">{{ $t('admin.libraries.scheduleWeekly') }}</option>
           </select>
 
           <button
@@ -139,22 +139,22 @@
             :disabled="isLibraryBusy(lib.id)"
             @click="deleteLibrary(lib)"
           >
-            Delete
+            {{ $t('common.delete') }}
           </button>
         </div>
 
         <div v-if="lib.item_count > 0" class="library-stats">
-          <span class="stat">{{ lib.item_count }} items</span>
-          <span v-if="lib.movie_count" class="stat">{{ lib.movie_count }} movies</span>
-          <span v-if="lib.show_count" class="stat">{{ lib.show_count }} shows</span>
-          <span v-if="lib.episode_count" class="stat">{{ lib.episode_count }} episodes</span>
+          <span class="stat">{{ formatNumber(lib.item_count) }} {{ $t('admin.libraries.statsItems') }}</span>
+          <span v-if="lib.movie_count" class="stat">{{ formatNumber(lib.movie_count) }} {{ $t('admin.libraries.statsMovies') }}</span>
+          <span v-if="lib.show_count" class="stat">{{ formatNumber(lib.show_count) }} {{ $t('admin.libraries.statsShows') }}</span>
+          <span v-if="lib.episode_count" class="stat">{{ formatNumber(lib.episode_count) }} {{ $t('admin.libraries.statsEpisodes') }}</span>
           <span v-if="lib.missing_count > 0" class="stat warn">
-            {{ lib.missing_count }} missing
+            {{ formatNumber(lib.missing_count) }} {{ $t('admin.libraries.statsMissing') }}
           </span>
         </div>
 
         <div v-else class="library-stats">
-          <span class="stat empty">No items yet</span>
+          <span class="stat empty">{{ $t('admin.libraries.noItemsYet') }}</span>
         </div>
 
         <div
@@ -167,11 +167,11 @@
               <p class="job-title">
                 {{ jobTitle }}
               </p>
-              <p v-if="activeJob.id" class="job-meta">Job ID: {{ activeJob.id }}</p>
+              <p v-if="activeJob.id" class="job-meta">{{ $t('admin.libraries.jobId') }}{{ activeJob.id }}</p>
             </div>
 
             <span class="job-badge">
-              {{ activeJob.statusUnavailable ? 'status unavailable' : activeJob.status }}
+              {{ activeJob.statusUnavailable ? $t('admin.libraries.statusUnavailable') : activeJob.status }}
             </span>
           </div>
 
@@ -189,7 +189,7 @@
 
           <div class="job-actions">
             <button type="button" class="job-action-btn" @click="reloadLibraries">
-              Reload libraries
+              {{ $t('admin.libraries.reloadLibraries') }}
             </button>
 
             <button
@@ -198,25 +198,24 @@
               class="job-action-btn"
               @click="pollActiveJobNow"
             >
-              Check now
+              {{ $t('admin.libraries.checkNow') }}
             </button>
 
-            <button type="button" class="job-action-btn" @click="clearActiveJob">Dismiss</button>
+            <button type="button" class="job-action-btn" @click="clearActiveJob">{{ $t('common.dismiss') }}</button>
           </div>
         </div>
       </div>
     </div>
 
-    <p v-else class="empty-text">No libraries configured.</p>
+    <p v-else class="empty-text">{{ $t('admin.libraries.noLibraries') }}</p>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { authRequest } from '@/api/request';
-import type { ApiEnvelope } from '@/api/types';
 import {
-  getApiErrorMessage,
   getJobStatusSilent,
   isFailedJobStatus,
   isTerminalJobStatus,
@@ -224,6 +223,18 @@ import {
   type JobStatus,
   type JobStatusValue,
 } from '@/api/library';
+import {
+  getSafeApiErrorMessage,
+  isUnauthorizedOrForbidden,
+  isRecord,
+} from '@/lib/api/errors';
+import { useNotifications } from '@/composables/useNotifications';
+import { useLocaleFormat } from '@/composables/useLocaleFormat';
+import type { ApiEnvelope } from '@/api/types';
+
+const { t } = useI18n();
+const { confirmDialog, notifyInfo, notifySuccess } = useNotifications();
+const { formatNumber } = useLocaleFormat();
 
 interface Library {
   id: string;
@@ -311,12 +322,6 @@ const activeJobProgress = computed(() => {
   return Math.min(100, Math.max(0, progress));
 });
 
-const isTerminalJob = computed(() => {
-  if (!activeJob.value) return false;
-
-  return isTerminalJobStatus(activeJob.value.status);
-});
-
 const canCheckActiveJob = computed(() => {
   if (!activeJob.value) return false;
   if (activeJob.value.conflict) return false;
@@ -329,31 +334,31 @@ const jobTitle = computed(() => {
   if (!activeJob.value) return '';
 
   if (activeJob.value.conflict) {
-    return 'Refresh already in progress';
+    return t('admin.libraries.refreshInProgress');
   }
 
   if (activeJob.value.statusUnavailable) {
-    return 'Refresh started';
+    return t('admin.libraries.refreshStarted');
   }
 
   switch (String(activeJob.value.status).toLowerCase()) {
     case 'queued':
     case 'pending':
-      return 'Refresh is queued';
+      return t('admin.libraries.refreshQueued');
     case 'running':
     case 'processing':
-      return 'Refresh is running';
+      return t('admin.libraries.refreshRunning');
     case 'done':
     case 'completed':
     case 'success':
-      return 'Refresh completed';
+      return t('admin.libraries.refreshCompleted');
     case 'failed':
     case 'error':
-      return 'Refresh failed';
+      return t('admin.libraries.refreshFailed');
     case 'cancelled':
-      return 'Refresh cancelled';
+      return t('admin.libraries.refreshCancelled');
     default:
-      return 'Refresh status unknown';
+      return t('admin.libraries.refreshUnknown');
   }
 });
 
@@ -393,12 +398,12 @@ async function loadInitialData(): Promise<void> {
     schedules.value = extractLibrarySchedules(settings);
   } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) {
-      error.value = 'You do not have permission to manage libraries.';
+      error.value = t('admin.libraries.noPermission');
       return;
     }
 
     console.error('[fyom] load libraries failed:', err);
-    error.value = getApiErrorMessage(err, 'Failed to load libraries.');
+    error.value = getSafeApiErrorMessage(err, 'admin.libraries.loadFailed');
   } finally {
     loading.value = false;
   }
@@ -413,12 +418,12 @@ async function reloadLibraries(): Promise<void> {
     libraries.value = normalizeEnvelopeData(res.data, []);
   } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) {
-      error.value = 'Unable to reload libraries because the request was not authorized.';
+      error.value = t('admin.libraries.reloadUnauthorized');
       return;
     }
 
     console.error('[fyom] reload libraries failed:', err);
-    error.value = getApiErrorMessage(err, 'Failed to reload libraries.');
+    error.value = getSafeApiErrorMessage(err, 'admin.libraries.loadFailed');
   }
 }
 
@@ -451,11 +456,11 @@ async function setSchedule(libId: string, interval: string): Promise<void> {
     };
   } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) {
-      error.value = 'Unable to save schedule because the request was not authorized.';
+      error.value = t('errors.forbidden');
       return;
     }
 
-    error.value = getApiErrorMessage(err, 'Failed to save schedule.');
+    error.value = getSafeApiErrorMessage(err, 'errors.generic');
   } finally {
     savingSchedule.value = '';
   }
@@ -494,11 +499,11 @@ async function createLibrary(): Promise<void> {
     await reloadLibraries();
   } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) {
-      error.value = 'Unable to create library because the request was not authorized.';
+      error.value = t('errors.forbidden');
       return;
     }
 
-    formError.value = getApiErrorMessage(err, 'Failed to create library.');
+    formError.value = getSafeApiErrorMessage(err, 'errors.generic');
   } finally {
     saving.value = false;
   }
@@ -506,17 +511,17 @@ async function createLibrary(): Promise<void> {
 
 function validateForm(): boolean {
   if (!form.name.trim()) {
-    formError.value = 'Library name is required.';
+    formError.value = t('admin.libraries.nameRequired');
     return false;
   }
 
   if (!form.source_path.trim()) {
-    formError.value = 'Source path is required.';
+    formError.value = t('admin.libraries.sourcePathRequired');
     return false;
   }
 
   if (!form.provider_id.trim()) {
-    formError.value = 'Storage provider is required.';
+    formError.value = t('admin.libraries.storageProviderRequired');
     return false;
   }
 
@@ -538,10 +543,9 @@ function resetForm(): void {
 async function deleteLibrary(lib: Library): Promise<void> {
   error.value = '';
 
-  const confirmed =
-    lib.item_count > 0
-      ? confirm(`"${lib.name}" has ${lib.item_count} items. Delete everything?`)
-      : confirm(`Delete "${lib.name}"?`);
+  const confirmed = lib.item_count > 0
+    ? await confirmDialog(t('admin.libraries.confirmDeleteWithItems', { name: lib.name, n: formatNumber(lib.item_count) }))
+    : await confirmDialog(t('admin.libraries.confirmDelete', { name: lib.name }));
 
   if (!confirmed) return;
 
@@ -566,11 +570,11 @@ async function deleteLibrary(lib: Library): Promise<void> {
     await reloadLibraries();
   } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) {
-      error.value = 'Unable to delete library because the request was not authorized.';
+      error.value = t('errors.forbidden');
       return;
     }
 
-    error.value = getApiErrorMessage(err, 'Failed to delete library.');
+    error.value = getSafeApiErrorMessage(err, 'errors.generic');
   }
 }
 
@@ -594,7 +598,7 @@ async function refreshLibrary(lib: Library): Promise<void> {
         progress: 0,
         message:
           result.reason === 'already_in_progress'
-            ? 'A refresh is already running for this library. New media may appear when the current scan finishes.'
+            ? t('admin.libraries.refreshAlreadyRunning')
             : result.message,
         error: '',
         statusUnavailable: true,
@@ -611,8 +615,7 @@ async function refreshLibrary(lib: Library): Promise<void> {
         libraryId: lib.id,
         status: 'unknown',
         progress: 0,
-        message:
-          'Refresh was started, but the server did not return a job id. New media may still appear after the scan completes.',
+        message: t('admin.libraries.refreshNoJobId'),
         error: '',
         statusUnavailable: true,
         conflict: false,
@@ -627,7 +630,7 @@ async function refreshLibrary(lib: Library): Promise<void> {
       libraryId: lib.id,
       status: normalizeJobStatus(result.job.status || 'queued'),
       progress: 0,
-      message: 'Refresh job has been created.',
+      message: t('admin.libraries.refreshJobCreated'),
       error: '',
       statusUnavailable: false,
       conflict: false,
@@ -636,11 +639,11 @@ async function refreshLibrary(lib: Library): Promise<void> {
     startJobPolling();
   } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) {
-      error.value = 'Unable to refresh library because the request was not authorized.';
+      error.value = t('errors.forbidden');
       return;
     }
 
-    error.value = getApiErrorMessage(err, 'Refresh failed.');
+    error.value = getSafeApiErrorMessage(err, 'admin.libraries.refreshFailed');
   } finally {
     refreshing.value = '';
   }
@@ -662,23 +665,19 @@ async function checkMissing(lib: Library): Promise<void> {
     const result = normalizeEnvelopeData(res.data, { missing: 0 });
 
     if (result.missing > 0) {
-      alert(
-        `Found ${result.missing} missing item${
-          result.missing !== 1 ? 's' : ''
-        }.\nCheck the Missing page.`
-      );
+      notifyInfo(t('admin.libraries.foundMissingItems', { n: result.missing }));
     } else {
-      alert('All items available.');
+      notifySuccess(t('admin.libraries.allItemsAvailable'));
     }
 
     await reloadLibraries();
   } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) {
-      error.value = 'Unable to check missing media because the request was not authorized.';
+      error.value = t('errors.forbidden');
       return;
     }
 
-    error.value = getApiErrorMessage(err, 'Check failed.');
+    error.value = getSafeApiErrorMessage(err, 'admin.libraries.checkFailed');
   } finally {
     checking.value = '';
   }
@@ -747,7 +746,7 @@ async function pollJobStatus(generation: number): Promise<void> {
       ...activeJob.value,
       status: 'unknown',
       statusUnavailable: true,
-      error: getApiErrorMessage(err, 'Failed to read job status. The scan may still be running.'),
+      error: getSafeApiErrorMessage(err, 'admin.libraries.jobStatusReadFailed'),
     };
 
     stopJobPolling();
@@ -770,8 +769,8 @@ function applyJobStatus(data: JobStatus): void {
     ...activeJob.value,
     status,
     progress: nextProgress,
-    message: data.message || activeJob.value.message || 'Refresh job status updated.',
-    error: data.error || data.error_msg || (failed ? 'Refresh job ended with an error.' : ''),
+    message: data.message || activeJob.value.message || t('admin.libraries.jobStatusUpdated'),
+    error: data.error || data.error_msg || (failed ? t('admin.libraries.jobEndedError') : ''),
     statusUnavailable: false,
   };
 }
@@ -783,8 +782,7 @@ function markJobStatusUnavailable(): void {
     ...activeJob.value,
     status: 'unknown',
     progress: activeJob.value.progress || 0,
-    message:
-      'Refresh started, but this client cannot read job status. New media may still appear after the scan completes.',
+    message: t('admin.libraries.refreshNoJobStatus'),
     error: '',
     statusUnavailable: true,
   };
@@ -872,11 +870,11 @@ function isLibraryBusy(libId: string): boolean {
 function typeLabel(type: string): string {
   switch (type) {
     case 'movie':
-      return 'Movies';
+      return t('admin.libraries.typeMovieLabel');
     case 'show':
-      return 'TV Shows';
+      return t('admin.libraries.typeShowLabel');
     default:
-      return 'Mixed';
+      return t('admin.libraries.typeMixedLabel');
   }
 }
 
@@ -902,20 +900,6 @@ function normalizeEnvelopeData<T>(envelope: ApiEnvelope<T> | T | undefined, fall
   }
 
   return envelope as T;
-}
-
-function isUnauthorizedOrForbidden(err: unknown): boolean {
-  if (!isRecord(err)) return false;
-
-  const response = err.response;
-
-  if (!isRecord(response)) return false;
-
-  return response.status === 401 || response.status === 403;
-}
-
-function isRecord(value: unknown): value is Record<string, any> {
-  return typeof value === 'object' && value !== null;
 }
 </script>
 

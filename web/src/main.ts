@@ -6,11 +6,20 @@ import './style.css';
 import { initTauriListeners, isTauriEnvironment } from './lib/runtime/tauri';
 import { useUserStore } from '@/stores/user';
 import { useSystemStore } from '@/stores/system';
+import i18n from '@/plugins/i18n';
+import { applyInitialLocale } from '@/composables/useLocale';
 
 const app = createApp(App);
 
 const pinia = createPinia();
 app.use(pinia);
+
+// Install vue-i18n before any store or component reads locale state.
+// `applyInitialLocale()` runs AFTER pinia is installed so Phase 1 can later
+// consult the user / system stores during resolution. In Phase 0 it only
+// reads `navigator.language`.
+app.use(i18n);
+applyInitialLocale();
 
 const systemStore = useSystemStore();
 const userStore = useUserStore();

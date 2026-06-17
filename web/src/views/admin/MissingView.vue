@@ -1,18 +1,18 @@
 <template>
   <div class="admin-page">
     <div class="page-header">
-      <h1>Missing Items</h1>
+      <h1>{{ $t('admin.missing.title') }}</h1>
       <button
         class="danger-btn"
         @click="deleteAllMissing"
         :disabled="deleting || loading || items.length === 0"
       >
-        {{ deleting ? 'Deleting...' : 'Delete All Missing' }}
+        {{ deleting ? $t('admin.missing.deleting') : $t('admin.missing.deleteAll') }}
       </button>
     </div>
 
     <p class="hint">
-      Items whose files no longer exist on disk. These are hidden from users automatically.
+      {{ $t('admin.missing.subtitle') }}
     </p>
 
     <div class="toolbar" v-if="libraries.length > 1">
@@ -22,19 +22,19 @@
         class="filter-select"
         :disabled="loading || deleting"
       >
-        <option value="">All Libraries</option>
+        <option value="">{{ $t('admin.missing.allLibraries') }}</option>
         <option v-for="lib in libraries" :key="lib.id" :value="lib.id">
           {{ lib.name }}
         </option>
       </select>
     </div>
 
-    <div v-if="loading" class="loading">Loading...</div>
+    <div v-if="loading" class="loading">{{ $t('common.loading') }}</div>
     <p v-else-if="error" class="error-text">{{ error }}</p>
 
     <template v-else>
       <div class="result-info" v-if="total > 0">
-        {{ total }} missing item{{ total !== 1 ? 's' : '' }}
+        {{ total }} {{ $t('admin.missing.itemCount', total) }}
       </div>
 
       <div class="missing-list" v-if="items.length > 0">
@@ -48,14 +48,14 @@
             @click="deleteSingle(item)"
             :disabled="deletingId === item.id || deleting"
           >
-            {{ deletingId === item.id ? 'Removing...' : 'Remove' }}
+            {{ deletingId === item.id ? $t('admin.missing.removing') : $t('admin.missing.removeButton') }}
           </button>
         </div>
       </div>
 
       <div class="all-clear" v-else>
         <span class="check-icon">&#10003;</span>
-        <p>All items are available on disk.</p>
+        <p>{{ $t('admin.missing.allAvailable') }}</p>
       </div>
     </template>
   </div>
@@ -63,8 +63,14 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { authRequest } from '@/api/request';
+import { getSafeApiErrorMessage, isUnauthorizedOrForbidden } from '@/lib/api/errors';
+import { useNotifications } from '@/composables/useNotifications';
 import type { ApiEnvelope } from '@/api/types';
+
+const { t } = useI18n();
+const { notifySuccess, confirmDialog } = useNotifications();
 
 interface Library {
   id: string;
@@ -102,8 +108,7 @@ async function loadLibraries(): Promise<void> {
     const res = await authRequest.get<ApiEnvelope<Library[]>>('/admin/libraries');
     libraries.value = res.data.data || [];
   } catch (err: any) {
-    const status = err?.response?.status;
-    if (status === 401 || status === 403) {
+    if (isUnauthorizedOrForbidden(err)) {
       return;
     }
 
@@ -128,13 +133,12 @@ async function fetchMissing(): Promise<void> {
     items.value = res.data.data?.items || [];
     total.value = res.data.data?.total || 0;
   } catch (err: any) {
-    const status = err?.response?.status;
-    if (status === 401 || status === 403) {
+    if (isUnauthorizedOrForbidden(err)) {
       return;
     }
 
     console.error('[missing] fetchMissing failed:', err);
-    error.value = 'Failed to load missing items';
+    error.value = t('admin.missing.loadFailed');
   } finally {
     loading.value = false;
   }
@@ -148,8 +152,7 @@ async function deleteSingle(item: MissingItem): Promise<void> {
     await authRequest.delete(`/admin/media/${item.id}`);
     await fetchMissing();
   } catch (err: any) {
-    const status = err?.response?.status;
-    if (status === 401 || status === 403) {
+    if (isUnauthorizedOrForbidden(err)) {
       return;
     }
 
@@ -157,20 +160,14 @@ async function deleteSingle(item: MissingItem): Promise<void> {
     error.value =
       err?.response?.data?.message ||
       err?.response?.data?.error ||
-      `Failed to remove "${item.title}"`;
+      t('admin.missing.removeFailed', { title: item.title });
   } finally {
     deletingId.value = '';
   }
 }
 
 async function deleteAllMissing(): Promise<void> {
-  if (
-    !confirm(
-      `Delete all ${total.value} missing item${
-        total.value !== 1 ? 's' : ''
-      }? This cannot be undone.`
-    )
-  ) {
+  if (!(await confirmDialog(t('admin.missing.confirmDeleteAll', { n: total.value })))) {
     return;
   }
 
@@ -189,20 +186,16 @@ async function deleteAllMissing(): Promise<void> {
     );
 
     const deletedCount = res.data.data?.deleted_count || 0;
-    alert(`Deleted ${deletedCount} item${deletedCount !== 1 ? 's' : ''}.`);
+    notifySuccess(t('admin.missing.deletedCount', { n: deletedCount }));
 
     await fetchMissing();
   } catch (err: any) {
-    const status = err?.response?.status;
-    if (status === 401 || status === 403) {
+    if (isUnauthorizedOrForbidden(err)) {
       return;
     }
 
     console.error('[missing] deleteAllMissing failed:', err);
-    error.value =
-      err?.response?.data?.message ||
-      err?.response?.data?.error ||
-      'Failed to delete missing items';
+    error.value = getSafeApiErrorMessage(err, 'admin.missing.loadFailed');
   } finally {
     deleting.value = false;
   }

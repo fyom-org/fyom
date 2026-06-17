@@ -1,33 +1,33 @@
 <template>
   <div class="admin-page">
     <div class="page-header">
-      <h1>Storage Providers</h1>
+      <h1>{{ $t('admin.providers.title') }}</h1>
       <button class="add-btn" @click="toggleForm" :disabled="loading || saving">
-        {{ showForm ? 'Cancel' : '+ Add Provider' }}
+        {{ showForm ? $t('common.cancel') : $t('admin.providers.addProvider') }}
       </button>
     </div>
 
     <div v-if="showForm" class="form-card">
       <div class="field">
-        <label>Provider ID</label>
-        <input v-model.trim="form.id" placeholder="wasabi-main" :disabled="saving" />
+        <label>{{ $t('admin.providers.providerId') }}</label>
+        <input v-model.trim="form.id" :placeholder="$t('admin.providers.providerIdPlaceholder')" :disabled="saving" />
       </div>
 
       <div class="field">
-        <label>Type</label>
+        <label>{{ $t('admin.providers.type') }}</label>
         <select v-model="form.type" :disabled="saving">
-          <option value="s3">S3 Compatible</option>
-          <option value="remote_fyom">Remote fyom</option>
+          <option value="s3">{{ $t('admin.providers.typeS3') }}</option>
+          <option value="remote_fyom">{{ $t('admin.providers.typeRemote') }}</option>
         </select>
       </div>
 
       <div class="field">
-        <label>Display Name</label>
-        <input v-model.trim="form.display_name" placeholder="Wasabi US-East" :disabled="saving" />
+        <label>{{ $t('admin.providers.displayName') }}</label>
+        <input v-model.trim="form.display_name" :placeholder="$t('admin.providers.displayNamePlaceholder')" :disabled="saving" />
       </div>
 
       <div class="field">
-        <label>Config (JSON)</label>
+        <label>{{ $t('admin.providers.configJson') }}</label>
         <textarea
           v-model="form.config"
           rows="6"
@@ -39,11 +39,11 @@
       <p v-if="error" class="error">{{ error }}</p>
 
       <button class="submit-btn" @click="createProvider" :disabled="saving">
-        {{ saving ? 'Creating...' : 'Create Provider' }}
+        {{ saving ? $t('admin.providers.creating') : $t('admin.providers.createButton') }}
       </button>
     </div>
 
-    <div v-if="loading" class="loading">Loading...</div>
+    <div v-if="loading" class="loading">{{ $t('common.loading') }}</div>
 
     <template v-else>
       <p v-if="!showForm && error" class="error">{{ error }}</p>
@@ -63,10 +63,10 @@
             >
               {{
                 togglePendingId === provider.id
-                  ? 'Saving...'
+                  ? $t('common.saving')
                   : provider.enabled
-                    ? 'Enabled'
-                    : 'Disabled'
+                    ? $t('common.enabled')
+                    : $t('common.disabled')
               }}
             </button>
 
@@ -75,21 +75,27 @@
               :disabled="deletePendingId === provider.id || togglePendingId === provider.id"
               @click="deleteProvider(provider)"
             >
-              {{ deletePendingId === provider.id ? 'Deleting...' : 'Delete' }}
+              {{ deletePendingId === provider.id ? $t('common.deleting') : $t('common.delete') }}
             </button>
           </div>
         </div>
       </div>
 
-      <p v-else class="empty-text">No providers configured.</p>
+      <p v-else class="empty-text">{{ $t('admin.providers.noProviders') }}</p>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { authRequest } from '@/api/request';
+import { getSafeApiErrorMessage, isUnauthorizedOrForbidden } from '@/lib/api/errors';
+import { useNotifications } from '@/composables/useNotifications';
 import type { ApiEnvelope } from '@/api/types';
+
+const { t } = useI18n();
+const { confirmDialog } = useNotifications();
 
 type ProviderType = 's3' | 'remote_fyom';
 
@@ -141,21 +147,21 @@ function toggleForm(): void {
 
 function validateForm(): string {
   if (!form.value.id) {
-    return 'Provider ID is required';
+    return t('admin.providers.providerIdRequired');
   }
 
   if (!form.value.display_name) {
-    return 'Display name is required';
+    return t('admin.providers.displayNameRequired');
   }
 
   if (!form.value.config.trim()) {
-    return 'Config JSON is required';
+    return t('admin.providers.configRequired');
   }
 
   try {
     JSON.parse(form.value.config);
   } catch {
-    return 'Config must be valid JSON';
+    return t('admin.providers.configInvalidJson');
   }
 
   return '';
@@ -169,14 +175,12 @@ async function fetchProviders(): Promise<void> {
     const res = await authRequest.get<ApiEnvelope<Provider[]>>('/admin/providers');
     providers.value = res.data.data || [];
   } catch (err: any) {
-    const status = err?.response?.status;
-
-    if (status === 401 || status === 403) {
+    if (isUnauthorizedOrForbidden(err)) {
       return;
     }
 
     console.error('[providers] fetchProviders failed:', err);
-    error.value = 'Failed to load providers';
+    error.value = t('admin.providers.loadFailed');
   } finally {
     loading.value = false;
   }
@@ -207,22 +211,19 @@ async function createProvider(): Promise<void> {
 
     await fetchProviders();
   } catch (err: any) {
-    const status = err?.response?.status;
-
-    if (status === 401 || status === 403) {
+    if (isUnauthorizedOrForbidden(err)) {
       return;
     }
 
     console.error('[providers] createProvider failed:', err);
-    error.value =
-      err?.response?.data?.message || err?.response?.data?.error || 'Failed to create provider';
+    error.value = getSafeApiErrorMessage(err, 'admin.providers.createFailed');
   } finally {
     saving.value = false;
   }
 }
 
 async function deleteProvider(provider: Provider): Promise<void> {
-  if (!confirm(`Delete provider "${provider.display_name}"?`)) {
+  if (!(await confirmDialog(t('admin.providers.confirmDelete', { name: provider.display_name })))) {
     return;
   }
 
@@ -233,15 +234,12 @@ async function deleteProvider(provider: Provider): Promise<void> {
     await authRequest.delete<ApiEnvelope<null>>(`/admin/providers/${provider.id}`);
     await fetchProviders();
   } catch (err: any) {
-    const status = err?.response?.status;
-
-    if (status === 401 || status === 403) {
+    if (isUnauthorizedOrForbidden(err)) {
       return;
     }
 
     console.error('[providers] deleteProvider failed:', err);
-    error.value =
-      err?.response?.data?.message || err?.response?.data?.error || 'Failed to delete provider';
+    error.value = getSafeApiErrorMessage(err, 'admin.providers.deleteFailed');
   } finally {
     deletePendingId.value = '';
   }
@@ -273,15 +271,12 @@ async function toggleEnabled(provider: Provider): Promise<void> {
 
     await fetchProviders();
   } catch (err: any) {
-    const status = err?.response?.status;
-
-    if (status === 401 || status === 403) {
+    if (isUnauthorizedOrForbidden(err)) {
       return;
     }
 
     console.error('[providers] toggleEnabled failed:', err);
-    error.value =
-      err?.response?.data?.message || err?.response?.data?.error || 'Failed to update provider';
+    error.value = getSafeApiErrorMessage(err, 'admin.providers.updateFailed');
   } finally {
     togglePendingId.value = '';
   }

@@ -3,9 +3,9 @@
     <div v-for="s in seasons" :key="s.season" class="season-group">
       <button class="season-header" @click="toggleSeason(s.season)">
         <span class="season-name">
-          {{ s.season === 0 ? 'Specials' : `Season ${s.season}` }}
+          {{ s.season === 0 ? $t('library.specials') : $t('library.season', { n: s.season }) }}
         </span>
-        <span class="season-count">{{ s.episodes.length }} episode{{ s.episodes.length !== 1 ? 's' : '' }}</span>
+        <span class="season-count">{{ s.episodes.length }} {{ $t('library.episodeCount', s.episodes.length) }}</span>
         <span class="chevron" :class="{ expanded: isSeasonExpanded(s.season) }">&#8249;</span>
       </button>
 
@@ -28,6 +28,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { getEpisodes } from '@/api/library';
+import { useLocaleFormat } from '@/composables/useLocaleFormat';
+
+// Phase 8: locale-aware duration formatting. Previously this component
+// hand-rolled "1h 23m" strings which were English-only.
+const { formatDuration } = useLocaleFormat();
 
 const props = defineProps<{ showId: string }>();
 
@@ -98,12 +103,6 @@ function epLabel(ep: Episode) {
   return `${s}\u00d7${String(e).padStart(2, '0')}`;
 }
 
-function formatDuration(sec: number) {
-  if (!sec) return '';
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
-}
 </script>
 
 <style scoped>

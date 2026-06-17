@@ -2,27 +2,26 @@
   <main class="system-view">
     <header class="page-header">
       <div>
-        <h1>System Health</h1>
+        <h1>{{ $t('admin.system.title') }}</h1>
         <p class="page-subtitle">
-          Review library totals, provider status, user counts, storage distribution, and recent
-          import activity.
+          {{ $t('admin.system.subtitle') }}
         </p>
       </div>
 
       <button type="button" class="refresh-btn" :disabled="loading" @click="loadSystemData">
-        {{ loading ? 'Loading...' : 'Reload' }}
+        {{ loading ? $t('common.loading') : $t('common.reload') }}
       </button>
     </header>
 
-    <div v-if="loading && !stats" class="loading">Loading system health...</div>
+    <div v-if="loading && !stats" class="loading">{{ $t('admin.system.loadingSystemHealth') }}</div>
 
     <div v-else-if="error" class="error-card" role="alert">
       <div>
-        <strong>Unable to load system health</strong>
+        <strong>{{ $t('admin.system.unableToLoad') }}</strong>
         <p>{{ error }}</p>
       </div>
 
-      <button type="button" class="error-action" @click="loadSystemData">Retry</button>
+      <button type="button" class="error-action" @click="loadSystemData">{{ $t('common.retry') }}</button>
     </div>
 
     <template v-else-if="stats">
@@ -31,10 +30,10 @@
           <div class="stat-value">
             {{ stats.library.total_items }}
           </div>
-          <div class="stat-label">Library Items</div>
+          <div class="stat-label">{{ $t('admin.system.libraryItems') }}</div>
           <div class="stat-detail">
-            {{ stats.library.movies }} movies · {{ stats.library.shows }} shows ·
-            {{ stats.library.episodes }} episodes
+            {{ stats.library.movies }} {{ $t('admin.libraries.statsMovies') }} · {{ stats.library.shows }} {{ $t('admin.libraries.statsShows') }} ·
+            {{ stats.library.episodes }} {{ $t('admin.libraries.statsEpisodes') }}
           </div>
         </article>
 
@@ -42,21 +41,21 @@
           <div class="stat-value" :class="{ warn: stats.imports.error > 0 }">
             {{ stats.imports.done }}/{{ stats.imports.total }}
           </div>
-          <div class="stat-label">Imports Completed</div>
+          <div class="stat-label">{{ $t('admin.system.importsCompleted') }}</div>
           <div v-if="stats.imports.running > 0" class="stat-detail">
-            {{ stats.imports.running }} running
+            {{ stats.imports.running }} {{ $t('admin.system.running') }}
           </div>
           <div v-if="stats.imports.error > 0" class="stat-detail error-text">
-            {{ stats.imports.error }} failed
+            {{ stats.imports.error }} {{ $t('admin.system.failed') }}
           </div>
           <div v-if="stats.imports.running === 0 && stats.imports.error === 0" class="stat-detail">
-            No active import issues
+            {{ $t('admin.system.noImportIssues') }}
           </div>
         </article>
 
         <article class="stat-card">
           <div class="stat-value">{{ stats.providers.enabled }}/{{ stats.providers.total }}</div>
-          <div class="stat-label">Providers Active</div>
+          <div class="stat-label">{{ $t('admin.system.providersActive') }}</div>
           <div class="stat-detail">
             {{ providerTypesLabel }}
           </div>
@@ -66,9 +65,9 @@
           <div class="stat-value">
             {{ stats.users.total }}
           </div>
-          <div class="stat-label">Users</div>
+          <div class="stat-label">{{ $t('admin.system.users') }}</div>
           <div class="stat-detail">
-            {{ stats.users.admins }} admin{{ stats.users.admins !== 1 ? 's' : '' }}
+            {{ stats.users.admins }} {{ $t('admin.system.adminCount', stats.users.admins) }}
           </div>
         </article>
       </section>
@@ -76,13 +75,13 @@
       <section class="section">
         <div class="section-header">
           <div>
-            <h2>Recent Imports</h2>
+            <h2>{{ $t('admin.system.recentImports') }}</h2>
             <p class="section-subtitle">
-              Latest import jobs reported by the admin job history endpoint.
+              {{ $t('admin.system.recentImportsHint') }}
             </p>
           </div>
 
-          <span v-if="jobsTotal > jobs.length" class="count"> {{ jobsTotal }} total </span>
+          <span v-if="jobsTotal > jobs.length" class="count"> {{ jobsTotal }} {{ $t('admin.system.total') }} </span>
         </div>
 
         <div v-if="jobsError" class="inline-warning" role="status">
@@ -95,8 +94,8 @@
               {{ statusLabel(job.status) }}
             </span>
 
-            <span class="job-path" :title="job.source_path || 'Unknown source path'">
-              {{ job.source_path || 'Unknown source path' }}
+            <span class="job-path" :title="job.source_path || $t('admin.system.unknownSourcePath')">
+              {{ job.source_path || $t('admin.system.unknownSourcePath') }}
             </span>
 
             <span v-if="job.total_items > 0" class="job-progress">
@@ -113,21 +112,21 @@
               v-if="job.error_msg"
               class="job-error"
               :title="job.error_msg"
-              aria-label="Import job has an error"
+              :aria-label="$t('admin.system.importJobError')"
             >
-              Warning
+              {{ $t('admin.system.warning') }}
             </span>
           </article>
         </div>
 
-        <p v-else-if="!jobsError" class="empty">No import jobs yet.</p>
+        <p v-else-if="!jobsError" class="empty">{{ $t('admin.system.noImportJobs') }}</p>
       </section>
 
       <section class="section">
         <div class="section-header">
           <div>
-            <h2>Storage Distribution</h2>
-            <p class="section-subtitle">Media items grouped by storage provider.</p>
+            <h2>{{ $t('admin.system.storageDistribution') }}</h2>
+            <p class="section-subtitle">{{ $t('admin.system.storageHint') }}</p>
           </div>
         </div>
 
@@ -142,12 +141,12 @@
             </div>
 
             <span class="storage-count">
-              {{ row.count }} item{{ row.count === 1 ? '' : 's' }}
+              {{ row.count }} {{ $t('admin.media.itemsCount') }}
             </span>
           </div>
         </div>
 
-        <p v-else class="empty">No storage distribution data available.</p>
+        <p v-else class="empty">{{ $t('admin.system.noStorageData') }}</p>
       </section>
     </template>
   </main>
@@ -155,8 +154,20 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { authRequest } from '@/api/request';
+import {
+  getSafeApiErrorMessage,
+  isUnauthorizedOrForbidden,
+  isRecord,
+} from '@/lib/api/errors';
 import type { ApiEnvelope } from '@/api/types';
+import { useLocaleFormat } from '@/composables/useLocaleFormat';
+
+const { t } = useI18n();
+// Phase 8: locale-aware datetime formatting. Previously this view called
+// `date.toLocaleDateString(undefined, …)` which used the BROWSER locale.
+const { formatDateTime: formatDateTimeForLocale } = useLocaleFormat();
 
 interface Stats {
   library: {
@@ -215,7 +226,7 @@ const providerTypesLabel = computed(() => {
   const types = stats.value?.providers.types || [];
 
   if (types.length === 0) {
-    return 'No provider types reported';
+    return t('admin.system.noProviderTypes');
   }
 
   return types.join(', ');
@@ -252,12 +263,12 @@ async function loadSystemData(): Promise<void> {
     jobsTotal.value = recentJobs.total;
   } catch (unknownError) {
     if (isUnauthorizedOrForbidden(unknownError)) {
-      error.value = 'You do not have permission to view system health.';
+      error.value = t('admin.system.noPermission');
       return;
     }
 
     console.error('[fyom] load system health failed:', unknownError);
-    error.value = getErrorMessage(unknownError, 'Failed to load system stats.');
+    error.value = getSafeApiErrorMessage(unknownError, 'admin.system.loadFailed');
   } finally {
     loading.value = false;
   }
@@ -283,7 +294,7 @@ async function fetchRecentJobs(): Promise<JobsResponse> {
     return normalizeJobsResponse(response.data);
   } catch (unknownError) {
     if (isUnauthorizedOrForbidden(unknownError)) {
-      jobsError.value = 'Recent import jobs are not available for this account.';
+      jobsError.value = t('admin.system.importsUnavailable');
       return {
         items: [],
         total: 0,
@@ -291,7 +302,7 @@ async function fetchRecentJobs(): Promise<JobsResponse> {
     }
 
     console.error('[fyom] load recent import jobs failed:', unknownError);
-    jobsError.value = getErrorMessage(unknownError, 'Failed to load recent import jobs.');
+    jobsError.value = getSafeApiErrorMessage(unknownError, 'admin.system.importsLoadFailed');
 
     return {
       items: [],
@@ -410,85 +421,30 @@ function statusLabel(status: string): string {
     case 'done':
     case 'completed':
     case 'success':
-      return 'Done';
+      return t('admin.system.statusDone');
     case 'running':
     case 'processing':
-      return 'Running';
+      return t('admin.system.statusRunning');
     case 'error':
     case 'failed':
-      return 'Error';
+      return t('admin.system.statusError');
     case 'cancelled':
-      return 'Cancelled';
+      return t('admin.system.statusCancelled');
     case 'queued':
-      return 'Queued';
+      return t('admin.system.statusQueued');
     default:
-      return 'Pending';
+      return t('admin.system.statusPending');
   }
 }
 
 function formatDate(iso: string): string {
   if (!iso) return '—';
 
-  const date = new Date(iso);
-
-  if (Number.isNaN(date.getTime())) {
-    return '—';
-  }
-
-  return date.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function getErrorMessage(errorValue: unknown, fallback: string): string {
-  if (isRecord(errorValue)) {
-    const response = errorValue.response;
-
-    if (isRecord(response)) {
-      const data = response.data;
-
-      if (isRecord(data)) {
-        const message = data.message || data.error || data.detail;
-
-        if (typeof message === 'string' && message.trim()) {
-          return message;
-        }
-      }
-
-      if (typeof data === 'string' && data.trim()) {
-        return data;
-      }
-    }
-
-    const message = errorValue.message;
-
-    if (typeof message === 'string' && message.trim()) {
-      return message;
-    }
-  }
-
-  return fallback;
-}
-
-function getHttpStatus(errorValue: unknown): number | undefined {
-  if (!isRecord(errorValue)) return undefined;
-
-  const response = errorValue.response;
-
-  if (!isRecord(response)) return undefined;
-
-  const status = response.status;
-
-  return typeof status === 'number' ? status : undefined;
-}
-
-function isUnauthorizedOrForbidden(errorValue: unknown): boolean {
-  const status = getHttpStatus(errorValue);
-
-  return status === 401 || status === 403;
+  // Delegate to the locale-aware composable. The original used a custom
+  // Intl.DateTimeFormat with month/day/hour/minute (no year); the composable's
+  // formatDateTime adds the year which is strictly more informative for a job
+  // log and keeps a single source of truth for datetime formatting.
+  return formatDateTimeForLocale(iso, '—');
 }
 
 function toNumber(value: unknown): number {
@@ -517,10 +473,6 @@ function toNumberRecord(value: unknown): Record<string, number> {
   }
 
   return result;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 </script>
 

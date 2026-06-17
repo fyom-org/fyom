@@ -2,22 +2,24 @@
   <main class="player-view">
     <PlayerFallbackNotice
       v-if="showFallbackBanner"
-      message="Native player unavailable, using browser playback"
+      :message="$t('player.nativeUnavailable')"
       class="fallback-banner"
     />
 
     <section v-if="error" class="error-state" role="alert">
-      <h1>Unable to play media</h1>
+      <h1>{{ $t('player.unableToPlay') }}</h1>
       <p>{{ error }}</p>
 
       <div class="error-actions">
-        <button type="button" class="error-btn" @click="reloadCurrentMedia">Retry</button>
+        <button type="button" class="error-btn" @click="reloadCurrentMedia">
+          {{ $t('player.retry') }}
+        </button>
 
         <router-link v-if="mediaId" :to="`/media/${mediaId}`" class="error-link">
-          Back to details
+          {{ $t('player.backToDetails') }}
         </router-link>
 
-        <router-link to="/library" class="error-link"> Back to library </router-link>
+        <router-link to="/library" class="error-link"> {{ $t('player.backToLibrary') }} </router-link>
       </div>
     </section>
 
@@ -40,16 +42,16 @@
         @ended="onEnded"
         @error="onVideoError"
       >
-        Your browser does not support the video tag.
+        {{ $t('player.browserNotSupported') }}
       </video>
 
       <div v-else-if="isNativeReady" class="native-surface">
-        <span class="native-status">Native playback active</span>
-        <span class="native-subtitle"> Playback is running in the native player. </span>
+        <span class="native-status">{{ $t('player.nativeActive') }}</span>
+        <span class="native-subtitle"> {{ $t('player.nativeRunning') }} </span>
       </div>
 
       <div v-else class="loading">
-        <span>Loading player...</span>
+        <span>{{ $t('player.loadingPlayer') }}</span>
       </div>
     </section>
   </main>
@@ -58,6 +60,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { useRoute } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { getApiErrorMessage, getHttpStatus, getMediaDetail, type MediaItem } from '@/api/library';
 import { authRequest } from '@/api/request';
 import {
@@ -89,6 +92,7 @@ interface TauriWindow extends Window {
 const PROGRESS_REPORT_INTERVAL_SECONDS = 10;
 
 const route = useRoute();
+const { t } = useI18n();
 
 const videoRef = ref<HTMLVideoElement | null>(null);
 const streamUrl = ref('');
@@ -127,10 +131,10 @@ const isLoading = computed(() => {
 });
 
 const loadingLabel = computed(() => {
-  if (loadingMedia.value) return 'Loading media...';
-  if (isInitializing.value) return 'Initializing native player...';
+  if (loadingMedia.value) return t('player.loadingMedia');
+  if (isInitializing.value) return t('player.initializingNative');
 
-  return 'Loading player...';
+  return t('player.loadingPlayer');
 });
 
 const showBrowserPlayer = computed(() => {
@@ -167,7 +171,7 @@ onBeforeUnmount(() => {
 
 async function reloadCurrentMedia(): Promise<void> {
   if (!mediaId.value) {
-    error.value = 'Invalid media id.';
+    error.value = t('player.invalidMediaId');
     return;
   }
 
@@ -199,7 +203,7 @@ async function loadMedia(id: string): Promise<void> {
     const resolvedStreamUrl = extractStreamUrl(media);
 
     if (!resolvedStreamUrl) {
-      error.value = 'No stream is available for this media.';
+      error.value = t('player.noStream');
       nativePlayerState.value = {
         status: 'unavailable',
         failure: null,
@@ -214,6 +218,14 @@ async function loadMedia(id: string): Promise<void> {
 
     if (generation !== loadGeneration || disposed) return;
 
+    // Media has loaded — clear the "Loading media..." flag BEFORE starting
+    // native init so the loading label can switch to the more specific
+    // "Initializing native player..." text (see loadingLabel computed).
+    // Without this, loadingMedia stays true for the entire duration of
+    // attemptNativeInit (which awaits the invoke promise), and the
+    // "Initializing native player" branch in loadingLabel is unreachable.
+    loadingMedia.value = false;
+
     await attemptNativeInit(generation);
   } catch (unknownError) {
     if (generation !== loadGeneration || disposed) return;
@@ -221,12 +233,12 @@ async function loadMedia(id: string): Promise<void> {
     const status = getHttpStatus(unknownError);
 
     if (status === 401 || status === 403) {
-      error.value = 'You are not authorized to play this media.';
+      error.value = t('player.notAuthorized');
       return;
     }
 
     console.error('[fyom] player load media failed:', unknownError);
-    error.value = getApiErrorMessage(unknownError, 'Failed to load media.');
+    error.value = getApiErrorMessage(unknownError, t('player.loadFailed'));
   } finally {
     if (generation === loadGeneration && !disposed) {
       loadingMedia.value = false;
@@ -328,7 +340,7 @@ async function reportProgress(payload: ProgressPayload): Promise<void> {
 
     console.warn(
       '[fyom] player progress update failed:',
-      getApiErrorMessage(unknownError, 'Progress update failed.')
+      getApiErrorMessage(unknownError, t('player.progressUpdateFailed'))
     );
   } finally {
     progressRequestInFlight.value = false;
@@ -383,11 +395,11 @@ async function flushProgressFromVideo(finished: boolean): Promise<void> {
 
 function onVideoError(): void {
   if (isNativeFailed.value || isNativeUnavailable.value || isNativeIdle.value) {
-    error.value = 'Browser playback failed for this media.';
+    error.value = t('player.browserPlaybackFailed');
     return;
   }
 
-  error.value = 'Playback failed for this media.';
+  error.value = t('player.playbackFailed');
 }
 
 async function teardownCurrentPlayback(): Promise<void> {

@@ -2,35 +2,35 @@
   <main class="admin-page">
     <header class="page-header">
       <div>
-        <h1>Library Access</h1>
+        <h1>{{ $t('admin.permissions.title') }}</h1>
         <p class="hint">
-          Control which users can view which libraries. Admins and owners always see all libraries.
+          {{ $t('admin.permissions.subtitle') }}
         </p>
       </div>
 
       <button type="button" class="reload-btn" :disabled="loading" @click="loadPermissionsData">
-        {{ loading ? 'Loading...' : 'Reload' }}
+        {{ loading ? $t('admin.permissions.loading') : $t('admin.permissions.reload') }}
       </button>
     </header>
 
     <div v-if="error" class="error-banner" role="alert">
       <span>{{ error }}</span>
-      <button type="button" class="error-action" @click="clearError">Dismiss</button>
+      <button type="button" class="error-action" @click="clearError">{{ $t('common.dismiss') }}</button>
     </div>
 
-    <div v-if="loading" class="loading">Loading permissions...</div>
+    <div v-if="loading" class="loading">{{ $t('admin.permissions.loadingPermissions') }}</div>
 
     <template v-else-if="users.length > 0 && libraries.length > 0">
       <div class="summary-row">
-        <span>{{ users.length }} user{{ users.length === 1 ? '' : 's' }}</span>
-        <span>{{ libraries.length }} librar{{ libraries.length === 1 ? 'y' : 'ies' }}</span>
+        <span>{{ users.length }} {{ $t('admin.permissions.userCount', users.length) }}</span>
+        <span>{{ libraries.length }} {{ $t('admin.permissions.libraryCount', libraries.length) }}</span>
       </div>
 
       <div class="permissions-matrix">
         <table>
           <thead>
             <tr>
-              <th class="user-header">User</th>
+              <th class="user-header">{{ $t('admin.permissions.userHeader') }}</th>
               <th
                 v-for="library in libraries"
                 :key="library.id"
@@ -66,9 +66,9 @@
                   @click="togglePermission(user, library)"
                 >
                   <span v-if="isPending(user.id, library.id)">...</span>
-                  <span v-else-if="isPrivilegedUser(user)">All</span>
-                  <span v-else-if="canView(user.id, library.id)">Yes</span>
-                  <span v-else>No</span>
+                  <span v-else-if="isPrivilegedUser(user)">{{ $t('admin.permissions.all') }}</span>
+                  <span v-else-if="canView(user.id, library.id)">{{ $t('admin.permissions.yes') }}</span>
+                  <span v-else>{{ $t('admin.permissions.no') }}</span>
                 </button>
               </td>
             </tr>
@@ -82,15 +82,14 @@
     </template>
 
     <section v-else class="empty">
-      <p>No users or libraries to configure.</p>
-      <button type="button" class="reload-btn" @click="loadPermissionsData">Reload</button>
+      <p>{{ $t('admin.permissions.noConfig') }}</p>
+      <button type="button" class="reload-btn" @click="loadPermissionsData">{{ $t('admin.permissions.reload') }}</button>
     </section>
 
     <section class="notice-card">
-      <h2>Important</h2>
+      <h2>{{ $t('admin.permissions.important') }}</h2>
       <p>
-        This page only configures library access. The backend must also enforce these permissions on
-        library, media, playback, progress, and episode endpoints.
+        {{ $t('admin.permissions.importantNote') }}
       </p>
     </section>
   </main>
@@ -98,8 +97,16 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { authRequest } from '@/api/request';
+import {
+  getSafeApiErrorMessage,
+  isUnauthorizedOrForbidden,
+  isRecord,
+} from '@/lib/api/errors';
 import type { ApiEnvelope } from '@/api/types';
+
+const { t } = useI18n();
 
 interface PermissionEntry {
   user_id: string;
@@ -143,7 +150,7 @@ const users = computed<MatrixUser[]>(() => {
     if (!userMap.has(entry.user_id)) {
       userMap.set(entry.user_id, {
         id: entry.user_id,
-        username: entry.username || 'Unknown user',
+        username: entry.username || t('admin.permissions.unknownUser'),
         role: entry.role,
       });
     }
@@ -192,12 +199,16 @@ function isToggleDisabled(user: MatrixUser, libraryId: string): boolean {
 
 function permissionAriaLabel(user: MatrixUser, library: Library): string {
   if (isPrivilegedUser(user)) {
-    return `${user.username} is ${user.role || 'admin'} and can always view ${library.name}`;
+    return t('admin.permissions.ariaHasAccess', {
+      username: user.username,
+      role: user.role || 'admin',
+      library: library.name,
+    });
   }
 
   return canView(user.id, library.id)
-    ? `Revoke ${user.username}'s access to ${library.name}`
-    : `Grant ${user.username} access to ${library.name}`;
+    ? t('admin.permissions.ariaRevoke', { username: user.username, library: library.name })
+    : t('admin.permissions.ariaGrant', { username: user.username, library: library.name });
 }
 
 function clearError(): void {
@@ -224,12 +235,12 @@ async function loadPermissionsData(): Promise<void> {
     libraries.value = normalizeLibraries(libraryResponse.data);
   } catch (unknownError) {
     if (isUnauthorizedOrForbidden(unknownError)) {
-      error.value = 'You do not have permission to manage library access.';
+      error.value = t('admin.permissions.noPermission');
       return;
     }
 
     console.error('[fyom] load permissions failed:', unknownError);
-    error.value = getErrorMessage(unknownError, 'Failed to load library permissions.');
+    error.value = getSafeApiErrorMessage(unknownError, 'admin.permissions.loadFailed');
   } finally {
     loading.value = false;
   }
@@ -260,18 +271,18 @@ async function togglePermission(user: MatrixUser, library: Library): Promise<voi
     });
 
     statusMessage.value = next
-      ? `Granted ${user.username} access to ${library.name}.`
-      : `Revoked ${user.username}'s access to ${library.name}.`;
+      ? t('admin.permissions.granted', { username: user.username, library: library.name })
+      : t('admin.permissions.revoked', { username: user.username, library: library.name });
   } catch (unknownError) {
     permissions.value = previousPermissions;
 
     if (isUnauthorizedOrForbidden(unknownError)) {
-      error.value = 'You do not have permission to update library access.';
+      error.value = t('admin.permissions.updateNoPermission');
       return;
     }
 
     console.error('[fyom] update permission failed:', unknownError);
-    error.value = getErrorMessage(unknownError, 'Failed to update permission.');
+    error.value = getSafeApiErrorMessage(unknownError, 'admin.permissions.updateFailed');
   } finally {
     removePendingKey(key);
   }
@@ -339,7 +350,7 @@ function normalizePermissions(
     .map(
       (entry): PermissionEntry => ({
         user_id: toStringValue(entry.user_id),
-        username: toStringValue(entry.username) || 'Unknown user',
+        username: toStringValue(entry.username) || t('admin.permissions.unknownUser'),
         role: typeof entry.role === 'string' ? entry.role : undefined,
         library_id: toStringValue(entry.library_id),
         library_name: typeof entry.library_name === 'string' ? entry.library_name : undefined,
@@ -359,7 +370,7 @@ function normalizeLibraries(value: ApiEnvelope<Library[]> | Library[] | unknown)
     .map(
       (entry): Library => ({
         id: toStringValue(entry.id),
-        name: toStringValue(entry.name) || 'Untitled library',
+        name: toStringValue(entry.name) || t('admin.permissions.untitledLibrary'),
       })
     )
     .filter((library) => library.id)
@@ -374,89 +385,8 @@ function unwrapUnknownEnvelope(value: unknown): unknown {
   return value;
 }
 
-function getErrorMessage(unknownError: unknown, fallback: string): string {
-  const message = extractErrorMessage(unknownError);
-
-  if (message && isSafeUserFacingMessage(message)) {
-    return message;
-  }
-
-  return fallback;
-}
-
-function extractErrorMessage(unknownError: unknown): string {
-  if (isRecord(unknownError)) {
-    const response = unknownError.response;
-
-    if (isRecord(response)) {
-      const data = response.data;
-
-      if (isRecord(data)) {
-        const message = data.message || data.error || data.detail;
-
-        if (typeof message === 'string' && message.trim()) {
-          return message.trim();
-        }
-      }
-
-      if (typeof data === 'string' && data.trim()) {
-        return data.trim();
-      }
-    }
-
-    const message = unknownError.message;
-
-    if (typeof message === 'string' && message.trim()) {
-      return message.trim();
-    }
-  }
-
-  return '';
-}
-
-function getHttpStatus(unknownError: unknown): number | undefined {
-  if (!isRecord(unknownError)) return undefined;
-
-  const response = unknownError.response;
-
-  if (!isRecord(response)) return undefined;
-
-  const status = response.status;
-
-  return typeof status === 'number' ? status : undefined;
-}
-
-function isUnauthorizedOrForbidden(unknownError: unknown): boolean {
-  const status = getHttpStatus(unknownError);
-
-  return status === 401 || status === 403;
-}
-
-function isSafeUserFacingMessage(message: string): boolean {
-  const normalized = message.toLowerCase();
-
-  const unsafeFragments = [
-    'sql',
-    'stack',
-    'trace',
-    'exception',
-    'internal server',
-    'jwt',
-    'token',
-    'undefined',
-    'null',
-    'request failed with status code',
-  ];
-
-  return !unsafeFragments.some((fragment) => normalized.includes(fragment));
-}
-
 function toStringValue(value: unknown): string {
   return typeof value === 'string' ? value : '';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 </script>
 

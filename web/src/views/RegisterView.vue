@@ -6,13 +6,13 @@
       </router-link>
 
       <header class="register-header">
-        <h1 id="register-title" class="title">Create account</h1>
-        <p class="subtitle">Register a new account to start using fyom</p>
+        <h1 id="register-title" class="title">{{ $t('auth.registerTitle') }}</h1>
+        <p class="subtitle">{{ $t('auth.registerSubtitle') }}</p>
       </header>
 
       <form class="register-form" novalidate @submit.prevent="submit">
         <div class="field">
-          <label for="username">Username</label>
+          <label for="username">{{ $t('auth.username') }}</label>
           <input
             id="username"
             ref="usernameInput"
@@ -34,7 +34,7 @@
         </div>
 
         <div class="field">
-          <label for="password">Password</label>
+          <label for="password">{{ $t('auth.password') }}</label>
 
           <div class="password-wrap">
             <input
@@ -55,10 +55,10 @@
               type="button"
               class="password-toggle"
               :disabled="loading || password.length === 0"
-              :aria-label="showPassword ? 'Hide password' : 'Show password'"
+              :aria-label="showPassword ? $t('auth.hidePassword') : $t('auth.showPassword')"
               @click="showPassword = !showPassword"
             >
-              {{ showPassword ? 'Hide' : 'Show' }}
+              {{ showPassword ? $t('auth.hide') : $t('auth.show') }}
             </button>
           </div>
 
@@ -68,7 +68,7 @@
         </div>
 
         <div class="field">
-          <label for="confirm-password">Confirm password</label>
+          <label for="confirm-password">{{ $t('auth.confirmPassword') }}</label>
 
           <div class="password-wrap">
             <input
@@ -90,11 +90,11 @@
               class="password-toggle"
               :disabled="loading || confirmPassword.length === 0"
               :aria-label="
-                showConfirmPassword ? 'Hide password confirmation' : 'Show password confirmation'
+                showConfirmPassword ? $t('auth.hidePassword') : $t('auth.showPassword')
               "
               @click="showConfirmPassword = !showConfirmPassword"
             >
-              {{ showConfirmPassword ? 'Hide' : 'Show' }}
+              {{ showConfirmPassword ? $t('auth.hide') : $t('auth.show') }}
             </button>
           </div>
 
@@ -109,14 +109,18 @@
 
         <button type="submit" class="submit-btn" :disabled="loading || !canSubmit">
           <span v-if="loading" class="spinner" aria-hidden="true"></span>
-          <span>{{ loading ? 'Registering...' : 'Create account' }}</span>
+          <span>{{ loading ? $t('auth.registering') : $t('auth.register') }}</span>
         </button>
       </form>
 
       <p class="bottom-link">
-        Already have an account?
-        <router-link to="/login"> Sign in </router-link>
+        {{ $t('auth.alreadyHaveAccount') }}
+        <router-link to="/login"> {{ $t('auth.signInHere') }} </router-link>
       </p>
+
+      <div class="locale-row">
+        <LanguageSwitcher variant="compact" />
+      </div>
     </section>
   </main>
 </template>
@@ -124,7 +128,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { apiRequest } from '@/api/request';
+import { getSafeApiErrorMessage } from '@/lib/api/errors';
+import LanguageSwitcher from '@/components/LanguageSwitcher.vue';
+
+const { t } = useI18n();
 
 type RegisterField = 'username' | 'password' | 'confirmPassword';
 
@@ -200,7 +209,7 @@ async function submit(): Promise<void> {
       },
     });
   } catch (unknownError) {
-    error.value = getRegisterErrorMessage(unknownError);
+    error.value = getSafeApiErrorMessage(unknownError, 'auth.registerFailed');
 
     await nextTick();
     usernameInput.value?.focus();
@@ -215,30 +224,29 @@ function validateForm(): boolean {
   const normalizedUsername = username.value.trim();
 
   if (!normalizedUsername) {
-    fieldErrors.username = 'Username is required.';
+    fieldErrors.username = t('auth.usernameRequired');
     valid = false;
   } else if (normalizedUsername.length < MIN_USERNAME_LENGTH) {
-    fieldErrors.username = `Username must be at least ${MIN_USERNAME_LENGTH} characters.`;
+    fieldErrors.username = t('auth.usernameMinLength');
     valid = false;
   } else if (!isSafeUsername(normalizedUsername)) {
-    fieldErrors.username =
-      'Username can only contain letters, numbers, underscores, dots, and hyphens.';
+    fieldErrors.username = t('auth.usernameInvalidChars');
     valid = false;
   }
 
   if (!password.value) {
-    fieldErrors.password = 'Password is required.';
+    fieldErrors.password = t('auth.passwordRequired');
     valid = false;
   } else if (password.value.length < MIN_PASSWORD_LENGTH) {
-    fieldErrors.password = `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
+    fieldErrors.password = t('auth.passwordMinLength');
     valid = false;
   }
 
   if (!confirmPassword.value) {
-    fieldErrors.confirmPassword = 'Please confirm your password.';
+    fieldErrors.confirmPassword = t('validation.passwordMismatch');
     valid = false;
   } else if (password.value !== confirmPassword.value) {
-    fieldErrors.confirmPassword = 'Passwords do not match.';
+    fieldErrors.confirmPassword = t('auth.passwordMismatch');
     valid = false;
   }
 
@@ -267,68 +275,6 @@ function focusFirstInvalidField(): void {
 
 function isSafeUsername(value: string): boolean {
   return /^[a-zA-Z0-9._-]+$/.test(value);
-}
-
-function getRegisterErrorMessage(unknownError: unknown): string {
-  const message = extractErrorMessage(unknownError);
-
-  if (message && isSafeUserFacingMessage(message)) {
-    return message;
-  }
-
-  return 'Registration failed. Please check your details and try again.';
-}
-
-function extractErrorMessage(unknownError: unknown): string {
-  if (isRecord(unknownError)) {
-    const response = unknownError.response;
-
-    if (isRecord(response)) {
-      const data = response.data;
-
-      if (isRecord(data)) {
-        const message = data.message || data.error || data.detail;
-
-        if (typeof message === 'string' && message.trim()) {
-          return message.trim();
-        }
-      }
-
-      if (typeof data === 'string' && data.trim()) {
-        return data.trim();
-      }
-    }
-
-    const message = unknownError.message;
-
-    if (typeof message === 'string' && message.trim()) {
-      return message.trim();
-    }
-  }
-
-  return '';
-}
-
-function isSafeUserFacingMessage(message: string): boolean {
-  const normalized = message.toLowerCase();
-
-  const unsafeFragments = [
-    'sql',
-    'stack',
-    'trace',
-    'exception',
-    'internal server',
-    'jwt',
-    'token',
-    'undefined',
-    'null',
-  ];
-
-  return !unsafeFragments.some((fragment) => normalized.includes(fragment));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 </script>
 
@@ -576,6 +522,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   to {
     transform: rotate(360deg);
   }
+}
+
+.locale-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgb(255 255 255 / 5%);
+}
+
+.locale-row :deep(.ls-label) {
+  color: #777799;
+}
+
+.locale-row :deep(.ls-select) {
+  color: #c8c8e0;
+  background: rgb(255 255 255 / 4%);
+  border-color: rgb(255 255 255 / 10%);
+}
+
+.locale-row :deep(.ls-select:hover:not(:disabled)) {
+  border-color: rgb(255 255 255 / 20%);
+  background: rgb(255 255 255 / 7%);
 }
 
 @media (max-width: 520px) {

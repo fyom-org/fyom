@@ -25,7 +25,7 @@
 
       <div v-if="error" class="error-banner" role="alert">
         <span>{{ error }}</span>
-        <button type="button" class="error-action" @click="reloadCurrentMedia">Retry</button>
+        <button type="button" class="error-action" @click="reloadCurrentMedia">{{ $t('library.retry') }}</button>
       </div>
 
       <section class="hero-section">
@@ -34,7 +34,7 @@
             v-if="posterUrl && !posterFailed"
             class="poster"
             :src="posterUrl"
-            :alt="`${item.title} poster`"
+            :alt="$t('library.poster', { title: item.title })"
             @error="posterFailed = true"
           />
 
@@ -48,7 +48,7 @@
             v-if="logoUrl && !logoFailed"
             class="logo-image"
             :src="logoUrl"
-            :alt="`${item.title} logo`"
+            :alt="$t('library.logo', { title: item.title })"
             @error="logoFailed = true"
           />
 
@@ -117,7 +117,7 @@
           </p>
 
           <section class="status-row" aria-label="Media status">
-            <span class="status-label">Mark as:</span>
+            <span class="status-label">{{ $t('library.markAs') }}</span>
 
             <button
               v-for="status in statusOptions"
@@ -138,7 +138,7 @@
               :disabled="statusSaving"
               @click="setStatus(STATUS_NONE)"
             >
-              Clear
+              {{ $t('library.clear') }}
             </button>
           </section>
 
@@ -159,14 +159,14 @@
           class="expand-btn"
           @click="overviewExpanded = !overviewExpanded"
         >
-          {{ overviewExpanded ? 'Show less' : 'Show more' }}
+          {{ overviewExpanded ? $t('library.showLess') : $t('library.showMore') }}
         </button>
       </section>
 
       <section v-if="item.type === 'episode'" class="episode-detail-section">
         <div class="episode-detail-header">
           <router-link v-if="item.show_id" :to="`/media/${item.show_id}`" class="back-to-show">
-            Back to show
+            {{ $t('library.backToShow') }}
           </router-link>
         </div>
 
@@ -175,7 +175,7 @@
             {{ episodeCode }}
           </h2>
 
-          <span v-if="item.aired" class="episode-aired"> Aired: {{ item.aired }} </span>
+          <span v-if="item.aired" class="episode-aired"> {{ $t('library.aired') }}{{ formatDateForLocale(item.aired, item.aired) }} </span>
 
           <span v-if="isFiniteNumber(item.rating)" class="episode-rating">
             ★ {{ formatRating(item.rating) }}
@@ -189,7 +189,7 @@
 
       <section v-if="visibleActors.length > 0" class="cast-section">
         <div class="section-header">
-          <h3 class="section-subtitle">Cast</h3>
+          <h3 class="section-subtitle">{{ $t('library.cast') }}</h3>
         </div>
 
         <div class="cast-list">
@@ -212,7 +212,7 @@
 
       <section v-if="visibleGuestStars.length > 0" class="guest-stars">
         <div class="section-header">
-          <h3 class="section-subtitle">Guest Stars</h3>
+          <h3 class="section-subtitle">{{ $t('library.guestStars') }}</h3>
         </div>
 
         <div class="cast-grid">
@@ -235,7 +235,7 @@
         v-if="item.set_name || item.collection_number || item.set_overview"
         class="collection-section"
       >
-        <h3 class="section-subtitle">Collection</h3>
+        <h3 class="section-subtitle">{{ $t('library.collection') }}</h3>
 
         <div class="collection-info">
           <span v-if="item.set_name" class="collection-name">
@@ -243,7 +243,7 @@
           </span>
 
           <span v-if="item.collection_number" class="collection-number">
-            TMDb Collection ID: {{ item.collection_number }}
+            {{ $t('library.tmdbCollectionId') }}{{ item.collection_number }}
           </span>
         </div>
 
@@ -257,18 +257,18 @@
   </main>
 
   <main v-else-if="loading" class="state-view">
-    <div class="state-card">Loading media...</div>
+    <div class="state-card">{{ $t('library.loadingMedia') }}</div>
   </main>
 
   <main v-else class="state-view">
     <div class="state-card">
-      <h1>Media not found</h1>
-      <p>{{ error || 'The requested media item could not be loaded.' }}</p>
+      <h1>{{ $t('library.mediaNotFound') }}</h1>
+      <p>{{ error || $t('library.mediaNotFoundDetail') }}</p>
 
       <div class="state-actions">
-        <button type="button" class="state-btn" @click="reloadCurrentMedia">Retry</button>
+        <button type="button" class="state-btn" @click="reloadCurrentMedia">{{ $t('library.retry') }}</button>
 
-        <router-link to="/library" class="state-link"> Back to library </router-link>
+        <router-link to="/library" class="state-link"> {{ $t('library.backToLibrary') }} </router-link>
       </div>
     </div>
   </main>
@@ -277,9 +277,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { getMediaDetail, setMediaStatus } from '@/api/library';
 import EpisodeList from '@/components/EpisodeList.vue';
+import { getSafeApiErrorMessage, isRecord } from '@/lib/api/errors';
 import { resolveResourceUrl } from '@/lib/runtime/resource';
+import { useLocaleFormat } from '@/composables/useLocaleFormat';
 
 interface CastMember {
   name: string;
@@ -360,6 +363,11 @@ const API_BASE_URL = normalizeBaseUrl(
 );
 
 const route = useRoute();
+const { t } = useI18n();
+// Phase 8: locale-aware duration formatting. Previously this view hand-rolled
+// "1h 23m" strings which were English-only even when the UI was Japanese/Chinese.
+// Phase 11: extended to also format date chips and play counts locale-aware.
+const { formatDuration: formatDurationLocale, formatDate: formatDateForLocale, formatNumber } = useLocaleFormat();
 
 const item = ref<MediaItem | null>(null);
 const progress = ref<ProgressState | null>(null);
@@ -378,28 +386,28 @@ const userStatus = ref<MediaStatus>(STATUS_NONE);
 
 let fetchGeneration = 0;
 
-const statusOptions: StatusOption[] = [
+const statusOptions = computed<StatusOption[]>(() => [
   {
     value: STATUS_WANT,
-    label: 'Want',
+    label: t('library.want'),
     className: 'want',
   },
   {
     value: STATUS_WATCHING,
-    label: 'Watching',
+    label: t('library.watching'),
     className: 'watching',
   },
   {
     value: STATUS_WATCHED,
-    label: 'Watched',
+    label: t('library.watched'),
     className: 'watched',
   },
   {
     value: STATUS_DROPPED,
-    label: 'Dropped',
+    label: t('library.dropped'),
     className: 'dropped',
   },
-];
+]);
 
 const posterUrl = computed(() => resolveResourceUrl(item.value?.poster_url));
 const backdropUrl = computed(() => resolveResourceUrl(item.value?.backdrop_url));
@@ -414,13 +422,13 @@ const canPlayItem = computed(() => {
 const typeLabel = computed(() => {
   switch (item.value?.type) {
     case 'movie':
-      return 'Movie';
+      return t('library.movie');
     case 'show':
-      return 'Show';
+      return t('library.show');
     case 'episode':
-      return 'Episode';
+      return t('library.episode');
     default:
-      return item.value?.type || 'Media';
+      return item.value?.type || t('library.media');
   }
 });
 
@@ -434,10 +442,10 @@ const backTarget = computed(() => {
 
 const backLabel = computed(() => {
   if (item.value?.type === 'episode' && item.value.show_id) {
-    return 'Back to show';
+    return t('library.backToShow');
   }
 
-  return 'Back to library';
+  return t('library.backToLibrary');
 });
 
 const metadataChips = computed<MetadataChip[]>(() => {
@@ -448,33 +456,33 @@ const metadataChips = computed<MetadataChip[]>(() => {
 
   if (media.original_title) {
     chips.push({
-      label: 'Original title',
+      label: t('library.originalTitle'),
       value: media.original_title,
     });
   }
 
   if (media.language) {
     chips.push({
-      label: 'Language',
+      label: t('library.language'),
       value: media.language,
     });
   }
 
   if (media.country_code) {
     chips.push({
-      label: 'Country code',
+      label: t('library.countryCode'),
       value: media.country_code,
     });
   }
 
   if (media.custom_rating) {
     chips.push({
-      label: 'Custom rating',
+      label: t('library.customRating'),
       value: media.custom_rating,
     });
   } else if (media.mpaa) {
     chips.push({
-      label: 'MPAA',
+      label: t('library.mpaa'),
       value: media.mpaa,
       kind: 'mpaa',
     });
@@ -491,29 +499,29 @@ const dateChips = computed<DateChip[]>(() => {
 
   if (media.release_date) {
     chips.push({
-      label: 'Released',
-      value: media.release_date,
+      label: t('library.released'),
+      value: formatDateForLocale(media.release_date, media.release_date),
     });
   }
 
   if (media.end_date) {
     chips.push({
-      label: 'End',
-      value: media.end_date,
+      label: t('library.end'),
+      value: formatDateForLocale(media.end_date, media.end_date),
     });
   }
 
   if (media.date_added) {
     chips.push({
-      label: 'Added',
-      value: media.date_added,
+      label: t('library.added'),
+      value: formatDateForLocale(media.date_added, media.date_added),
     });
   }
 
   if (media.playcount && media.playcount > 0) {
     chips.push({
-      label: 'Played',
-      value: `${media.playcount}x`,
+      label: t('library.played'),
+      value: t('library.playedCount', { n: formatNumber(media.playcount) }),
     });
   }
 
@@ -553,13 +561,13 @@ const resumeLabel = computed(() => {
   const position = formatDuration(progress.value.position);
   const duration = formatDuration(progress.value.duration);
 
-  return `Resume from ${position} / ${duration}`;
+  return t('library.resumeFrom', { position, duration });
 });
 
 const playLabel = computed(() => {
-  if (progress.value?.finished) return 'Play again';
-  if (hasProgress.value) return 'Resume';
-  return 'Play';
+  if (progress.value?.finished) return t('library.playAgain');
+  if (hasProgress.value) return t('library.resume');
+  return t('library.play');
 });
 
 const episodeCode = computed(() => {
@@ -594,7 +602,7 @@ async function reloadCurrentMedia(): Promise<void> {
 
   if (typeof id !== 'string' || !id) {
     item.value = null;
-    error.value = 'Invalid media id.';
+    error.value = t('library.invalidMediaId');
     loading.value = false;
     return;
   }
@@ -640,7 +648,7 @@ async function fetchMediaDetail(id: string): Promise<void> {
     if (generation !== fetchGeneration) return;
 
     console.error('[fyom] fetch media detail failed:', unknownError);
-    error.value = getErrorMessage(unknownError, 'Failed to load media detail.');
+    error.value = getSafeApiErrorMessage(unknownError, 'library.loadFailedDetail');
     item.value = null;
   } finally {
     if (generation === fetchGeneration) {
@@ -716,7 +724,7 @@ async function setStatus(status: MediaStatus): Promise<void> {
       item.value.user_status = previousStatus;
     }
 
-    statusError.value = getErrorMessage(unknownError, 'Failed to update status.');
+    statusError.value = getSafeApiErrorMessage(unknownError, 'library.statusUpdateFailed');
   } finally {
     statusSaving.value = false;
   }
@@ -763,17 +771,10 @@ function normalizeStatus(status: unknown): MediaStatus {
 }
 
 function formatDuration(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds <= 0) return '';
-
-  const totalSeconds = Math.floor(seconds);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`;
-  }
-
-  return `${Math.max(1, minutes)}m`;
+  // Delegate to the locale-aware composable. The original returned English-only
+  // "1h 23m"; the composable renders "1時間23分" / "1小时23分" / "1h 23m" per
+  // the active locale. Empty-string contract for non-positive values is preserved.
+  return formatDurationLocale(seconds);
 }
 
 function formatRating(value: number): string {
@@ -788,32 +789,6 @@ function getInitial(value: string): string {
   return trimmed.slice(0, 1).toUpperCase();
 }
 
-function getErrorMessage(errorValue: unknown, fallback: string): string {
-  if (isRecord(errorValue)) {
-    const response = errorValue.response;
-
-    if (isRecord(response)) {
-      const data = response.data;
-
-      if (isRecord(data)) {
-        const message = data.message || data.error || data.detail;
-
-        if (typeof message === 'string' && message.trim()) {
-          return message;
-        }
-      }
-    }
-
-    const message = errorValue.message;
-
-    if (typeof message === 'string' && message.trim()) {
-      return message;
-    }
-  }
-
-  return fallback;
-}
-
 function readPersistedToken(): string | null {
   if (typeof window === 'undefined') return null;
 
@@ -826,10 +801,6 @@ function normalizeBaseUrl(value: string): string {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 </script>
 

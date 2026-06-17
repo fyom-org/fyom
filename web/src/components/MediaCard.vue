@@ -12,14 +12,14 @@
         <img v-if="posterUrl" :src="posterUrl" :alt="item.title" loading="lazy" />
         <div v-else class="poster-fallback">{{ item.title?.[0] ?? '?' }}</div>
         <div
-          class="status-icon"
           v-if="item.user_status && item.user_status !== 'none'"
+          class="status-icon"
           :class="item.user_status"
           @click.stop="cycleStatus"
         >
           {{ statusEmoji }}
         </div>
-        <span class="library-tag" v-if="libraryName">{{ libraryName }}</span>
+        <span v-if="libraryName" class="library-tag">{{ libraryName }}</span>
         <div v-if="hovered" class="hover-overlay">
           <button class="play-icon" @click.stop="play">▶</button>
         </div>
@@ -44,6 +44,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import {
   setMediaStatus,
   STATUS_NONE,
@@ -72,6 +73,7 @@ const emit = defineEmits<{
 }>();
 
 const router = useRouter();
+const { t } = useI18n();
 const hovered = ref(false);
 
 // Normalize poster URL for the current runtime (browser vs Tauri).
@@ -116,7 +118,7 @@ async function cycleStatus() {
     await setMediaStatus(props.item.id, next);
     emit('status-changed', props.item.id, next);
   } catch {
-    console.error('Failed to update status');
+    console.error(t('library.failedToUpdateStatus'));
   }
 }
 </script>

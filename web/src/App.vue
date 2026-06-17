@@ -5,6 +5,9 @@
     <Teleport to="body">
       <ForcePasswordChangeModal v-if="showForcePasswordChangeModal" />
     </Teleport>
+
+    <ToastContainer />
+    <ConfirmDialog />
   </div>
 </template>
 
@@ -13,6 +16,8 @@ import { computed } from 'vue';
 import { useRoute } from 'vue-router';
 import { useUserStore } from '@/stores/user';
 import ForcePasswordChangeModal from '@/components/ForcePasswordChangeModal.vue';
+import ToastContainer from '@/components/ToastContainer.vue';
+import ConfirmDialog from '@/components/ConfirmDialog.vue';
 
 const route = useRoute();
 const userStore = useUserStore();
@@ -22,11 +27,6 @@ const isGuestRoute = computed(() => {
 });
 
 const showForcePasswordChangeModal = computed(() => {
-  /**
-   * App.vue must not decide authentication truth.
-   * It only renders the modal when the user store already has a verified
-   * authenticated session and the current route is not a guest route.
-   */
   return (
     userStore.isAuthenticated &&
     !isGuestRoute.value &&

@@ -7,7 +7,7 @@
           'sidebar-mobile': isMobile,
           'sidebar-hidden': !sidebarOpen,
         }"
-        aria-label="Main navigation"
+        :aria-label="$t('nav.mainNavigation')"
       >
         <div class="sidebar-content">
           <router-link
@@ -16,15 +16,15 @@
             exact-active-class="router-link-active"
             @click="handleNavClick"
           >
-            Home
+            {{ $t('nav.home') }}
           </router-link>
 
           <router-link to="/library" class="nav-link" @click="handleNavClick">
-            Library
+            {{ $t('nav.library') }}
           </router-link>
 
           <router-link to="/profile" class="nav-link" @click="handleNavClick">
-            Profile
+            {{ $t('nav.profile') }}
           </router-link>
 
           <router-link
@@ -33,11 +33,11 @@
             class="nav-link admin-link"
             @click="handleNavClick"
           >
-            Admin
+            {{ $t('nav.admin') }}
           </router-link>
 
           <div v-if="libraries.length >= 2" class="library-section">
-            <div class="section-label">Libraries</div>
+            <div class="section-label">{{ $t('nav.libraries') }}</div>
 
             <router-link
               v-for="library in libraries"
@@ -68,7 +68,7 @@
         type="button"
         class="floating-sidebar-toggle"
         :aria-expanded="sidebarOpen"
-        aria-label="Toggle navigation"
+        :aria-label="$t('nav.toggleNavigation')"
         @click="toggleSidebar"
       >
         ☰
@@ -84,6 +84,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { getLibraries, type Library } from '@/api/library';
 import { useUserStore } from '@/stores/user';
 
@@ -91,6 +92,7 @@ const MOBILE_BREAKPOINT = 768;
 
 const router = useRouter();
 const userStore = useUserStore();
+const { t } = useI18n();
 
 const libraries = ref<Library[]>([]);
 const isMobile = ref(getInitialIsMobile());
@@ -100,11 +102,11 @@ const loggingOut = ref(false);
 const isAdmin = computed(() => userStore.isAdmin);
 
 const username = computed(() => {
-  return userStore.user?.username?.trim() || 'User';
+  return userStore.user?.username?.trim() || t('common.member');
 });
 
 const roleLabel = computed(() => {
-  return userStore.user?.role || 'member';
+  return userStore.user?.role || t('common.member');
 });
 
 onMounted(() => {
