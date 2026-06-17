@@ -143,7 +143,9 @@ function setupRouteRevalidation() {
 }
 
 // Unified route guard — single decision point using system + auth state machines
+
 router.beforeEach(async (to) => {
+
   // Always install revalidation watcher first, regardless of decision outcome
   setupRouteRevalidation();
 
@@ -152,7 +154,11 @@ router.beforeEach(async (to) => {
 
   // 1. Ensure system truth is known
   if (systemStore.status === 'unknown') {
-    await systemStore.fetchSystemStatus();
+    try {
+      await systemStore.fetchSystemStatus();
+    } catch (err) {
+      console.error('[router] fetchSystemStatus failed:', err);
+    }
   }
 
   // 2. Eliminate authStatus=unknown passthrough
@@ -160,7 +166,11 @@ router.beforeEach(async (to) => {
   if (systemStore.isInitialized) {
     if (userStore.status === 'unknown') {
       if (localStorage.getItem('token')) {
-        await userStore.rehydrateSession();
+        try {
+          await userStore.rehydrateSession();
+        } catch (err) {
+          console.error('[router] rehydrateSession failed:', err);
+        }
       } else {
         // No token = explicit anonymous, not "unknown"
         userStore.setAnonymous();
@@ -179,8 +189,10 @@ router.beforeEach(async (to) => {
   switch (decision.type) {
     case 'allow':
       return;
-    case 'redirect':
-      return decision.to;
+    case 'redirect': {
+      const redirectDecision = decision as { type: 'redirect'; to: string };
+      return redirectDecision.to;
+    }
     case 'wait':
       // If navigating to a protected route and auth is rehydrating, allow navigation
       // to proceed. The revalidation watcher will redirect if auth fails.

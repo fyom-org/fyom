@@ -31,6 +31,9 @@ await userStore.rehydrateSession();
 // Mount the app
 app.mount('#app');
 
+// Wait for router to be ready (initial navigation complete)
+await router.isReady();
+
 // Initialize Tauri event listeners after app is mounted
 // This ensures Tauri internals are ready
 initTauriListeners().catch(console.error);
