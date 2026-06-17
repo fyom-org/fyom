@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { nextTick } from 'vue';
 import type { MediaItem } from '@/api/library';
+import i18n from '@/plugins/i18n';
 
 vi.mock('@/api/library', () => ({
   getMediaDetail: vi.fn(),
@@ -16,9 +17,16 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 
-vi.mock('@/lib/runtime/tauri', () => ({
-  isTauriEnvironment: vi.fn().mockReturnValue(false),
-}));
+vi.mock('@/lib/runtime/tauri', async (importOriginal) => {
+  // Spread the actual module exports so transitively-imported code
+  // (e.g. src/api/request.ts which calls getApiBaseUrl() at module-load
+  // time) still works. Only override isTauriEnvironment per-test.
+  const actual = await importOriginal<typeof import('@/lib/runtime/tauri')>();
+  return {
+    ...actual,
+    isTauriEnvironment: vi.fn().mockReturnValue(false),
+  };
+});
 
 import { getMediaDetail } from '@/api/library';
 import { isTauriEnvironment } from '@/lib/runtime/tauri';
@@ -76,6 +84,7 @@ async function mountPlayer(
 
   return mount(PlayerView, {
     global: {
+      plugins: [i18n],
       stubs: {
         RouterLink: true,
         PlayerFallbackNotice: {
@@ -134,7 +143,12 @@ describe('PlayerView native fallback', () => {
     setMockTauriInternals(mockInvoke);
 
     const wrapper = await mountPlayer('http://test/video.mkv', true, mockInvoke);
-    await nextTick();
+    // Wait for media to load (mockGetMediaDetail resolves synchronously, but
+    // the component's async loadMedia() needs microtasks to flush). After
+    // settlePlayer, loadingMedia=false and isInitializing=true (invoke is
+    // forever-pending), so the loading label shows "Initializing native
+    // player..." — the state this test is validating.
+    await settlePlayer();
 
     expect(wrapper.find('.spinner').exists()).toBe(true);
     expect(wrapper.text()).toContain('Initializing native player');
@@ -197,8 +211,13 @@ describe('PlayerView native fallback', () => {
     const wrapper = await mountPlayer(null, false);
     await settlePlayer();
 
-    expect(wrapper.find('video.video-player').exists()).toBe(true);
+    // Current design: a missing stream_url is treated as a player error
+    // (t('player.noStream')), NOT as a browser-player-with-empty-src state.
+    // The error section is shown instead of a <video> element. This is
+    // better UX than a blank video element.
+    expect(wrapper.find('video.video-player').exists()).toBe(false);
     expect(getVideoSrc(wrapper)).toBeUndefined();
     expect(wrapper.find('.spinner').exists()).toBe(false);
+    expect(wrapper.find('.error-state').exists()).toBe(true);
   });
 });

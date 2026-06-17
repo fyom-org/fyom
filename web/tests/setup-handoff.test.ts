@@ -73,8 +73,13 @@ function mockLoginSuccess(token = 'setup-jwt-token') {
 }
 
 function mockMeSuccess(role = 'admin') {
+  // getMe() in @/api/auth unwraps the axios response envelope and returns
+  // the User object directly (see normalizeUser()). The mock must match
+  // that contract — return the User, NOT { data: User }.
   mockGetMe.mockResolvedValue({
-    data: { user_id: 'admin-1', username: 'admin', role },
+    user_id: 'admin-1',
+    username: 'admin',
+    role,
   });
 }
 

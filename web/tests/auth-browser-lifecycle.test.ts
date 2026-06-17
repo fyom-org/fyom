@@ -28,7 +28,7 @@ vi.mock('@/api/auth', () => ({
 }));
 
 // Track auth:unauthorized events
-let unauthorizedHandler: (() => void) | null = null;
+let unauthorizedHandler: ((event: Event) => void) | null = null;
 const originalAddEventListener = window.addEventListener;
 
 beforeEach(() => {
@@ -64,7 +64,13 @@ function simulatePageReload() {
 
 /** Fire the auth:unauthorized event (simulating request interceptor) */
 function fireAuthUnauthorized() {
-  if (unauthorizedHandler) unauthorizedHandler();
+  if (unauthorizedHandler) {
+    // Pass a mock CustomEvent so the handler can read .detail.status.
+    // Without this, the handler receives undefined and crashes when
+    // accessing .detail (the store's handler is defensive against
+    // undefined events, but passing a proper event is more realistic).
+    unauthorizedHandler(new CustomEvent('auth:unauthorized', { detail: { status: 401 } }));
+  }
 }
 
 // ================================================================
@@ -75,7 +81,9 @@ describe('Test 1: valid persisted session restores in fresh browser runtime', ()
     // Simulate: previous session stored a valid token
     localStorage.setItem('token', 'valid-persisted-token');
     mockGetMe.mockResolvedValue({
-      data: { user_id: 'user-1', username: 'testuser', role: 'user' },
+      user_id: 'user-1',
+      username: 'testuser',
+      role: 'user',
     });
 
     // Fresh browser tab = fresh Pinia store
@@ -133,7 +141,9 @@ describe('Test 3: business 403 does not trigger global logout', () => {
     // Set up authenticated session
     localStorage.setItem('token', 'valid-token');
     mockGetMe.mockResolvedValue({
-      data: { user_id: 'user-1', username: 'testuser', role: 'user' },
+      user_id: 'user-1',
+      username: 'testuser',
+      role: 'user',
     });
 
     simulatePageReload();
@@ -162,7 +172,9 @@ describe('Test 3: business 403 does not trigger global logout', () => {
   it('auth:unauthorized event from /auth/me 401 clears session', async () => {
     localStorage.setItem('token', 'stale-token');
     mockGetMe.mockResolvedValue({
-      data: { user_id: 'user-1', username: 'testuser', role: 'user' },
+      user_id: 'user-1',
+      username: 'testuser',
+      role: 'user',
     });
 
     simulatePageReload();
@@ -187,7 +199,9 @@ describe('Test 4: setup success transitions to authenticated state', () => {
     // Simulate: SetupView.submit() after successful initialize + login
     localStorage.setItem('token', 'fresh-setup-token');
     mockGetMe.mockResolvedValue({
-      data: { user_id: 'admin-1', username: 'admin', role: 'admin' },
+      user_id: 'admin-1',
+      username: 'admin',
+      role: 'admin',
     });
 
     simulatePageReload();
@@ -211,7 +225,9 @@ describe('Test 5: reload/new-runtime after valid login preserves session', () =>
     // Step 1: Initial login
     localStorage.setItem('token', 'session-token');
     mockGetMe.mockResolvedValue({
-      data: { user_id: 'user-1', username: 'testuser', role: 'user' },
+      user_id: 'user-1',
+      username: 'testuser',
+      role: 'user',
     });
 
     simulatePageReload();
@@ -242,7 +258,9 @@ describe('Test 6: router waits for auth bootstrap before protected-route decisio
   it('rehydrating state is not treated as anonymous by isAuthReady', async () => {
     localStorage.setItem('token', 'valid-token');
     mockGetMe.mockResolvedValue({
-      data: { user_id: 'user-1', username: 'testuser', role: 'user' },
+      user_id: 'user-1',
+      username: 'testuser',
+      role: 'user',
     });
 
     simulatePageReload();
@@ -298,7 +316,9 @@ describe('Test 7: concurrent rehydration calls are coalesced', () => {
   it('multiple rehydrateSession calls result in single /auth/me request', async () => {
     localStorage.setItem('token', 'valid-token');
     mockGetMe.mockResolvedValue({
-      data: { user_id: 'user-1', username: 'testuser', role: 'user' },
+      user_id: 'user-1',
+      username: 'testuser',
+      role: 'user',
     });
 
     simulatePageReload();
@@ -325,7 +345,9 @@ describe('Test 8: clearStaleSession is the centralized clearing path', () => {
   it('clearStaleSession clears token, user, status, and localStorage', async () => {
     localStorage.setItem('token', 'some-token');
     mockGetMe.mockResolvedValue({
-      data: { user_id: 'user-1', username: 'testuser', role: 'user' },
+      user_id: 'user-1',
+      username: 'testuser',
+      role: 'user',
     });
 
     simulatePageReload();

@@ -138,7 +138,9 @@ describe('Test 7: admin endpoint 403 preserves valid non-admin session', () => {
   it('store stays authenticated after business 403', async () => {
     localStorage.setItem('token', 'valid-non-admin-token');
     mockGetMe.mockResolvedValue({
-      data: { user_id: 'user-1', username: 'testuser', role: 'user' },
+      user_id: 'user-1',
+      username: 'testuser',
+      role: 'user',
     });
 
     const store = useUserStore();

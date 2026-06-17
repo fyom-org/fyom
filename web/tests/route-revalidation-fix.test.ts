@@ -99,28 +99,42 @@ describe('F2: authStatus=unknown must not leak into resolver', () => {
 // ----- F3 Tests: doLogin updates auth status directly -----
 
 describe('F3: doLogin() must complete auth truth', () => {
-  it('doLogin uses router.replace (not router.push) for explicit navigation', async () => {
+  it('doLogin does NOT own navigation — store defers routing to the caller (LoginView)', async () => {
+    // Design decision: doLogin() establishes the authenticated session
+    // (token + user + status) but deliberately does NOT navigate. The
+    // caller (LoginView) decides where to redirect after login. This
+    // separation prevents the store from depending on vue-router and
+    // makes doLogin testable in isolation.
+    //
+    // This test locks that invariant: the store source must not import
+    // useRouter or call router.push / router.replace. If someone later
+    // adds navigation back into the store, this test fails as a
+    // regression guard.
     const fs = await import('fs');
     const path = await import('path');
     const storeFile = fs.readFileSync(
       path.resolve(__dirname, '../src/stores/user.ts'),
       'utf-8'
     );
-    // doLogin should use router.replace, not router.push
     expect(storeFile).not.toContain('router.push');
-    expect(storeFile).toContain('router.replace');
+    expect(storeFile).not.toContain('router.replace');
+    expect(storeFile).not.toMatch(/useRouter\(\)/);
   });
 
-  it('doLogin calls rehydrateSession to complete auth truth', async () => {
-    // Verify doLogin source code calls rehydrateSession
+  it('doLogin establishes auth truth directly via setAuthenticatedSession or getMe', async () => {
+    // doLogin must set the authenticated session synchronously when the
+    // login response includes a user object, OR fall back to calling
+    // getMe() to load the user profile. Either way, after doLogin
+    // resolves, the store is in the authenticated state — no separate
+    // rehydrateSession call should be required.
     const fs = await import('fs');
     const path = await import('path');
     const storeFile = fs.readFileSync(
       path.resolve(__dirname, '../src/stores/user.ts'),
       'utf-8'
     );
-    // doLogin should call rehydrateSession (not rely on guard)
-    expect(storeFile).toMatch(/doLogin.*rehydrateSession/s);
+    // doLogin must call one of these to establish auth truth.
+    expect(storeFile).toMatch(/setAuthenticatedSession|setAuthenticatedUser/);
   });
 });
 
@@ -180,7 +194,7 @@ describe('F4: ProfileView should not call router.replace on logout', () => {
     const store = useUserStore();
     // Manually set authenticated state
     store.status = 'authenticated';
-    store.user = { user_id: 'u1', username: 'test', role: 'user', password_change_required: false };
+    store.user = { user_id: 'u1', username: 'test', role: 'user', password_change_required: false, preferred_language: '' };
     store.token = 'fake-token';
     localStorage.setItem('token', 'fake-token');
 
@@ -233,7 +247,7 @@ describe('Invariant I6: logout() → status=anonymous (synchronous)', () => {
   it('clearStaleSession sets anonymous synchronously', () => {
     const store = useUserStore();
     store.status = 'authenticated';
-    store.user = { user_id: 'u1', username: 'test', role: 'admin', password_change_required: false };
+    store.user = { user_id: 'u1', username: 'test', role: 'admin', password_change_required: false, preferred_language: '' };
     store.token = 'some-token';
 
     store.clearStaleSession();

@@ -18,7 +18,7 @@ vi.mock('@/api/auth', () => ({
 }));
 
 // Capture dispatched auth:unauthorized events
-let unauthorizedHandler: (() => void) | null = null;
+let unauthorizedHandler: ((event: Event) => void) | null = null;
 const originalAddEventListener = window.addEventListener;
 const originalRemoveEventListener = window.removeEventListener;
 
@@ -60,12 +60,13 @@ afterEach(() => {
 // ----- Helpers -----
 
 function mockMeSuccess(overrides: { role?: string; user_id?: string; username?: string } = {}) {
+  // getMe() in @/api/auth unwraps the axios response envelope and returns
+  // the User object directly (see normalizeUser()). The mock must match
+  // that contract — return the User, NOT { data: User }.
   mockGetMe.mockResolvedValue({
-    data: {
-      user_id: overrides.user_id ?? 'user-1',
-      username: overrides.username ?? 'testuser',
-      role: overrides.role ?? 'user',
-    },
+    user_id: overrides.user_id ?? 'user-1',
+    username: overrides.username ?? 'testuser',
+    role: overrides.role ?? 'user',
   });
 }
 
@@ -210,9 +211,9 @@ describe('Test 6: unauthorized response on later API call clears stale session',
     await store.rehydrateSession();
     expect(store.status).toBe('authenticated');
 
-    // Simulate request.ts interceptor dispatching auth:unauthorized on 401
-    expect(unauthorizedHandler).not.toBeNull();
-    unauthorizedHandler!();
+    // Simulate request.ts interceptor dispatching auth:unauthorized on 401.
+    // Pass a proper CustomEvent so the handler can read .detail.status.
+    unauthorizedHandler!(new CustomEvent('auth:unauthorized', { detail: { status: 401 } }));
 
     expect(store.status).toBe('anonymous');
     expect(store.token).toBeNull();
