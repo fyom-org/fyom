@@ -72,7 +72,15 @@ func IsUnrestrictedLibraryAccess(r *http.Request) bool {
 }
 
 // IsLibraryAllowed reports whether the request can access the given library ID.
-// IsLibraryAllowed reports whether the request can access the given library ID.
+//
+// A valid presigned request (RequireValidPresign) is treated as authorized for
+// the signed resource path regardless of library permissions, because the
+// presigned URL itself is a path-bound, time-limited capability token.
+//
+// Otherwise the request's resolved allowed library IDs are consulted:
+//   - nil (admin/owner)            => allowed
+//   - empty slice (no access)      => denied
+//   - non-empty slice              => allowed iff libraryID is in the slice
 func IsLibraryAllowed(r *http.Request, libraryID string) bool {
 	if libraryID == "" {
 		return false
@@ -167,5 +175,12 @@ func getRoleString(r *http.Request) string {
 }
 
 func isPrivilegedRole(role string) bool {
+	// "owner" is reserved for a future multi-admin ownership semantic. No code
+	// path currently mints an owner role (auth assigns user.Role from the DB,
+	// which is admin|user), so accepting "owner" here is forward-compatible
+	// dead code rather than a live privilege. Keep it so that introducing
+	// owner later does not silently forget to grant unrestricted library
+	// access. Note: RequireAdmin (auth.go) only accepts "admin", so owner
+	// bypasses library checks but cannot reach admin-only endpoints.
 	return role == "admin" || role == "owner"
 }
