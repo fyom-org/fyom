@@ -10,6 +10,10 @@
         <p class="subtitle">Sign in to continue to your library</p>
       </header>
 
+      <div v-if="registeredMessage" class="success-banner" role="status">
+        {{ registeredMessage }}
+      </div>
+
       <form class="login-form" novalidate @submit.prevent="handleLogin">
         <div class="field">
           <label for="username">Username</label>
@@ -39,6 +43,7 @@
           <div class="password-wrap">
             <input
               id="password"
+              ref="passwordInput"
               v-model="password"
               :type="showPassword ? 'text' : 'password'"
               required
@@ -97,6 +102,7 @@ const route = useRoute();
 const store = useUserStore();
 
 const usernameInput = ref<HTMLInputElement | null>(null);
+const passwordInput = ref<HTMLInputElement | null>(null);
 
 const username = ref('');
 const password = ref('');
@@ -113,12 +119,16 @@ const canSubmit = computed(() => {
   return username.value.trim().length > 0 && password.value.length > 0;
 });
 
+const registeredMessage = computed(() => {
+  return route.query.registered === '1' ? 'Account created successfully. Please sign in.' : '';
+});
+
 onMounted(async () => {
   await nextTick();
   usernameInput.value?.focus();
 });
 
-async function handleLogin() {
+async function handleLogin(): Promise<void> {
   if (loading.value) return;
 
   error.value = '';
@@ -141,13 +151,18 @@ async function handleLogin() {
     showPassword.value = false;
 
     await nextTick();
-    usernameInput.value?.focus();
+
+    if (username.value.trim()) {
+      passwordInput.value?.focus();
+    } else {
+      usernameInput.value?.focus();
+    }
   } finally {
     loading.value = false;
   }
 }
 
-function validateForm() {
+function validateForm(): boolean {
   let valid = true;
 
   if (!username.value.trim()) {
@@ -163,7 +178,7 @@ function validateForm() {
   return valid;
 }
 
-function clearFieldError(field: LoginField) {
+function clearFieldError(field: LoginField): void {
   fieldErrors[field] = '';
 
   if (error.value) {
@@ -171,45 +186,104 @@ function clearFieldError(field: LoginField) {
   }
 }
 
-function clearAllFieldErrors() {
+function clearAllFieldErrors(): void {
   fieldErrors.username = '';
   fieldErrors.password = '';
 }
 
-function focusFirstInvalidField() {
+function focusFirstInvalidField(): void {
   if (fieldErrors.username) {
     usernameInput.value?.focus();
+    return;
+  }
+
+  if (fieldErrors.password) {
+    passwordInput.value?.focus();
   }
 }
 
-function getRedirectPath() {
+function getRedirectPath(): string {
   const redirect = route.query.redirect;
 
-  if (typeof redirect !== 'string' || !redirect.startsWith('/')) {
+  if (typeof redirect !== 'string') {
     return '/';
   }
 
-  // Prevent protocol-relative redirects like //example.com
-  if (redirect.startsWith('//')) {
+  if (!isSafeRedirectPath(redirect)) {
     return '/';
   }
 
   return redirect;
 }
 
-function getLoginErrorMessage(unknownError: unknown) {
-  if (unknownError instanceof Error && unknownError.message) {
-    const message = unknownError.message.trim();
+function isSafeRedirectPath(value: string): boolean {
+  if (!value.startsWith('/')) return false;
+  if (value.startsWith('//')) return false;
+  if (value.startsWith('/login')) return false;
+  if (value.startsWith('/register')) return false;
 
-    if (isSafeLoginMessage(message)) {
-      return message;
-    }
+  return true;
+}
+
+function getLoginErrorMessage(unknownError: unknown): string {
+  const status = getHttpStatus(unknownError);
+
+  if (status === 401 || status === 403) {
+    return 'Unable to sign in. Please check your username and password.';
+  }
+
+  const message = extractErrorMessage(unknownError);
+
+  if (message && isSafeLoginMessage(message)) {
+    return message;
   }
 
   return 'Unable to sign in. Please check your username and password.';
 }
 
-function isSafeLoginMessage(message: string) {
+function extractErrorMessage(unknownError: unknown): string {
+  if (isRecord(unknownError)) {
+    const response = unknownError.response;
+
+    if (isRecord(response)) {
+      const data = response.data;
+
+      if (isRecord(data)) {
+        const message = data.message || data.error || data.detail;
+
+        if (typeof message === 'string' && message.trim()) {
+          return message.trim();
+        }
+      }
+
+      if (typeof data === 'string' && data.trim()) {
+        return data.trim();
+      }
+    }
+
+    const message = unknownError.message;
+
+    if (typeof message === 'string' && message.trim()) {
+      return message.trim();
+    }
+  }
+
+  return '';
+}
+
+function getHttpStatus(unknownError: unknown): number | undefined {
+  if (!isRecord(unknownError)) return undefined;
+
+  const response = unknownError.response;
+
+  if (!isRecord(response)) return undefined;
+
+  const status = response.status;
+
+  return typeof status === 'number' ? status : undefined;
+}
+
+function isSafeLoginMessage(message: string): boolean {
   const normalized = message.toLowerCase();
 
   const unsafeFragments = [
@@ -222,9 +296,14 @@ function isSafeLoginMessage(message: string) {
     'token',
     'undefined',
     'null',
+    'request failed with status code',
   ];
 
   return !unsafeFragments.some((fragment) => normalized.includes(fragment));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 </script>
 
@@ -390,6 +469,17 @@ function isSafeLoginMessage(message: string) {
   color: #ff8f8f;
   font-size: 12px;
   line-height: 1.4;
+}
+
+.success-banner {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  color: #c9f7d1;
+  background: #14251a;
+  border: 1px solid #2e6b3c;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .error-banner {
