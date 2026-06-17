@@ -1,24 +1,36 @@
 <template>
   <div class="admin-layout">
-    <aside class="admin-sidebar">
-      <div class="brand">fyom admin</div>
+    <aside class="admin-sidebar" aria-label="Admin navigation">
+      <div class="brand">
+        <router-link to="/admin/libraries" class="brand-link"> fyom admin </router-link>
+      </div>
+
       <nav class="admin-nav">
-        <router-link to="/admin/libraries" class="nav-link">Libraries</router-link>
-        <router-link to="/admin/permissions" class="nav-link">Access Control</router-link>
-        <router-link to="/admin/media" class="nav-link">Media</router-link>
-        <router-link to="/admin/missing" class="nav-link">Missing Items</router-link>
-        <router-link to="/admin/providers" class="nav-link">Providers</router-link>
-        <router-link to="/admin/system" class="nav-link">System</router-link>
-        <router-link to="/admin/settings" class="nav-link">Settings</router-link>
+        <router-link v-for="item in navItems" :key="item.to" :to="item.to" class="nav-link">
+          {{ item.label }}
+        </router-link>
       </nav>
+
       <div class="sidebar-bottom">
-        <router-link to="/" class="nav-link back-link">← Back to Library</router-link>
+        <router-link to="/" class="nav-link back-link"> Back to Library </router-link>
+
         <div class="user-info">
-          <span class="username">{{ username }}</span>
-          <button class="logout-btn" @click="logout">Logout</button>
+          <div class="user-meta">
+            <span class="username" :title="username">
+              {{ username }}
+            </span>
+            <span class="role">
+              {{ roleLabel }}
+            </span>
+          </div>
+
+          <button type="button" class="logout-btn" :disabled="loggingOut" @click="handleLogout">
+            {{ loggingOut ? 'Signing out...' : 'Logout' }}
+          </button>
         </div>
       </div>
     </aside>
+
     <main class="admin-content">
       <router-view />
     </main>
@@ -26,104 +38,301 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { getMe } from '@/api/auth';
+import { useUserStore } from '@/stores/user';
+
+interface AdminNavItem {
+  label: string;
+  to: string;
+}
 
 const router = useRouter();
-const username = ref('');
+const userStore = useUserStore();
 
-onMounted(async () => {
-  try {
-    const data = await getMe();
-    username.value = data?.username || '';
-  } catch {
-    // ignore
-  }
+const loggingOut = ref(false);
+
+const navItems: AdminNavItem[] = [
+  {
+    label: 'Libraries',
+    to: '/admin/libraries',
+  },
+  {
+    label: 'Access Control',
+    to: '/admin/permissions',
+  },
+  {
+    label: 'Media',
+    to: '/admin/media',
+  },
+  {
+    label: 'Missing Items',
+    to: '/admin/missing',
+  },
+  {
+    label: 'Providers',
+    to: '/admin/providers',
+  },
+  {
+    label: 'System',
+    to: '/admin/system',
+  },
+  {
+    label: 'Settings',
+    to: '/admin/settings',
+  },
+];
+
+const username = computed(() => {
+  return userStore.user?.username?.trim() || 'Admin';
 });
 
-function logout() {
-  localStorage.removeItem('token');
-  router.push('/login');
+const roleLabel = computed(() => {
+  return userStore.user?.role || 'admin';
+});
+
+async function handleLogout(): Promise<void> {
+  if (loggingOut.value) return;
+
+  loggingOut.value = true;
+
+  try {
+    userStore.logout();
+
+    await router.replace({
+      path: '/login',
+    });
+  } finally {
+    loggingOut.value = false;
+  }
 }
 </script>
 
 <style scoped>
 .admin-layout {
-  display: flex;
   min-height: 100vh;
+  display: flex;
+  color: #e0e0e0;
   background: #0a0a14;
 }
+
 .admin-sidebar {
-  width: 220px;
-  background: #0e0e1a;
-  border-right: 1px solid #1a1a2e;
+  width: 230px;
+  min-width: 230px;
   display: flex;
   flex-direction: column;
   padding: 20px 0;
+  background: #0e0e1a;
+  border-right: 1px solid #1a1a2e;
 }
+
 .brand {
-  font-size: 16px;
-  font-weight: 800;
-  color: #6c63ff;
   padding: 0 20px;
   margin-bottom: 24px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
 }
+
+.brand-link {
+  color: #6c63ff;
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: none;
+}
+
+.brand-link:hover {
+  color: #8f89ff;
+}
+
 .admin-nav {
   flex: 1;
 }
+
 .nav-link {
   display: block;
   padding: 10px 20px;
-  color: #666688;
+  color: #777799;
   text-decoration: none;
   font-size: 13px;
-  transition: all 0.15s;
+  line-height: 1.35;
+  border-left: 2px solid transparent;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease;
 }
+
 .nav-link:hover {
   color: #aaaacc;
   background: #12121e;
 }
-.nav-link.router-link-active {
+
+.nav-link.router-link-active,
+.nav-link.router-link-exact-active {
   color: #ffffff;
   background: #14142a;
-  border-left: 2px solid rgba(108, 99, 255, 0.4);
-  padding-left: 18px;
+  border-left-color: rgb(108 99 255 / 65%);
 }
+
 .sidebar-bottom {
-  border-top: 1px solid #1a1a2e;
-  padding-top: 12px;
   margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid #1a1a2e;
 }
+
 .back-link {
-  color: #555577 !important;
+  color: #666688;
   font-size: 12px;
 }
+
+.back-link::before {
+  content: '← ';
+}
+
 .user-info {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 8px 20px;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 20px 0;
 }
+
+.user-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .username {
-  color: #555577;
+  max-width: 120px;
+  color: #777799;
   font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
+.role {
+  color: #555577;
+  font-size: 11px;
+  text-transform: capitalize;
+}
+
 .logout-btn {
-  background: none;
-  border: none;
-  color: #555577;
-  font-size: 12px;
+  flex: 0 0 auto;
+  padding: 4px 0;
+  color: #777799;
+  background: transparent;
+  border: 0;
   cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  transition:
+    color 0.15s ease,
+    opacity 0.15s ease;
 }
-.logout-btn:hover {
-  color: #ff6b6b;
+
+.logout-btn:hover:not(:disabled) {
+  color: #ff8f8f;
 }
+
+.logout-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .admin-content {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
   padding: 32px;
+}
+
+@media (max-width: 820px) {
+  .admin-layout {
+    flex-direction: column;
+  }
+
+  .admin-sidebar {
+    width: 100%;
+    min-width: 0;
+    padding: 14px 0;
+    border-right: 0;
+    border-bottom: 1px solid #1a1a2e;
+  }
+
+  .brand {
+    margin-bottom: 12px;
+  }
+
+  .admin-nav {
+    display: flex;
+    flex-wrap: wrap;
+    padding: 0 12px;
+  }
+
+  .nav-link {
+    flex: 1 1 auto;
+    padding: 9px 10px;
+    border-left: 0;
+    border-bottom: 2px solid transparent;
+    text-align: center;
+  }
+
+  .nav-link.router-link-active,
+  .nav-link.router-link-exact-active {
+    border-left-color: transparent;
+    border-bottom-color: rgb(108 99 255 / 65%);
+  }
+
+  .sidebar-bottom {
+    margin-top: 12px;
+  }
+
+  .user-info {
+    padding: 10px 20px 0;
+  }
+
+  .username {
+    max-width: 220px;
+  }
+
+  .admin-content {
+    padding: 20px;
+  }
+}
+
+@media (max-width: 520px) {
+  .admin-nav {
+    flex-direction: column;
+  }
+
+  .nav-link {
+    text-align: left;
+  }
+
+  .user-info {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .logout-btn {
+    width: 100%;
+    text-align: left;
+  }
+
+  .admin-content {
+    padding: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-link,
+  .brand-link,
+  .logout-btn {
+    transition: none;
+  }
 }
 </style>
