@@ -1,23 +1,21 @@
 <template>
   <div class="player-view">
-    <!-- Fallback banner: shown only when native was attempted and failed -->
     <PlayerFallbackNotice
       v-if="showFallbackBanner"
       message="Native player unavailable, using browser playback"
+      class="fallback-banner"
     />
 
-    <!-- Error state (fatal: no stream available at all) -->
-    <div v-if="error" class="error">{{ error }}</div>
+    <div v-if="error" class="error">
+      {{ error }}
+    </div>
 
-    <!-- Player surface -->
     <div v-else class="player-surface">
-      <!-- Loading state while native player initializes -->
       <div v-if="isLoading" class="loading">
         <span class="spinner"></span>
         <span>Initializing native player...</span>
       </div>
 
-      <!-- HTML5 browser player (fallback or default) -->
       <video
         v-else-if="showBrowserPlayer && streamUrl"
         ref="videoRef"
@@ -31,8 +29,11 @@
         Your browser does not support the video tag.
       </video>
 
-      <!-- Waiting for stream URL -->
-      <div v-else-if="!streamUrl" class="loading">
+      <div v-else-if="isNativeReady" class="native-surface">
+        <span class="native-status">Native playback active</span>
+      </div>
+
+      <div v-else class="loading">
         <span>Loading...</span>
       </div>
     </div>
@@ -40,9 +41,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, shallowRef } from 'vue';
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { getMediaDetail } from '@/api/library';
+import { getMediaDetail, type MediaItem } from '@/api/library';
+import { authRequest } from '@/api/request';
 import {
   createInitialNativePlayerState,
   tryInitializeNativePlayer,
@@ -51,105 +53,136 @@ import {
 } from '@/lib/player/native-player';
 import PlayerFallbackNotice from '@/components/PlayerFallbackNotice.vue';
 
+interface ProgressPayload {
+  position: number;
+  duration: number;
+  finished: boolean;
+}
+
 const route = useRoute();
-const streamUrl = ref('');
-const error = ref('');
+
 const videoRef = ref<HTMLVideoElement | null>(null);
-let lastReport = 0;
+const streamUrl = ref<string>('');
+const error = ref('');
 
-// Use shallowRef for state object to avoid deep reactivity overhead
-const nativePlayerState = shallowRef<NativePlayerState>(
-  createInitialNativePlayerState(),
-);
+const nativePlayerState = shallowRef<NativePlayerState>(createInitialNativePlayerState());
 
-// Guard: ensure we only attempt native init once per mount
 const nativeInitAttempted = ref(false);
+const lastReportedPosition = ref(0);
+const progressRequestInFlight = ref(false);
 
-/* ── Computed flags ────────────────────────────────────────────────────── */
+const mediaId = computed(() => String(route.params.id ?? ''));
 
 const isNativeAvailable = computed(() => isNativePlaybackRuntimeAvailable());
 const isInitializing = computed(() => nativePlayerState.value.status === 'initializing');
-const isFailed = computed(() => nativePlayerState.value.status === 'failed');
-const isReady = computed(() => nativePlayerState.value.status === 'ready');
-const isUnavailable = computed(() => nativePlayerState.value.status === 'unavailable');
+const isNativeReady = computed(() => nativePlayerState.value.status === 'ready');
+const isNativeFailed = computed(() => nativePlayerState.value.status === 'failed');
+const isNativeUnavailable = computed(() => nativePlayerState.value.status === 'unavailable');
+const isNativeIdle = computed(() => nativePlayerState.value.status === 'idle');
 
-// Show fallback banner only when native was attempted AND failed
-const showFallbackBanner = computed(() => {
-  return isNativeAvailable.value && isFailed.value;
-});
-
-// Show loading spinner only during active native initialization
+const showFallbackBanner = computed(() => isNativeAvailable.value && isNativeFailed.value);
 const isLoading = computed(() => isInitializing.value);
 
-// Show browser player when:
-// - native is unavailable (browser mode, never attempted)
-// - native failed (browser fallback)
-// - native is idle but stream URL is ready (browser default before native attempt completes)
-// - native is ready but we still show browser (shouldn't happen, but safe)
 const showBrowserPlayer = computed(() => {
-  // Never show browser player while native is initializing
+  if (error.value) return false;
   if (isInitializing.value) return false;
-  // Show browser player when native failed
-  if (isFailed.value) return true;
-  // Show browser player when native is unavailable (browser mode)
-  if (isUnavailable.value) return true;
-  // Show browser player when native is idle (not yet attempted, stream ready)
-  if (nativePlayerState.value.status === 'idle') return true;
-  // When native is ready, native surface is used
+  if (!streamUrl.value) return false;
+
+  if (isNativeFailed.value) return true;
+  if (isNativeUnavailable.value) return true;
+  if (isNativeIdle.value) return true;
+
   return false;
 });
 
-/* ── Progress tracking ─────────────────────────────────────────────────── */
+function resetViewState(): void {
+  streamUrl.value = '';
+  error.value = '';
+  nativePlayerState.value = createInitialNativePlayerState();
+  nativeInitAttempted.value = false;
+  lastReportedPosition.value = 0;
+  progressRequestInFlight.value = false;
+}
 
-function onTimeUpdate() {
-  const video = videoRef.value;
-  if (!video) return;
-  if (video.currentTime - lastReport > 10) {
-    lastReport = video.currentTime;
-    fetch(`/api/v1/media/${route.params.id}/progress`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('token') || ''}`,
-      },
-      body: JSON.stringify({
-        position: Math.floor(video.currentTime),
-        duration: Math.floor(video.duration || 0),
-        finished: false,
-      }),
-    }).catch(() => {});
+function buildProgressPayload(video: HTMLVideoElement, finished: boolean): ProgressPayload {
+  const duration = Math.floor(video.duration || 0);
+  const position = finished ? duration : Math.floor(video.currentTime || 0);
+
+  return {
+    position,
+    duration,
+    finished,
+  };
+}
+
+async function reportProgress(payload: ProgressPayload): Promise<void> {
+  if (!mediaId.value) return;
+  if (progressRequestInFlight.value) return;
+
+  progressRequestInFlight.value = true;
+
+  try {
+    await authRequest.put(`/media/${mediaId.value}/progress`, payload);
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status === 401 || status === 403) {
+      return;
+    }
+
+    console.error('[player] reportProgress failed:', err);
+  } finally {
+    progressRequestInFlight.value = false;
   }
 }
 
-function onEnded() {
+function onTimeUpdate(): void {
   const video = videoRef.value;
   if (!video) return;
-  fetch(`/api/v1/media/${route.params.id}/progress`, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${localStorage.getItem('token') || ''}`,
-    },
-    body: JSON.stringify({
-      position: Math.floor(video.duration || 0),
-      duration: Math.floor(video.duration || 0),
-      finished: true,
-    }),
-  }).catch(() => {});
+
+  const currentTime = Math.floor(video.currentTime || 0);
+
+  if (currentTime - lastReportedPosition.value < 10) {
+    return;
+  }
+
+  lastReportedPosition.value = currentTime;
+  void reportProgress(buildProgressPayload(video, false));
 }
 
-/* ── Native player lifecycle ───────────────────────────────────────────── */
+function onEnded(): void {
+  const video = videoRef.value;
+  if (!video) return;
 
-/**
- * Attempt native player initialization.
- * This function is called exactly once per mount lifecycle.
- * It transitions the state machine: idle → initializing → ready | failed
- */
-async function attemptNativeInit(mediaId: string): Promise<void> {
+  lastReportedPosition.value = Math.floor(video.duration || 0);
+  void reportProgress(buildProgressPayload(video, true));
+}
+
+async function stopNativePlayer(): Promise<void> {
+  if (!isNativeReady.value) return;
+
+  try {
+    const tauriInvoke = (window as any)?.__TAURI_INTERNALS__?.tauri?.invoke;
+    if (typeof tauriInvoke === 'function') {
+      await tauriInvoke('stop_media');
+    }
+  } catch {
+    // Ignore native cleanup failures
+  }
+}
+
+async function attemptNativeInit(): Promise<void> {
   if (nativeInitAttempted.value) return;
   nativeInitAttempted.value = true;
 
-  // Check runtime availability first
+  if (!streamUrl.value) {
+    nativePlayerState.value = {
+      status: 'unavailable',
+      failure: null,
+      attempted: false,
+    };
+    return;
+  }
+
   if (!isNativePlaybackRuntimeAvailable()) {
     nativePlayerState.value = {
       status: 'unavailable',
@@ -159,14 +192,12 @@ async function attemptNativeInit(mediaId: string): Promise<void> {
     return;
   }
 
-  // Transition to initializing
   nativePlayerState.value = {
     status: 'initializing',
     failure: null,
     attempted: true,
   };
 
-  // Attempt native init via bridge function
   const result = await tryInitializeNativePlayer({
     mediaUrl: streamUrl.value,
   });
@@ -177,49 +208,79 @@ async function attemptNativeInit(mediaId: string): Promise<void> {
       failure: null,
       attempted: true,
     };
-  } else {
-    nativePlayerState.value = {
-      status: 'failed',
-      failure: result.failure,
-      attempted: true,
-    };
-    console.warn('[Player] Native player init failed:', result.failure.stage, result.failure.message);
+    return;
   }
+
+  nativePlayerState.value = {
+    status: 'failed',
+    failure: result.failure,
+    attempted: true,
+  };
+
+  console.warn(
+    '[player] native initialization failed:',
+    result.failure.stage,
+    result.failure.message
+  );
 }
 
-/* ── Lifecycle ─────────────────────────────────────────────────────────── */
+function extractStreamUrl(media: MediaItem): string {
+  const raw = media.stream_url;
+  return typeof raw === 'string' ? raw : '';
+}
 
-onMounted(async () => {
+async function loadMedia(): Promise<void> {
+  if (!mediaId.value) {
+    error.value = 'Invalid media id.';
+    return;
+  }
+
+  resetViewState();
+
   try {
-    const mediaId = route.params.id as string;
-    const data = await getMediaDetail(mediaId);
+    const media = await getMediaDetail(mediaId.value);
+    const resolvedStreamUrl = extractStreamUrl(media);
 
-    if (!data.stream_url) {
+    if (!resolvedStreamUrl) {
       error.value = 'No stream available for this media.';
+      nativePlayerState.value = {
+        status: 'unavailable',
+        failure: null,
+        attempted: false,
+      };
       return;
     }
 
-    // Store stream URL for browser fallback
-    streamUrl.value = data.stream_url;
+    streamUrl.value = resolvedStreamUrl;
+    await attemptNativeInit();
+  } catch (err: any) {
+    const status = err?.response?.status;
 
-    // Attempt native init (only in Tauri runtime; no-op in browser)
-    await attemptNativeInit(mediaId);
-  } catch {
+    if (status === 401 || status === 403) {
+      return;
+    }
+
+    console.error('[player] loadMedia failed:', err);
     error.value = 'Failed to load media.';
   }
+}
+
+onMounted(() => {
+  void loadMedia();
 });
 
-onUnmounted(() => {
-  // Clean up native player only if it was successfully initialized
-  if (isReady.value) {
-    try {
-      // @ts-expect-error — __TAURI_INTERNALS__ exists in Tauri runtime
-      const { invoke } = window.__TAURI_INTERNALS__.tauri;
-      invoke('stop_media').catch(() => {});
-    } catch {
-      // Ignore cleanup errors — native may have already been torn down
-    }
+watch(
+  () => mediaId.value,
+  async (nextId, previousId) => {
+    if (!nextId || nextId === previousId) return;
+
+    await stopNativePlayer();
+    void loadMedia();
   }
+);
+
+onUnmounted(() => {
+  void stopNativePlayer();
 });
 </script>
 
@@ -275,7 +336,9 @@ onUnmounted(() => {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .error {
