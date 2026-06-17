@@ -12,12 +12,10 @@ const apiRequest: AxiosInstance = axios.create({
 
 /**
  * Auth-specific API client for authentication endpoints.
- * Uses empty baseURL so relative paths resolve against the origin
- * (e.g., /auth/login, /auth/me) since the backend serves auth endpoints
- * at the root level, not under /api/v1.
+ * Uses /api/v1 baseURL to match backend route configuration.
  */
 const authRequest: AxiosInstance = axios.create({
-  baseURL: '',
+  baseURL: '/api/v1',
   timeout: 10000,
 });
 

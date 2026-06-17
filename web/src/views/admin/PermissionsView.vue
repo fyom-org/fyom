@@ -1,9 +1,12 @@
 <template>
   <div class="admin-page">
     <h1>Library Access</h1>
-    <p class="hint">Control which users can view which libraries. Admins always see all libraries.</p>
+    <p class="hint">
+      Control which users can view which libraries. Admins always see all libraries.
+    </p>
 
     <div v-if="loading" class="loading">Loading...</div>
+    <p v-else-if="error" class="error-text">{{ error }}</p>
 
     <template v-else-if="users.length > 0 && libraries.length > 0">
       <div class="permissions-matrix">
@@ -11,18 +14,28 @@
           <thead>
             <tr>
               <th class="user-header">User</th>
-              <th v-for="lib in libraries" :key="lib.id" class="lib-header">{{ lib.name }}</th>
+              <th v-for="lib in libraries" :key="lib.id" class="lib-header">
+                {{ lib.name }}
+              </th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="user in users" :key="user.id">
               <td class="user-cell">{{ user.username }}</td>
+
               <td v-for="lib in libraries" :key="lib.id" class="perm-cell">
                 <button
                   :class="['perm-toggle', { active: canView(user.id, lib.id) }]"
-                  @click="togglePermission(user.id, lib.id, canView(user.id, lib.id))"
+                  :disabled="pendingKey === makePermissionKey(user.id, lib.id)"
+                  @click="togglePermission(user.id, lib.id)"
                 >
-                  {{ canView(user.id, lib.id) ? '&#10003;' : '&#10007;' }}
+                  {{
+                    pendingKey === makePermissionKey(user.id, lib.id)
+                      ? '...'
+                      : canView(user.id, lib.id)
+                        ? '✓'
+                        : '✗'
+                  }}
                 </button>
               </td>
             </tr>
@@ -31,76 +44,154 @@
       </div>
     </template>
 
-    <p class="empty" v-else>No users or libraries to configure.</p>
+    <p v-else class="empty">No users or libraries to configure.</p>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
-import { apiRequest } from '@/api/request';
+import { computed, onMounted, ref } from 'vue';
+import { authRequest } from '@/api/request';
+import type { ApiEnvelope } from '@/api/types';
 
-const permissions = ref<any[]>([]);
-const libraries = ref<any[]>([]);
-const users = ref<any[]>([]);
+interface PermissionEntry {
+  user_id: string;
+  username: string;
+  library_id: string;
+  library_name?: string;
+  can_view: boolean;
+}
+
+interface Library {
+  id: string;
+  name: string;
+}
+
+interface MatrixUser {
+  id: string;
+  username: string;
+}
+
+const permissions = ref<PermissionEntry[]>([]);
+const libraries = ref<Library[]>([]);
 const loading = ref(true);
+const error = ref('');
+const pendingKey = ref('');
 
-onMounted(async () => {
+const users = computed<MatrixUser[]>(() => {
+  const userMap = new Map<string, string>();
+
+  for (const entry of permissions.value) {
+    if (!userMap.has(entry.user_id)) {
+      userMap.set(entry.user_id, entry.username);
+    }
+  }
+
+  return Array.from(userMap.entries())
+    .map(([id, username]) => ({ id, username }))
+    .sort((a, b) => a.username.localeCompare(b.username));
+});
+
+const permissionMap = computed<Record<string, boolean>>(() => {
+  const map: Record<string, boolean> = {};
+
+  for (const entry of permissions.value) {
+    map[makePermissionKey(entry.user_id, entry.library_id)] = entry.can_view;
+  }
+
+  return map;
+});
+
+function makePermissionKey(userId: string, libraryId: string): string {
+  return `${userId}::${libraryId}`;
+}
+
+function canView(userId: string, libraryId: string): boolean {
+  return permissionMap.value[makePermissionKey(userId, libraryId)] === true;
+}
+
+async function loadPermissionsData(): Promise<void> {
+  loading.value = true;
+  error.value = '';
+
   try {
     const [permRes, libRes] = await Promise.all([
-      request.get('/admin/permissions'),
-      request.get('/admin/libraries'),
+      authRequest.get<ApiEnvelope<PermissionEntry[]>>('/admin/permissions'),
+      authRequest.get<ApiEnvelope<Library[]>>('/admin/libraries'),
     ]);
-    permissions.value = (permRes as any).data || [];
-    libraries.value = (libRes as any).data || [];
 
-    const userMap = new Map<string, string>();
-    for (const p of permissions.value) {
-      if (!userMap.has(p.user_id)) {
-        userMap.set(p.user_id, p.username);
-      }
+    permissions.value = permRes.data.data || [];
+    libraries.value = (libRes.data.data || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+  } catch (err: any) {
+    const status = err?.response?.status;
+
+    if (status === 401 || status === 403) {
+      return;
     }
-    users.value = Array.from(userMap.entries()).map(([id, name]) => ({
-      id, username: name,
-    }));
-  } catch {
-    // ignore
+
+    console.error('[permissions] loadPermissionsData failed:', err);
+    error.value = 'Failed to load library permissions';
   } finally {
     loading.value = false;
   }
-});
-
-function canView(userId: string, libraryId: string) {
-  const p = permissions.value.find(
-    (x: any) => x.user_id === userId && x.library_id === libraryId
-  );
-  return p?.can_view ?? false;
 }
 
-async function togglePermission(userId: string, libraryId: string, current: boolean) {
+async function togglePermission(userId: string, libraryId: string): Promise<void> {
+  const key = makePermissionKey(userId, libraryId);
+  const current = canView(userId, libraryId);
+  const next = !current;
+
+  pendingKey.value = key;
+
   try {
-    await request.put('/admin/permissions', {
+    await authRequest.put<ApiEnvelope<null>>('/admin/permissions', {
       user_id: userId,
       library_id: libraryId,
-      can_view: !current,
+      can_view: next,
     });
+
     const idx = permissions.value.findIndex(
-      (x: any) => x.user_id === userId && x.library_id === libraryId
+      (entry) => entry.user_id === userId && entry.library_id === libraryId
     );
+
     if (idx >= 0) {
-      permissions.value[idx].can_view = !current;
+      permissions.value[idx] = {
+        ...permissions.value[idx],
+        can_view: next,
+      };
+      permissions.value = [...permissions.value];
     } else {
-      const username = users.value.find((u: any) => u.id === userId)?.username || '';
-      const libName = libraries.value.find((l: any) => l.id === libraryId)?.name || '';
-      permissions.value.push({
-        user_id: userId, username,
-        library_id: libraryId, library_name: libName,
-        can_view: true,
-      });
+      const username = users.value.find((u) => u.id === userId)?.username || '';
+      const libraryName = libraries.value.find((l) => l.id === libraryId)?.name || '';
+
+      permissions.value = [
+        ...permissions.value,
+        {
+          user_id: userId,
+          username,
+          library_id: libraryId,
+          library_name: libraryName,
+          can_view: next,
+        },
+      ];
     }
-  } catch {
-    // ignore
+  } catch (err: any) {
+    const status = err?.response?.status;
+
+    if (status === 401 || status === 403) {
+      return;
+    }
+
+    console.error('[permissions] togglePermission failed:', err);
+    error.value =
+      err?.response?.data?.message || err?.response?.data?.error || 'Failed to update permission';
+  } finally {
+    pendingKey.value = '';
   }
 }
+
+onMounted(() => {
+  void loadPermissionsData();
+});
 </script>
 
 <style scoped>
@@ -118,6 +209,12 @@ h1 {
 
 .loading {
   color: #555577;
+}
+
+.error-text {
+  color: #ff6b6b;
+  font-size: 13px;
+  margin-bottom: 16px;
 }
 
 .permissions-matrix {
@@ -178,8 +275,13 @@ td {
   border-color: #2a4a2a;
 }
 
-.perm-toggle:hover {
+.perm-toggle:hover:not(:disabled) {
   border-color: #2a2a3e;
+}
+
+.perm-toggle:disabled {
+  opacity: 0.6;
+  cursor: wait;
 }
 
 .empty {

@@ -2,7 +2,7 @@
   <RouterView />
   <Teleport to="body">
     <ForcePasswordChangeModal
-      v-if="userStore.isAuthenticated && userStore.requiresPasswordChange"
+      v-if="userStore.isAuthenticated && userStore.user?.password_change_required"
     />
   </Teleport>
 </template>

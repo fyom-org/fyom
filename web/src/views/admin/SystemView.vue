@@ -11,7 +11,8 @@
           <div class="stat-value">{{ stats.library.total_items }}</div>
           <div class="stat-label">Library Items</div>
           <div class="stat-detail">
-            {{ stats.library.movies }} movies &middot; {{ stats.library.shows }} shows &middot; {{ stats.library.episodes }} episodes
+            {{ stats.library.movies }} movies · {{ stats.library.shows }} shows ·
+            {{ stats.library.episodes }} episodes
           </div>
         </div>
 
@@ -31,13 +32,17 @@
         <div class="stat-card">
           <div class="stat-value">{{ stats.providers.enabled }}/{{ stats.providers.total }}</div>
           <div class="stat-label">Providers Active</div>
-          <div class="stat-detail">{{ stats.providers.types.join(', ') }}</div>
+          <div class="stat-detail">
+            {{ stats.providers.types.join(', ') }}
+          </div>
         </div>
 
         <div class="stat-card">
           <div class="stat-value">{{ stats.users.total }}</div>
           <div class="stat-label">Users</div>
-          <div class="stat-detail">{{ stats.users.admins }} admin{{ stats.users.admins !== 1 ? 's' : '' }}</div>
+          <div class="stat-detail">
+            {{ stats.users.admins }} admin{{ stats.users.admins !== 1 ? 's' : '' }}
+          </div>
         </div>
       </div>
 
@@ -57,22 +62,29 @@
               {{ job.done_items }}/{{ job.total_items }}
             </span>
             <span class="job-date">{{ formatDate(job.created_at) }}</span>
-            <span class="job-error" v-if="job.error_msg" :title="job.error_msg">&#9888;</span>
+            <span class="job-error" v-if="job.error_msg" :title="job.error_msg">⚠</span>
           </div>
         </div>
+
         <p class="empty" v-else>No import jobs yet.</p>
       </div>
 
       <div class="section">
         <h2>Storage Distribution</h2>
+
         <div class="storage-bars">
-          <div class="storage-row" v-for="(count, provider) in stats.storage" :key="provider">
+          <div v-for="(count, provider) in stats.storage" :key="provider" class="storage-row">
             <span class="storage-provider">{{ provider }}</span>
+
             <div class="storage-bar-track">
-              <div class="storage-bar-fill"
-                   :style="{ transform: `scaleX(${count / stats.library.total_items})` }">
-              </div>
+              <div
+                class="storage-bar-fill"
+                :style="{
+                  transform: `scaleX(${safeRatio(count, stats.library.total_items)})`,
+                }"
+              />
             </div>
+
             <span class="storage-count">{{ count }} items</span>
           </div>
         </div>
@@ -83,54 +95,128 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { apiRequest } from '@/api/request';
+import { authRequest } from '@/api/request';
+import type { ApiEnvelope } from '@/api/types';
 
-const stats = ref<any>(null);
-const jobs = ref<any[]>([]);
+interface Stats {
+  library: {
+    total_items: number;
+    movies: number;
+    shows: number;
+    episodes: number;
+  };
+  imports: {
+    total: number;
+    done: number;
+    running: number;
+    error: number;
+  };
+  providers: {
+    total: number;
+    enabled: number;
+    types: string[];
+  };
+  users: {
+    total: number;
+    admins: number;
+  };
+  storage: Record<string, number>;
+}
+
+interface Job {
+  id: string;
+  status: string;
+  source_path: string;
+  total_items: number;
+  done_items: number;
+  created_at: string;
+  error_msg?: string;
+}
+
+interface JobsResponse {
+  items: Job[];
+  total: number;
+}
+
+const stats = ref<Stats | null>(null);
+const jobs = ref<Job[]>([]);
 const jobsTotal = ref(0);
 const loading = ref(true);
 const error = ref('');
 
-onMounted(async () => {
+async function loadSystemData(): Promise<void> {
+  loading.value = true;
+  error.value = '';
+
   try {
     const [statsRes, jobsRes] = await Promise.all([
-      request.get('/admin/stats'),
-      request.get('/admin/import-jobs?limit=5'),
+      authRequest.get<ApiEnvelope<Stats>>('/admin/stats'),
+      authRequest.get<ApiEnvelope<JobsResponse>>('/admin/import-jobs?limit=5'),
     ]);
-    stats.value = (statsRes as any).data;
-    jobs.value = (jobsRes as any).data?.items || [];
-    jobsTotal.value = (jobsRes as any).data?.total || 0;
-  } catch (e) {
+
+    stats.value = statsRes.data.data;
+    jobs.value = jobsRes.data.data.items || [];
+    jobsTotal.value = jobsRes.data.data.total || 0;
+  } catch (err: any) {
+    const status = err?.response?.status;
+
+    if (status === 401 || status === 403) {
+      // 被 router / store 接管，不打扰控制台
+      return;
+    }
+
+    console.error('[system] loadSystemData failed:', err);
     error.value = 'Failed to load system stats';
   } finally {
     loading.value = false;
   }
-});
+}
 
-function statusClass(status: string) {
+function safeRatio(a: number, b: number): number {
+  if (!b || b === 0) return 0;
+  return a / b;
+}
+
+function statusClass(status: string): string {
   switch (status) {
-    case 'done': return 'status-ok';
-    case 'running': return 'status-running';
-    case 'error': return 'status-error';
-    default: return 'status-pending';
+    case 'done':
+      return 'status-ok';
+    case 'running':
+      return 'status-running';
+    case 'error':
+      return 'status-error';
+    default:
+      return 'status-pending';
   }
 }
 
-function statusLabel(status: string) {
+function statusLabel(status: string): string {
   switch (status) {
-    case 'done': return '\u2713 Done';
-    case 'running': return '\u27f3 Running';
-    case 'error': return '\u2715 Error';
-    default: return '\u25cb Pending';
+    case 'done':
+      return '✓ Done';
+    case 'running':
+      return '↻ Running';
+    case 'error':
+      return '✕ Error';
+    default:
+      return '○ Pending';
   }
 }
 
-function formatDate(iso: string) {
+function formatDate(iso: string): string {
   if (!iso) return '';
+
   return new Date(iso).toLocaleDateString(undefined, {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
   });
 }
+
+onMounted(() => {
+  void loadSystemData();
+});
 </script>
 
 <style scoped>

@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 
+	fyommiddleware "github.com/fyom/fyom/internal/middleware"
 	"github.com/fyom/fyom/internal/model"
 	"github.com/fyom/fyom/internal/repository"
 	"github.com/fyom/fyom/internal/service"
-	fyommiddleware "github.com/fyom/fyom/internal/middleware"
 	"github.com/fyom/fyom/pkg/errors"
 	"github.com/fyom/fyom/pkg/response"
 	"golang.org/x/crypto/bcrypt"
@@ -16,8 +16,8 @@ import (
 
 // AuthHandler handles authentication endpoints.
 type AuthHandler struct {
-	authService  *service.AuthService
-	settingRepo  *repository.SystemSettingRepository
+	authService *service.AuthService
+	settingRepo *repository.SystemSettingRepository
 }
 
 // NewAuthHandler creates a new AuthHandler.
@@ -217,6 +217,8 @@ type ChangePasswordRequest struct {
 }
 
 // ChangePassword allows the authenticated user to change their password.
+// For users with password_change_required=true, old_password is not required
+// (bootstrap scenario). For regular users, old_password is mandatory.
 func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	userID, _ := fyommiddleware.GetUserID(r).(string)
 	if userID == "" {
@@ -225,21 +227,37 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req ChangePasswordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.OldPassword == "" || req.NewPassword == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.NewPassword == "" {
 		response.Error(w, 400, "validation error")
 		return
 	}
 
-	// Fetch user to verify old password
+	// Fetch user to check password_change_required status
 	user, err := h.authService.GetUserByID(r.Context(), userID)
 	if err != nil || user == nil {
 		response.Error(w, 401, "unauthorized")
 		return
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.OldPassword)); err != nil {
-		response.Error(w, 401, "invalid credentials")
-		return
+	// Branch validation based on user state
+	if user.PasswordChangeRequired {
+		// Bootstrap scenario: password_change_required is true
+		// Old password is not required since the user just logged in with temp credentials
+		// Only validate new password
+		if req.NewPassword == "" {
+			response.Error(w, 400, "new_password is required")
+			return
+		}
+	} else {
+		// Regular password change: old_password is required
+		if req.OldPassword == "" {
+			response.Error(w, 400, "old_password is required")
+			return
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.OldPassword)); err != nil {
+			response.Error(w, 401, "invalid credentials")
+			return
+		}
 	}
 
 	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
@@ -248,7 +266,9 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update password and clear password_change_required
+	// Always clear password_change_required after successful password change
+	// For bootstrap scenario: this clears the flag as expected
+	// For regular scenario: this is a no-op if flag was already false
 	if err := h.authService.UpdatePassword(r.Context(), userID, string(hashedBytes), true); err != nil {
 		response.Error(w, 500, "internal server error")
 		return

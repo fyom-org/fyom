@@ -45,38 +45,46 @@
     </div>
 
     <div class="library-list" v-if="libraries.length > 0">
-    <div class="library-card" v-for="lib in libraries" :key="lib.id">
-      <div class="library-header">
-        <div class="library-info">
-          <h3 class="library-name">{{ lib.name }}</h3>
-          <span class="library-meta">
-            {{ typeLabel(lib.type) }} &middot; {{ lib.provider_id }} &middot; {{ lib.metadata_source }}
-          </span>
+      <div class="library-card" v-for="lib in libraries" :key="lib.id">
+        <div class="library-header">
+          <div class="library-info">
+            <h3 class="library-name">{{ lib.name }}</h3>
+            <span class="library-meta">
+              {{ typeLabel(lib.type) }} &middot; {{ lib.provider_id }} &middot;
+              {{ lib.metadata_source }}
+            </span>
+          </div>
         </div>
-      </div>
-      <div class="library-actions">
-        <button class="action-btn refresh" @click="refreshLibrary(lib)"
-                :disabled="refreshing === lib.id">
-          {{ refreshing === lib.id ? 'Scanning...' : '↻ Refresh' }}
-        </button>
-        <button class="action-btn check" @click="checkMissing(lib)"
-                :disabled="checking === lib.id">
-          {{ checking === lib.id ? 'Checking...' : '⊕ Check Missing' }}
-        </button>
-        <!-- Schedule selector -->
-        <select class="schedule-select" :value="getSchedule(lib.id)"
-                @change="setSchedule(lib.id, ($event.target as HTMLSelectElement).value)"
-                :disabled="savingSchedule === lib.id">
-          <option value="0">Manual</option>
-          <option value="3600">Every hour</option>
-          <option value="21600">Every 6 hours</option>
-          <option value="86400">Daily</option>
-          <option value="604800">Weekly</option>
-        </select>
-        <button class="action-btn delete" @click="deleteLibrary(lib)">
-          Delete
-        </button>
-      </div>
+        <div class="library-actions">
+          <button
+            class="action-btn refresh"
+            @click="refreshLibrary(lib)"
+            :disabled="refreshing === lib.id"
+          >
+            {{ refreshing === lib.id ? 'Scanning...' : '↻ Refresh' }}
+          </button>
+          <button
+            class="action-btn check"
+            @click="checkMissing(lib)"
+            :disabled="checking === lib.id"
+          >
+            {{ checking === lib.id ? 'Checking...' : '⊕ Check Missing' }}
+          </button>
+          <!-- Schedule selector -->
+          <select
+            class="schedule-select"
+            :value="getSchedule(lib.id)"
+            @change="setSchedule(lib.id, ($event.target as HTMLSelectElement).value)"
+            :disabled="savingSchedule === lib.id"
+          >
+            <option value="0">Manual</option>
+            <option value="3600">Every hour</option>
+            <option value="21600">Every 6 hours</option>
+            <option value="86400">Daily</option>
+            <option value="604800">Weekly</option>
+          </select>
+          <button class="action-btn delete" @click="deleteLibrary(lib)">Delete</button>
+        </div>
         <div class="library-stats" v-if="lib.item_count > 0">
           <span class="stat">{{ lib.item_count }} items</span>
           <span class="stat" v-if="lib.movie_count">{{ lib.movie_count }} movies</span>
@@ -98,150 +106,271 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { apiRequest } from '@/api/request';
+import { authRequest } from '@/api/request';
+import type { ApiEnvelope } from '@/api/types';
 import JobStatus from '@/components/JobStatus.vue';
 
-const libraries = ref<any[]>([]);
+interface Library {
+  id: string;
+  name: string;
+  type: string;
+  provider_id: string;
+  metadata_source: string;
+  item_count: number;
+  movie_count: number;
+  show_count: number;
+  episode_count: number;
+  missing_count: number;
+}
+
+interface Provider {
+  id: string;
+  display_name: string;
+  type: string;
+}
+
+interface SettingsMap {
+  [key: string]: string;
+}
+
+const libraries = ref<Library[]>([]);
+const providers = ref<Provider[]>([]);
+const schedules = ref<Record<string, string>>({});
+
 const loading = ref(true);
 const error = ref('');
+
 const showForm = ref(false);
+const saving = ref(false);
+
 const refreshing = ref('');
 const checking = ref('');
 const savingSchedule = ref('');
-const activeJobId = ref('');
-const form = ref({
-  name: '', type: 'mixed', provider_id: 'local',
-  source_path: '/', metadata_source: 'nfo',
-});
-const providers = ref<any[]>([]);
-const schedules = ref<Record<string, string>>({});
 
-onMounted(async () => {
+const activeJobId = ref('');
+
+const form = ref({
+  name: '',
+  type: 'mixed',
+  provider_id: 'local',
+  source_path: '',
+  metadata_source: 'nfo',
+});
+
+/* =========================
+   Load initial data
+   ========================= */
+
+async function loadInitialData(): Promise<void> {
+  loading.value = true;
+  error.value = '';
+
   try {
     const [libRes, provRes, settingsRes] = await Promise.all([
-      request.get('/admin/libraries'),
-      request.get('/admin/providers'),
-      request.get('/admin/settings'),
+      authRequest.get<ApiEnvelope<Library[]>>('/admin/libraries'),
+      authRequest.get<ApiEnvelope<Provider[]>>('/admin/providers'),
+      authRequest.get<ApiEnvelope<SettingsMap>>('/admin/settings'),
     ]);
-    libraries.value = (libRes as any).data || [];
-    providers.value = (provRes as any).data || [];
-    const settings = (settingsRes as any).data || {};
-    // Extract library refresh schedules from settings
+
+    libraries.value = libRes.data.data || [];
+    providers.value = provRes.data.data || [];
+
+    const settings = settingsRes.data.data || {};
+
+    const nextSchedules: Record<string, string> = {};
     for (const [key, val] of Object.entries(settings)) {
       if (key.startsWith('library_refresh_interval_')) {
-        const libId = key.slice('library_refresh_interval_'.length);
-        schedules.value[libId] = val as string;
+        const libId = key.replace('library_refresh_interval_', '');
+        nextSchedules[libId] = val;
       }
     }
-  } catch {
-    error.value = 'Failed to load';
+    schedules.value = nextSchedules;
+  } catch (err: any) {
+    const status = err?.response?.status;
+
+    if (status === 401 || status === 403) return;
+
+    console.error('[libraries] loadInitialData failed:', err);
+    error.value = 'Failed to load libraries';
   } finally {
     loading.value = false;
   }
-});
+}
+
+async function reloadLibraries(): Promise<void> {
+  try {
+    const res = await authRequest.get<ApiEnvelope<Library[]>>('/admin/libraries');
+    libraries.value = res.data.data || [];
+  } catch (err: any) {
+    if (err?.response?.status === 401) return;
+    console.error('[libraries] reload failed:', err);
+  }
+}
+
+/* =========================
+   Schedule
+   ========================= */
 
 function getSchedule(libId: string): string {
   return schedules.value[libId] || '0';
 }
 
-async function setSchedule(libId: string, interval: string) {
+async function setSchedule(libId: string, interval: string): Promise<void> {
   savingSchedule.value = libId;
+
   try {
-    await request.put('/admin/settings', {
+    await authRequest.put('/admin/settings', {
       [`library_refresh_interval_${libId}`]: interval,
     });
-    schedules.value = { ...schedules.value, [libId]: interval };
-  } catch (e: any) {
-    alert('Failed to save schedule: ' + (e.response?.data?.message || 'Unknown error'));
+
+    schedules.value = {
+      ...schedules.value,
+      [libId]: interval,
+    };
+  } catch (err: any) {
+    if (err?.response?.status === 401) return;
+
+    alert('Failed to save schedule: ' + (err?.response?.data?.message || 'Unknown error'));
   } finally {
     savingSchedule.value = '';
   }
 }
 
-async function createLibrary() {
+/* =========================
+   Create
+   ========================= */
+
+async function createLibrary(): Promise<void> {
   error.value = '';
+  saving.value = true;
+
   try {
-    await request.post('/admin/libraries', form.value);
+    await authRequest.post('/admin/libraries', form.value);
+
     showForm.value = false;
-    form.value = { name: '', type: 'mixed', provider_id: 'local', source_path: '', metadata_source: 'nfo' };
-    await fetchLibraries();
-  } catch (e: any) {
-    error.value = e.response?.data?.message || 'Failed';
+    form.value = {
+      name: '',
+      type: 'mixed',
+      provider_id: 'local',
+      source_path: '',
+      metadata_source: 'nfo',
+    };
+
+    await reloadLibraries();
+  } catch (err: any) {
+    if (err?.response?.status === 401) return;
+
+    error.value =
+      err?.response?.data?.message || err?.response?.data?.error || 'Failed to create library';
+  } finally {
+    saving.value = false;
   }
 }
 
-async function deleteLibrary(lib: any) {
+/* =========================
+   Delete
+   ========================= */
+
+async function deleteLibrary(lib: Library): Promise<void> {
   if (lib.item_count > 0) {
-    const confirmed = confirm(
-      `"${lib.name}" has ${lib.item_count} items. Delete everything?`
-    );
+    const confirmed = confirm(`"${lib.name}" has ${lib.item_count} items. Delete everything?`);
     if (!confirmed) return;
+
     try {
-      await request.delete(`/admin/libraries/${lib.id}/items?mode=cascade`);
-      await fetchLibraries();
-    } catch (e: any) {
-      error.value = e.response?.data?.message || 'Failed to delete';
+      await authRequest.delete(`/admin/libraries/${lib.id}/items?mode=cascade`);
+      await reloadLibraries();
+    } catch (err: any) {
+      if (err?.response?.status === 401) return;
+      error.value = err?.response?.data?.message || 'Failed to delete';
     }
+
     return;
   }
+
   if (!confirm(`Delete "${lib.name}"?`)) return;
+
   try {
-    await request.delete(`/admin/libraries/${lib.id}`);
-    await fetchLibraries();
-  } catch (e: any) {
-    error.value = e.response?.data?.message || 'Failed to delete';
+    await authRequest.delete(`/admin/libraries/${lib.id}`);
+    await reloadLibraries();
+  } catch (err: any) {
+    if (err?.response?.status === 401) return;
+    error.value = err?.response?.data?.message || 'Failed to delete';
   }
 }
 
-async function fetchLibraries() {
-  const res: any = await request.get('/admin/libraries');
-  libraries.value = res.data || [];
-}
+/* =========================
+   Actions
+   ========================= */
 
-async function refreshLibrary(lib: any) {
+async function refreshLibrary(lib: Library): Promise<void> {
   refreshing.value = lib.id;
   activeJobId.value = '';
+
   try {
-    const res: any = await request.post(`/admin/libraries/${lib.id}/refresh`);
-    const config = res.data;
-    const jobRes: any = await request.post('/library/import', {
+    const configRes = await authRequest.post(`/admin/libraries/${lib.id}/refresh`);
+    const config = configRes.data.data;
+
+    const jobRes = await authRequest.post('/library/import', {
       source_path: config.source_path,
       provider_id: config.provider_id,
       library_id: config.id,
     });
-    activeJobId.value = jobRes.data?.job_id || '';
-  } catch (e: any) {
-    alert('Refresh failed: ' + (e.response?.data?.message || 'Unknown error'));
+
+    activeJobId.value = jobRes.data.data?.job_id || '';
+  } catch (err: any) {
+    if (err?.response?.status === 401) return;
+
+    alert('Refresh failed: ' + (err?.response?.data?.message || 'Unknown error'));
   } finally {
     refreshing.value = '';
   }
 }
 
-async function checkMissing(lib: any) {
+async function checkMissing(lib: Library): Promise<void> {
   checking.value = lib.id;
+
   try {
-    const res: any = await request.post(`/admin/libraries/${lib.id}/check-missing`);
-    const result = res.data;
+    const res = await authRequest.post(`/admin/libraries/${lib.id}/check-missing`);
+    const result = res.data.data;
+
     if (result.missing > 0) {
-      alert(`Found ${result.missing} missing item${result.missing !== 1 ? 's' : ''}.\nView them in the Missing Items page.`);
+      alert(
+        `Found ${result.missing} missing item${
+          result.missing !== 1 ? 's' : ''
+        }.\nCheck the Missing page.`
+      );
     } else {
-      alert('All items are available ✓');
+      alert('All items available ✓');
     }
-    await fetchLibraries();
-  } catch (e: any) {
-    alert('Check failed: ' + (e.response?.data?.message || 'Unknown error'));
+
+    await reloadLibraries();
+  } catch (err: any) {
+    if (err?.response?.status === 401) return;
+
+    alert('Check failed: ' + (err?.response?.data?.message || 'Unknown error'));
   } finally {
     checking.value = '';
   }
 }
 
-function typeLabel(type: string) {
+/* =========================
+   Helpers
+   ========================= */
+
+function typeLabel(type: string): string {
   switch (type) {
-    case 'movie': return 'Movies';
-    case 'show': return 'TV Shows';
-    default: return 'Mixed';
+    case 'movie':
+      return 'Movies';
+    case 'show':
+      return 'TV Shows';
+    default:
+      return 'Mixed';
   }
 }
+
+onMounted(() => {
+  void loadInitialData();
+});
 </script>
 
 <style scoped>

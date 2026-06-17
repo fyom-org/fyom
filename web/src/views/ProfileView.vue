@@ -1,19 +1,33 @@
 <template>
   <div class="profile-view">
     <h2 class="page-title">Profile</h2>
-    <div v-if="user" class="card">
+
+    <div v-if="loading" class="card">
+      <p class="hint">Loading profile...</p>
+    </div>
+
+    <div v-else-if="loadError" class="card">
+      <p class="error">{{ loadError }}</p>
+    </div>
+
+    <div v-else-if="currentUser" class="card">
       <div class="info-row">
-        <span class="label">Username</span><span>{{ user.username }}</span>
+        <span class="label">Username</span>
+        <span>{{ currentUser.username }}</span>
       </div>
       <div class="info-row">
         <span class="label">Role</span>
         <span
           class="badge"
-          :class="{ 'admin-badge': user.role === 'admin' }"
+          :class="{ 'admin-badge': currentUser.role === 'admin' }"
           @click="navigateToAdmin"
         >
-          {{ user.role }}
+          {{ currentUser.role }}
         </span>
+      </div>
+      <div class="info-row" v-if="currentUser.password_change_required">
+        <span class="label">Password Status</span>
+        <span class="warning-text">Password change required</span>
       </div>
     </div>
 
@@ -22,7 +36,7 @@
       <div class="pref-row">
         <span class="pref-label">Default expand seasons</span>
         <label class="toggle">
-          <input type="checkbox" v-model="seasonsExpanded" @change="saveSeasonsPref" />
+          <input v-model="seasonsExpanded" type="checkbox" @change="saveSeasonsPref" />
           <span class="toggle-slider"></span>
         </label>
       </div>
@@ -31,18 +45,46 @@
 
     <div class="card">
       <h3>Change Password</h3>
+
       <div class="field">
         <label>Current Password</label>
-        <input v-model="oldPassword" type="password" />
+        <input
+          v-model="oldPassword"
+          type="password"
+          autocomplete="current-password"
+          :disabled="passwordSaving"
+        />
       </div>
+
       <div class="field">
         <label>New Password</label>
-        <input v-model="newPassword" type="password" />
+        <input
+          v-model="newPassword"
+          type="password"
+          autocomplete="new-password"
+          :disabled="passwordSaving"
+        />
       </div>
-      <p v-if="msg" class="msg">{{ msg }}</p>
-      <p v-if="error" class="error">{{ error }}</p>
-      <button class="btn" @click="changePassword">Update Password</button>
+
+      <div class="field">
+        <label>Confirm New Password</label>
+        <input
+          v-model="confirmPassword"
+          type="password"
+          autocomplete="new-password"
+          :disabled="passwordSaving"
+          @keyup.enter="submitPasswordChange"
+        />
+      </div>
+
+      <p v-if="passwordMessage" class="msg">{{ passwordMessage }}</p>
+      <p v-if="passwordError" class="error">{{ passwordError }}</p>
+
+      <button class="btn" :disabled="passwordSaving" @click="submitPasswordChange">
+        {{ passwordSaving ? 'Updating...' : 'Update Password' }}
+      </button>
     </div>
+
     <div class="card">
       <button class="btn-logout" @click="handleLogout">Logout</button>
     </div>
@@ -50,65 +92,131 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { apiRequest } from '@/api/request';
+import { getMe, type User } from '@/api/auth';
 import { useUserStore } from '@/stores/user';
 
 const router = useRouter();
-const store = useUserStore();
-const user = ref<{ username: string; role: string } | null>(null);
+const userStore = useUserStore();
+
+const loading = ref(false);
+const loadError = ref('');
+
+const profile = ref<User | null>(userStore.user);
+
 const oldPassword = ref('');
 const newPassword = ref('');
-const msg = ref('');
-const error = ref('');
+const confirmPassword = ref('');
+
+const passwordSaving = ref(false);
+const passwordMessage = ref('');
+const passwordError = ref('');
+
 const seasonsExpanded = ref(true);
 
-onMounted(async () => {
-  const res = await request.get('/auth/me');
-  user.value = res.data;
+const currentUser = computed<User | null>(() => profile.value ?? userStore.user);
+
+function readSeasonsPreference(): void {
   try {
     seasonsExpanded.value = localStorage.getItem('seasons_collapsed_default') !== 'true';
   } catch {
-    // ignore
+    // ignore localStorage failures
   }
-});
+}
 
-function saveSeasonsPref() {
+function saveSeasonsPref(): void {
   try {
     localStorage.setItem('seasons_collapsed_default', seasonsExpanded.value ? 'false' : 'true');
   } catch {
-    // ignore
+    // ignore localStorage failures
   }
 }
 
-async function changePassword() {
-  error.value = '';
-  msg.value = '';
+async function loadProfile(): Promise<void> {
+  loading.value = true;
+  loadError.value = '';
+
   try {
-    await request.put('/auth/me/password', {
-      old_password: oldPassword.value,
-      new_password: newPassword.value,
-    });
-    msg.value = 'Password updated';
+    if (userStore.user) {
+      profile.value = userStore.user;
+      return;
+    }
+
+    const me = await getMe();
+    profile.value = me;
+  } catch (err: any) {
+    const httpStatus = err?.response?.status;
+
+    if (httpStatus === 401 || httpStatus === 403) {
+      // Auth invalidation is handled centrally by store/router.
+      return;
+    }
+
+    console.error('[profile] loadProfile failed:', err);
+    loadError.value = 'Failed to load profile';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function submitPasswordChange(): Promise<void> {
+  passwordError.value = '';
+  passwordMessage.value = '';
+
+  if (!newPassword.value) {
+    passwordError.value = 'New password is required';
+    return;
+  }
+
+  if (newPassword.value !== confirmPassword.value) {
+    passwordError.value = 'Passwords do not match';
+    return;
+  }
+
+  passwordSaving.value = true;
+
+  try {
+    await userStore.updatePassword(oldPassword.value, newPassword.value);
+
+    profile.value = userStore.user;
+    passwordMessage.value = 'Password updated';
+
     oldPassword.value = '';
     newPassword.value = '';
-  } catch (e: unknown) {
-    const err = e as { response?: { data?: { message?: string } } };
-    error.value = err.response?.data?.message || 'Failed';
+    confirmPassword.value = '';
+  } catch (err: any) {
+    const httpStatus = err?.response?.status;
+
+    if (httpStatus === 401 || httpStatus === 403) {
+      // Auth invalidation is handled centrally by store/router.
+      return;
+    }
+
+    passwordError.value =
+      err?.response?.data?.message || err?.response?.data?.error || 'Failed to update password';
+
+    console.error('[profile] submitPasswordChange failed:', err);
+  } finally {
+    passwordSaving.value = false;
   }
 }
 
-function handleLogout() {
-  // F4: Only trigger state change — centralized revalidation handles redirect
-  store.logout();
+function handleLogout(): void {
+  // Centralized route revalidation will redirect after auth state changes.
+  userStore.logout();
 }
 
-function navigateToAdmin() {
-  if (user.value?.role === 'admin') {
-    router.push('/admin');
+function navigateToAdmin(): void {
+  if (currentUser.value?.role === 'admin') {
+    void router.push('/admin/libraries');
   }
 }
+
+onMounted(() => {
+  readSeasonsPreference();
+  void loadProfile();
+});
 </script>
 
 <style scoped>
@@ -128,6 +236,7 @@ function navigateToAdmin() {
 .info-row {
   display: flex;
   justify-content: space-between;
+  gap: 16px;
   padding: 8px 0;
   color: #aaaacc;
   font-size: 14px;
@@ -144,6 +253,7 @@ function navigateToAdmin() {
   text-transform: capitalize;
   color: #6c63ff;
   cursor: default;
+  user-select: none;
 }
 
 .admin-badge {
@@ -152,6 +262,10 @@ function navigateToAdmin() {
 
 .admin-badge:hover {
   background: rgba(108, 99, 255, 0.2);
+}
+
+.warning-text {
+  color: #ffb86b;
 }
 
 h3 {
@@ -238,6 +352,11 @@ h3 {
   box-sizing: border-box;
 }
 
+.field input:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 .field + .field {
   margin-top: 12px;
 }
@@ -254,8 +373,13 @@ h3 {
   width: 100%;
 }
 
-.btn:hover {
+.btn:hover:not(:disabled) {
   background: #5a52e0;
+}
+
+.btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
 }
 
 .btn-logout {

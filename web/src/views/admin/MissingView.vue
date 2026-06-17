@@ -2,102 +2,221 @@
   <div class="admin-page">
     <div class="page-header">
       <h1>Missing Items</h1>
-      <button class="danger-btn" @click="deleteAllMissing"
-              :disabled="deleting || items.length === 0">
+      <button
+        class="danger-btn"
+        @click="deleteAllMissing"
+        :disabled="deleting || loading || items.length === 0"
+      >
         {{ deleting ? 'Deleting...' : 'Delete All Missing' }}
       </button>
     </div>
 
-    <p class="hint">Items whose files no longer exist on disk. These are hidden from users automatically.</p>
+    <p class="hint">
+      Items whose files no longer exist on disk. These are hidden from users automatically.
+    </p>
 
     <div class="toolbar" v-if="libraries.length > 1">
-      <select v-model="libraryFilter" @change="fetchMissing()" class="filter-select">
+      <select
+        v-model="libraryFilter"
+        @change="fetchMissing"
+        class="filter-select"
+        :disabled="loading || deleting"
+      >
         <option value="">All Libraries</option>
-        <option v-for="lib in libraries" :key="lib.id" :value="lib.id">{{ lib.name }}</option>
+        <option v-for="lib in libraries" :key="lib.id" :value="lib.id">
+          {{ lib.name }}
+        </option>
       </select>
     </div>
 
-    <div class="result-info" v-if="total > 0">
-      {{ total }} missing item{{ total !== 1 ? 's' : '' }}
-    </div>
+    <div v-if="loading" class="loading">Loading...</div>
+    <p v-else-if="error" class="error-text">{{ error }}</p>
 
-    <div class="missing-list" v-if="items.length > 0">
-      <div class="missing-row" v-for="item in items" :key="item.id">
-        <span class="item-type" :class="item.type">{{ item.type }}</span>
-        <span class="item-title">{{ item.title }}</span>
-        <span class="item-path">{{ item.file_path }}</span>
-        <span class="item-library">{{ item.library_id }}</span>
-        <button class="delete-btn" @click="deleteSingle(item.id)">Remove</button>
+    <template v-else>
+      <div class="result-info" v-if="total > 0">
+        {{ total }} missing item{{ total !== 1 ? 's' : '' }}
       </div>
-    </div>
 
-    <div class="all-clear" v-else-if="!loading">
-      <span class="check-icon">&#10003;</span>
-      <p>All items are available on disk.</p>
-    </div>
+      <div class="missing-list" v-if="items.length > 0">
+        <div class="missing-row" v-for="item in items" :key="item.id">
+          <span class="item-type" :class="item.type">{{ item.type }}</span>
+          <span class="item-title">{{ item.title }}</span>
+          <span class="item-path">{{ item.file_path }}</span>
+          <span class="item-library">{{ resolveLibraryName(item.library_id) }}</span>
+          <button
+            class="delete-btn"
+            @click="deleteSingle(item)"
+            :disabled="deletingId === item.id || deleting"
+          >
+            {{ deletingId === item.id ? 'Removing...' : 'Remove' }}
+          </button>
+        </div>
+      </div>
+
+      <div class="all-clear" v-else>
+        <span class="check-icon">&#10003;</span>
+        <p>All items are available on disk.</p>
+      </div>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { apiRequest } from '@/api/request';
+import { authRequest } from '@/api/request';
+import type { ApiEnvelope } from '@/api/types';
 
-const items = ref<any[]>([]);
+interface Library {
+  id: string;
+  name: string;
+}
+
+interface MissingItem {
+  id: string;
+  type: string;
+  title: string;
+  file_path: string;
+  library_id: string;
+}
+
+interface MissingItemsResponse {
+  items: MissingItem[];
+  total: number;
+}
+
+interface DeleteAllMissingResponse {
+  deleted_count: number;
+}
+
+const items = ref<MissingItem[]>([]);
 const total = ref(0);
 const loading = ref(true);
 const deleting = ref(false);
+const deletingId = ref('');
 const libraryFilter = ref('');
-const libraries = ref<any[]>([]);
+const libraries = ref<Library[]>([]);
+const error = ref('');
 
-onMounted(async () => {
+async function loadLibraries(): Promise<void> {
   try {
-    const res: any = await request.get('/admin/libraries');
-    libraries.value = res.data || [];
-  } catch {
-    // ignore
+    const res = await authRequest.get<ApiEnvelope<Library[]>>('/admin/libraries');
+    libraries.value = res.data.data || [];
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status === 401 || status === 403) {
+      return;
+    }
+
+    console.error('[missing] loadLibraries failed:', err);
   }
-  await fetchMissing();
-});
+}
 
-async function fetchMissing() {
+async function fetchMissing(): Promise<void> {
   loading.value = true;
+  error.value = '';
+
   try {
-    const params: any = {};
-    if (libraryFilter.value) params.library_id = libraryFilter.value;
-    const res: any = await request.get('/admin/media/missing', { params });
-    items.value = res.data?.items || [];
-    total.value = res.data?.total || 0;
-  } catch {
-    // ignore
+    const params: Record<string, string> = {};
+    if (libraryFilter.value) {
+      params.library_id = libraryFilter.value;
+    }
+
+    const res = await authRequest.get<ApiEnvelope<MissingItemsResponse>>('/admin/media/missing', {
+      params,
+    });
+
+    items.value = res.data.data?.items || [];
+    total.value = res.data.data?.total || 0;
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status === 401 || status === 403) {
+      return;
+    }
+
+    console.error('[missing] fetchMissing failed:', err);
+    error.value = 'Failed to load missing items';
   } finally {
     loading.value = false;
   }
 }
 
-async function deleteSingle(id: string) {
+async function deleteSingle(item: MissingItem): Promise<void> {
+  deletingId.value = item.id;
+  error.value = '';
+
   try {
-    await request.delete(`/admin/media/${id}`);
+    await authRequest.delete(`/admin/media/${item.id}`);
     await fetchMissing();
-  } catch {
-    // ignore
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status === 401 || status === 403) {
+      return;
+    }
+
+    console.error('[missing] deleteSingle failed:', err);
+    error.value =
+      err?.response?.data?.message ||
+      err?.response?.data?.error ||
+      `Failed to remove "${item.title}"`;
+  } finally {
+    deletingId.value = '';
   }
 }
 
-async function deleteAllMissing() {
-  if (!confirm(`Delete all ${total.value} missing item${total.value !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+async function deleteAllMissing(): Promise<void> {
+  if (
+    !confirm(
+      `Delete all ${total.value} missing item${
+        total.value !== 1 ? 's' : ''
+      }? This cannot be undone.`
+    )
+  ) {
+    return;
+  }
+
   deleting.value = true;
+  error.value = '';
+
   try {
-    const body: any = {};
-    if (libraryFilter.value) body.library_id = libraryFilter.value;
-    const res: any = await request.delete('/admin/media/missing', { data: body });
-    alert(`Deleted ${res.data?.deleted_count || 0} items`);
+    const body: Record<string, string> = {};
+    if (libraryFilter.value) {
+      body.library_id = libraryFilter.value;
+    }
+
+    const res = await authRequest.delete<ApiEnvelope<DeleteAllMissingResponse>>(
+      '/admin/media/missing',
+      { data: body }
+    );
+
+    const deletedCount = res.data.data?.deleted_count || 0;
+    alert(`Deleted ${deletedCount} item${deletedCount !== 1 ? 's' : ''}.`);
+
     await fetchMissing();
-  } catch {
-    // ignore
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status === 401 || status === 403) {
+      return;
+    }
+
+    console.error('[missing] deleteAllMissing failed:', err);
+    error.value =
+      err?.response?.data?.message ||
+      err?.response?.data?.error ||
+      'Failed to delete missing items';
   } finally {
     deleting.value = false;
   }
 }
+
+function resolveLibraryName(libraryId: string): string {
+  const lib = libraries.value.find((entry) => entry.id === libraryId);
+  return lib?.name || libraryId;
+}
+
+onMounted(async () => {
+  await loadLibraries();
+  await fetchMissing();
+});
 </script>
 
 <style scoped>
@@ -120,6 +239,18 @@ h1 {
   margin-bottom: 20px;
 }
 
+.loading {
+  color: #555577;
+  font-size: 14px;
+  padding: 20px 0;
+}
+
+.error-text {
+  color: #ff6b6b;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
 .danger-btn {
   padding: 8px 16px;
   background: #1a0f0f;
@@ -130,7 +261,7 @@ h1 {
   font-size: 13px;
 }
 
-.danger-btn:hover {
+.danger-btn:hover:not(:disabled) {
   background: #2a1515;
 }
 
@@ -150,6 +281,11 @@ h1 {
   border-radius: 4px;
   color: #aaaacc;
   font-size: 13px;
+}
+
+.filter-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .result-info {
@@ -217,8 +353,13 @@ h1 {
   font-size: 11px;
 }
 
-.delete-btn:hover {
+.delete-btn:hover:not(:disabled) {
   background: #1a0f0f;
+}
+
+.delete-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .all-clear {

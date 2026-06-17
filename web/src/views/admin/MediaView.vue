@@ -3,15 +3,34 @@
     <h1>Media Items</h1>
 
     <div class="toolbar">
-      <input v-model="searchQuery" @input="onSearchInput" type="text"
-             placeholder="Search items..." class="search-input" />
-      <select v-model="typeFilter" @change="page = 1; fetchItems()" class="filter-select">
+      <input
+        v-model="searchQuery"
+        @input="onSearchInput"
+        type="text"
+        placeholder="Search items..."
+        class="search-input"
+      />
+      <select
+        v-model="typeFilter"
+        @change="
+          page = 1;
+          fetchItems();
+        "
+        class="filter-select"
+      >
         <option value="">All Types</option>
         <option value="movie">Movies</option>
         <option value="show">Shows</option>
         <option value="episode">Episodes</option>
       </select>
-      <select v-model="libraryFilter" @change="page = 1; fetchItems()" class="filter-select">
+      <select
+        v-model="libraryFilter"
+        @change="
+          page = 1;
+          fetchItems();
+        "
+        class="filter-select"
+      >
         <option value="">All Libraries</option>
         <option v-for="lib in libraries" :key="lib.id" :value="lib.id">{{ lib.name }}</option>
       </select>
@@ -63,9 +82,25 @@
     </div>
 
     <div class="pagination" v-if="total > limit">
-      <button :disabled="page <= 1" @click="page--; fetchItems()">&larr; Previous</button>
+      <button
+        :disabled="page <= 1"
+        @click="
+          page--;
+          fetchItems();
+        "
+      >
+        &larr; Previous
+      </button>
       <span class="page-info">Page {{ page }}</span>
-      <button :disabled="page * limit >= total" @click="page++; fetchItems()">Next &rarr;</button>
+      <button
+        :disabled="page * limit >= total"
+        @click="
+          page++;
+          fetchItems();
+        "
+      >
+        Next &rarr;
+      </button>
     </div>
 
     <p class="empty" v-else-if="!loading && items.length === 0">No items found.</p>
@@ -73,12 +108,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
-import { apiRequest } from '@/api/request';
+import { ref, computed, onMounted, watch } from 'vue';
+import { authRequest } from '@/api/request';
+import type { ApiEnvelope } from '@/api/types';
+
+/* =========================
+   Types
+   ========================= */
 
 interface AdminItem {
   id: string;
-  type: string;
+  type: 'movie' | 'show' | 'episode';
   title: string;
   year?: number;
   library_id: string;
@@ -89,27 +129,52 @@ interface AdminItem {
   episode?: number;
 }
 
+interface MediaResponse {
+  items: AdminItem[];
+  total: number;
+}
+
+interface Library {
+  id: string;
+  name: string;
+}
+
 interface ShowGroup extends AdminItem {
   episodeCount: number;
   episodes: AdminItem[];
 }
 
+/* =========================
+   State
+   ========================= */
+
 const items = ref<AdminItem[]>([]);
 const total = ref(0);
 const page = ref(1);
 const limit = 20;
-const loading = ref(true);
+
+const loading = ref(false);
+
 const searchQuery = ref('');
 const typeFilter = ref('');
 const libraryFilter = ref('');
-const libraries = ref<any[]>([]);
-let searchTimer: any = 0;
+
+const libraries = ref<Library[]>([]);
 const expandedShows = ref(new Set<string>());
+
+let searchDebounce: number | null = null;
+
+/* =========================
+   Derived
+   ========================= */
 
 const groupedItems = computed<ShowGroup[]>(() => {
   if (typeFilter.value === 'episode') {
-    // When filtering by episode, just show flat list
-    return items.value.map(i => ({ ...i, episodeCount: 0, episodes: [] }));
+    return items.value.map((i) => ({
+      ...i,
+      episodeCount: 0,
+      episodes: [],
+    }));
   }
 
   const shows = new Map<string, ShowGroup>();
@@ -117,7 +182,11 @@ const groupedItems = computed<ShowGroup[]>(() => {
 
   for (const item of items.value) {
     if (item.type === 'show') {
-      shows.set(item.id, { ...item, episodeCount: 0, episodes: [] });
+      shows.set(item.id, {
+        ...item,
+        episodeCount: 0,
+        episodes: [],
+      });
     }
   }
 
@@ -126,74 +195,130 @@ const groupedItems = computed<ShowGroup[]>(() => {
       const show = shows.get(item.parent_id)!;
       show.episodes.push(item);
       show.episodeCount = show.episodes.length;
-    } else if (item.type === 'movie' || (item.type === 'episode' && !item.parent_id)) {
-      standalone.push({ ...item, episodeCount: 0, episodes: [] });
+    } else if (item.type !== 'show') {
+      standalone.push({
+        ...item,
+        episodeCount: 0,
+        episodes: [],
+      });
     }
   }
 
-  // Sort shows before movies
   return [...shows.values(), ...standalone];
 });
 
-onMounted(async () => {
-  try {
-    const res: any = await request.get('/admin/libraries');
-    libraries.value = res.data || [];
-  } catch {
-    // ignore
-  }
-  await fetchItems();
-});
+/* =========================
+   Data Loading
+   ========================= */
 
-async function fetchItems() {
-  loading.value = true;
+async function loadLibraries(): Promise<void> {
   try {
-    const params: any = { page: page.value, limit, sort: 'created_at_desc' };
+    const res = await authRequest.get<ApiEnvelope<Library[]>>('/admin/libraries');
+    libraries.value = res.data.data || [];
+  } catch (err: any) {
+    if (err?.response?.status === 401) return;
+    console.error('[media] loadLibraries failed', err);
+  }
+}
+
+async function fetchItems(): Promise<void> {
+  loading.value = true;
+
+  try {
+    const params: Record<string, any> = {
+      page: page.value,
+      limit,
+      sort: 'created_at_desc',
+    };
+
     if (searchQuery.value) params.q = searchQuery.value;
     if (typeFilter.value) params.type = typeFilter.value;
     if (libraryFilter.value) params.library_id = libraryFilter.value;
-    const res: any = await request.get('/admin/media', { params });
-    items.value = res.data?.items || [];
-    total.value = res.data?.total || 0;
-  } catch {
-    // ignore
+
+    const res = await authRequest.get<ApiEnvelope<MediaResponse>>('/admin/media', { params });
+
+    items.value = res.data.data.items || [];
+    total.value = res.data.data.total || 0;
+  } catch (err: any) {
+    if (err?.response?.status === 401) return;
+    console.error('[media] fetchItems failed', err);
   } finally {
     loading.value = false;
   }
 }
 
-function onSearchInput() {
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => {
+/* =========================
+   Search (debounced)
+   ========================= */
+
+function triggerSearch(): void {
+  if (searchDebounce) window.clearTimeout(searchDebounce);
+
+  searchDebounce = window.setTimeout(() => {
     page.value = 1;
     fetchItems();
   }, 300);
 }
 
-function toggleShow(id: string) {
-  const s = expandedShows.value;
-  if (s.has(id)) s.delete(id);
-  else s.add(id);
-  expandedShows.value = new Set(s);
+/* =========================
+   Watchers (cleaner than inline handlers)
+   ========================= */
+
+watch(typeFilter, () => {
+  page.value = 1;
+  fetchItems();
+});
+
+watch(libraryFilter, () => {
+  page.value = 1;
+  fetchItems();
+});
+
+/* =========================
+   Actions
+   ========================= */
+
+function toggleShow(id: string): void {
+  const next = new Set(expandedShows.value);
+
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+
+  expandedShows.value = next;
 }
 
-async function deleteItem(item: any) {
-  const label = item.type === 'show'
-    ? `"${item.title}" and all its episodes`
-    : `"${item.title}"`;
+async function deleteItem(item: AdminItem): Promise<void> {
+  const label = item.type === 'show' ? `"${item.title}" and all episodes` : `"${item.title}"`;
+
   if (!confirm(`Delete ${label}?`)) return;
+
   try {
-    await request.delete(`/admin/media/${item.id}`);
+    await authRequest.delete(`/admin/media/${item.id}`);
     await fetchItems();
-  } catch {
-    // ignore
+  } catch (err: any) {
+    if (err?.response?.status === 401) return;
+
+    alert('Delete failed: ' + (err?.response?.data?.message || 'Unknown error'));
   }
 }
 
-function formatDate(iso: string) {
+/* =========================
+   Utils
+   ========================= */
+
+function formatDate(iso: string): string {
   if (!iso) return '';
   return new Date(iso).toLocaleDateString();
 }
+
+/* =========================
+   Lifecycle
+   ========================= */
+
+onMounted(async () => {
+  await loadLibraries();
+  await fetchItems();
+});
 </script>
 
 <style scoped>

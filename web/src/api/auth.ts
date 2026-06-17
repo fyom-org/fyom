@@ -1,43 +1,35 @@
 import { authRequest } from './request';
+import type { ApiEnvelope, User, LoginData } from './types';
+
+// Re-export User type for external use
+export type { User, LoginData };
 
 export interface LoginPayload {
-	username: string;
-	password: string;
+  username: string;
+  password: string;
 }
 
-export interface LoginData {
-	access_token: string;
-	token_type: string;
-	expires_in: number;
-	user: User;
+// Login and return the actual data (unwrapped from envelope)
+export async function login(payload: LoginPayload): Promise<LoginData> {
+  const res = await authRequest.post<ApiEnvelope<LoginData>>('/auth/login', payload);
+  return res.data.data;
 }
 
-export interface User {
-	user_id: string;
-	username: string;
-	role: string;
-	password_change_required: boolean;
+// Get current user (unwrapped from envelope)
+export async function getMe(): Promise<User> {
+  const res = await authRequest.get<ApiEnvelope<User>>('/auth/me');
+  return res.data.data;
 }
 
-export interface MeData {
-	user_id: string;
-	username: string;
-	role: string;
-	password_change_required: boolean;
+export async function register(payload: { username: string; password: string }): Promise<User> {
+  const res = await authRequest.post<ApiEnvelope<User>>('/auth/register', payload);
+  return res.data.data;
 }
 
-export function login(payload: LoginPayload) {
-	return authRequest.post<LoginData>('/auth/login', payload);
-}
-
-export function getMe() {
-	return authRequest.get<MeData>('/auth/me');
-}
-
-export function register(payload: { username: string; password: string }) {
-	return authRequest.post('/auth/register', payload);
-}
-
-export function updatePassword(payload: { old_password: string; new_password: string }) {
-	return authRequest.put<{ user: User }>('/auth/me/password', payload);
+export async function changePassword(oldPassword: string, newPassword: string): Promise<User> {
+  const res = await authRequest.put<ApiEnvelope<{ user: User }>>('/auth/me/password', {
+    old_password: oldPassword,
+    new_password: newPassword,
+  });
+  return res.data.data.user;
 }

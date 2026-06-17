@@ -2,7 +2,7 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-  cmd = "CGO_ENABLED=0 go build -ldflags \"-s -w\" -o tmp/fyom ./cmd/fyom"
+  cmd = "cd web && pnpm run build && CGO_ENABLED=0 go build -ldflags \"-s -w\" -o ../tmp/fyom ../cmd/fyom"
   delay = 1500
   entrypoint = "./tmp/fyom"
   exclude_dir = ["web/src", "web/node_modules", "tmp", "build", "data"]

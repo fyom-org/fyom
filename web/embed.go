@@ -4,5 +4,6 @@ package web
 import "embed"
 
 // Dist holds the embedded compiled frontend assets.
-//go:embed dist
+//
+//go:embed all:dist
 var Dist embed.FS

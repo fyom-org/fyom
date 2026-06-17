@@ -1,5 +1,5 @@
 import { nextTick } from 'vue';
-import { createRouter, createWebHistory } from 'vue-router';
+import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router';
 import MainLayout from '@/layouts/MainLayout.vue';
 import AdminLayout from '@/layouts/AdminLayout.vue';
 import { useUserStore } from '@/stores/user';
@@ -79,6 +79,33 @@ const router = createRouter({
 });
 
 /**
+ * Shared bootstrap promise for first-route resolution.
+ *
+ * This prevents concurrent navigations from racing system bootstrap and
+ * session rehydration, especially on hard refresh of protected deep links
+ * such as /admin/libraries.
+ */
+let navigationBootstrapPromise: Promise<void> | null = null;
+
+/**
+ * Route revalidation subscription management.
+ */
+let unsubscribe: (() => void) | null = null;
+let lastRevalidationKey = '';
+
+function isGuestPath(path: string): boolean {
+  return path === '/login' || path === '/register';
+}
+
+function requiresAdminRoute(to: RouteLocationNormalized): boolean {
+  return to.matched.some((record) => record.meta.requiresAdmin === true);
+}
+
+function requiresProtectedRoute(to: RouteLocationNormalized): boolean {
+  return to.matched.some((record) => record.meta.requiresAuth === true);
+}
+
+/**
  * Centralized route revalidation.
  *
  * Re-runs resolveNavigationTarget against the current route whenever
@@ -88,10 +115,8 @@ const router = createRouter({
  *
  * Uses nextTick() to defer navigation, preventing conflicts with
  * Vue Router's internal navigation state when the subscriber fires
- * synchronously during an async operation (e.g., rehydrateSession).
+ * synchronously during an async operation (e.g. rehydrateSession).
  */
-let lastRevalidationKey = '';
-
 function revalidateCurrentRoute() {
   const systemStore = useSystemStore();
   const userStore = useUserStore();
@@ -99,7 +124,6 @@ function revalidateCurrentRoute() {
   const currentRoute = router.currentRoute.value;
   const targetPath = currentRoute.path;
 
-  // Build a simple key to avoid redundant revalidation
   const key = `${systemStore.status}|${userStore.status}|${userStore.isAdmin}|${targetPath}`;
   if (key === lastRevalidationKey) return;
   lastRevalidationKey = key;
@@ -108,10 +132,10 @@ function revalidateCurrentRoute() {
     systemStatus: systemStore.status,
     authStatus: userStore.status,
     isAdmin: userStore.isAdmin,
-    targetPath: router.currentRoute.value.path,
+    targetPath,
   });
 
-  if (decision.type === 'redirect' && decision.to !== router.currentRoute.value.path) {
+  if (decision.type === 'redirect' && decision.to !== targetPath) {
     nextTick(() => {
       router.replace(decision.to).catch(() => {
         // ignore duplicate navigation
@@ -120,11 +144,8 @@ function revalidateCurrentRoute() {
   }
 }
 
-// Subscribe to store changes for route revalidation
-let unsubscribe: (() => void) | null = null;
-
 function setupRouteRevalidation() {
-  if (unsubscribe) return; // already set up
+  if (unsubscribe) return;
 
   const systemStore = useSystemStore();
   const userStore = useUserStore();
@@ -132,6 +153,7 @@ function setupRouteRevalidation() {
   const stopSystem = systemStore.$subscribe(() => {
     revalidateCurrentRoute();
   });
+
   const stopUser = userStore.$subscribe(() => {
     revalidateCurrentRoute();
   });
@@ -142,43 +164,92 @@ function setupRouteRevalidation() {
   };
 }
 
-// Unified route guard — single decision point using system + auth state machines
+/**
+ * Ensure system truth and auth truth are settled before we let protected
+ * or admin routes proceed. This is the critical fix for hard-refresh on
+ * protected deep links, especially /admin/*.
+ */
+async function bootstrapNavigationState(to: RouteLocationNormalized): Promise<void> {
+  const systemStore = useSystemStore();
+  const userStore = useUserStore();
 
+  if (navigationBootstrapPromise) {
+    await navigationBootstrapPromise;
+    return;
+  }
+
+  navigationBootstrapPromise = (async () => {
+    // 1. Resolve system status first
+    if (systemStore.status === 'unknown') {
+      await systemStore.fetchSystemStatus();
+    }
+
+    // 2. If system is initialized, auth truth must be resolved before
+    // protected/admin routes are allowed to proceed.
+    if (systemStore.isInitialized) {
+      const persistedToken = localStorage.getItem('token');
+
+      if (userStore.status === 'unknown') {
+        if (persistedToken) {
+          await userStore.rehydrateSession();
+        } else {
+          userStore.setAnonymous();
+        }
+      } else if (userStore.status === 'rehydrating') {
+        // Never allow protected/admin deep links to proceed while role/auth
+        // restoration is still in flight.
+        await userStore.rehydrateSession();
+      }
+    }
+
+    // 3. Guest routes may still be visited anonymously after bootstrap.
+    // No extra action required here.
+    void to;
+  })().finally(() => {
+    navigationBootstrapPromise = null;
+  });
+
+  await navigationBootstrapPromise;
+}
+
+/**
+ * Unified route guard — single decision point using system + auth state machines.
+ *
+ * Critical behavior:
+ * - We do NOT allow protected/admin routes to slip through while auth is still
+ *   "rehydrating".
+ * - Admin deep links must wait until user + role have been restored.
+ */
 router.beforeEach(async (to) => {
-
-  // Always install revalidation watcher first, regardless of decision outcome
   setupRouteRevalidation();
 
   const systemStore = useSystemStore();
   const userStore = useUserStore();
 
-  // 1. Ensure system truth is known
-  if (systemStore.status === 'unknown') {
-    try {
-      await systemStore.fetchSystemStatus();
-    } catch (err) {
-      console.error('[router] fetchSystemStatus failed:', err);
+  const guestPath = isGuestPath(to.path);
+  const protectedRoute = requiresProtectedRoute(to);
+  const adminRoute = requiresAdminRoute(to);
+
+  try {
+    // Bootstrap is required for:
+    // 1. guest routes (to correctly redirect authenticated users away from /login)
+    // 2. protected routes
+    // 3. admin routes
+    if (guestPath || protectedRoute || adminRoute) {
+      await bootstrapNavigationState(to);
     }
+  } catch (err) {
+    console.error('[router] bootstrapNavigationState failed:', err);
+
+    // Fail closed for protected/admin routes.
+    if (protectedRoute || adminRoute) {
+      return '/login';
+    }
+
+    // Guest routes may still proceed.
+    return true;
   }
 
-  // 2. Eliminate authStatus=unknown passthrough
-  // When system is initialized, auth MUST be resolved before entering resolver
-  if (systemStore.isInitialized) {
-    if (userStore.status === 'unknown') {
-      if (localStorage.getItem('token')) {
-        try {
-          await userStore.rehydrateSession();
-        } catch (err) {
-          console.error('[router] rehydrateSession failed:', err);
-        }
-      } else {
-        // No token = explicit anonymous, not "unknown"
-        userStore.setAnonymous();
-      }
-    }
-  }
-
-  // 3. Resolve navigation decision
   const decision = resolveNavigationTarget({
     systemStatus: systemStore.status,
     authStatus: userStore.status,
@@ -188,19 +259,24 @@ router.beforeEach(async (to) => {
 
   switch (decision.type) {
     case 'allow':
-      return;
-    case 'redirect': {
-      const redirectDecision = decision as { type: 'redirect'; to: string };
-      return redirectDecision.to;
-    }
+      return true;
+
+    case 'redirect':
+      return decision.to;
+
     case 'wait':
-      // If navigating to a protected route and auth is rehydrating, allow navigation
-      // to proceed. The revalidation watcher will redirect if auth fails.
-      const isProtectedRoute = to.path !== '/login' && to.path !== '/register';
-      if (userStore.status === 'rehydrating' && isProtectedRoute) {
-        return;
+      // Guest routes can still render while anonymous/system settles.
+      if (guestPath) {
+        return true;
       }
-      // For non-protected routes or non-rehydrating states, cancel navigation
+
+      // Important: protected/admin routes must NOT be allowed through
+      // in wait state after bootstrap, otherwise deep-link refresh can
+      // render into a half-restored auth/role state and black-screen.
+      if (protectedRoute || adminRoute) {
+        return false;
+      }
+
       return false;
   }
 });

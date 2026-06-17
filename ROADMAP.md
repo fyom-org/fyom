@@ -724,19 +724,19 @@ Current client-side genre filtering is unaffected.
 > - support both server/headless mode and Tauri desktop mode without
 >   reintroducing route-state pollution
 
-- [ ] **Remove `/setup` as a frontend/browser route**
+- [x] **Remove `/setup` as a frontend/browser route**
       - `/setup` must no longer exist as a normal route in the SPA
       - direct browser access to `/setup` must no longer act as a valid
         initialization flow
       - initialized systems must never route anonymous users to `/setup`
 
-- [ ] **Replace browser setup with backend first-run bootstrap**
+- [x] **Replace browser setup with backend first-run bootstrap**
       - when `userCount == 0`, backend performs initial admin bootstrap
       - frontend should no longer depend on `/api/v1/system/initialize`
         as part of normal browser first-run flow
       - bootstrap becomes a backend/system concern, not a route concern
 
-- [ ] **Server mode first-run bootstrap**
+- [x] **Server mode first-run bootstrap**
       - on first boot with zero users:
         - create admin user `admin`
         - generate a strong random password
@@ -744,7 +744,7 @@ Current client-side genre filtering is unaffected.
       - frontend unauthenticated landing remains `/login`
       - no browser setup wizard/page is involved
 
-- [ ] **Desktop mode first-run bootstrap**
+- [x] **Desktop mode first-run bootstrap**
       - on first boot with zero users:
         - create a local admin user
         - issue a local bootstrap session for the Tauri desktop runtime
@@ -753,14 +753,14 @@ Current client-side genre filtering is unaffected.
       - bootstrap session must remain local-only and must not become a
         remote/public auth bypass
 
-- [ ] **Introduce `password_change_required` as a user attribute**
+- [x] **Introduce `password_change_required` as a user attribute**
       - add persistent user-level field:
         - `password_change_required BOOLEAN NOT NULL DEFAULT FALSE`
       - bootstrap-created admin accounts must be created with
         `password_change_required = true`
       - this flag is a user/auth concern, not a system/bootstrap route state
 
-- [ ] **Extend auth responses with password-change requirement**
+- [x] **Extend auth responses with password-change requirement**
       - login/session bootstrap responses must include:
         - `access_token`
         - current `user`
@@ -768,7 +768,7 @@ Current client-side genre filtering is unaffected.
       - both server-mode manual login and desktop-mode bootstrap session
         must converge on the same frontend auth state shape
 
-- [ ] **Replace `/setup` UX with a blocking password-change modal**
+- [x] **Replace `/setup` UX with a blocking password-change modal**
       - when `userStore.isAuthenticated && userStore.requiresPasswordChange`,
         show a global blocking modal/overlay from `App.vue`
       - the modal is:
@@ -780,7 +780,7 @@ Current client-side genre filtering is unaffected.
         - frontend updates current user state
         - modal disappears automatically
 
-- [ ] **Ensure migration-safe credential semantics**
+- [x] **Ensure migration-safe credential semantics**
       - credentials must live in the database, not only in local device state
       - desktop auto-session is only a convenience layer
       - if the database is moved to another machine:
@@ -789,7 +789,7 @@ Current client-side genre filtering is unaffected.
       - database portability must not depend on the original device retaining
         a hidden session secret
 
-- [ ] **Simplify frontend entry-state semantics**
+- [x] **Simplify frontend entry-state semantics**
       - after this refactor, frontend system state should no longer model
         `needs_setup` as a stable routing destination
       - production route semantics should simplify to:
@@ -798,7 +798,7 @@ Current client-side genre filtering is unaffected.
         - authenticated + non-admin -> no `/admin`
       - `/setup` must not remain as a generic or accidental fallback
 
-- [ ] **Refactor route gate and route revalidation around the simplified model**
+- [x] **Refactor route gate and route revalidation around the simplified model**
       - route decisions must be based on:
         - system initialized truth
         - auth session truth
@@ -807,20 +807,20 @@ Current client-side genre filtering is unaffected.
         source of route/bootstrap ambiguity
       - login success and logout must revalidate the current route correctly
 
-- [ ] **Deprecate or demote `/api/v1/system/initialize`**
+- [x] **Deprecate or demote `/api/v1/system/initialize`**
       - frontend must stop using it as a normal browser bootstrap endpoint
       - if retained, it should be clearly scoped to controlled internal/admin
         or recovery use only
       - it must not imply that `/setup` remains part of the normal UI flow
 
-- [ ] **Add backend bootstrap regression coverage**
+- [x] **Add backend bootstrap regression coverage**
       - zero-user server bootstrap creates admin exactly once
       - zero-user desktop bootstrap creates admin and local bootstrap session
       - existing users prevent repeated bootstrap
       - generated credentials are not static/predictable
       - stdout credential output is emitted once, not on every restart
 
-- [ ] **Add frontend regression coverage for the post-`/setup` world**
+- [x] **Add frontend regression coverage for the post-`/setup` world**
       - initialized fresh anonymous session lands on `/login`
       - `/setup` is no longer reachable as a normal route
       - login success lands on `/`

@@ -1,59 +1,108 @@
 <template>
   <div class="admin-page">
     <h1>Settings</h1>
+
     <div v-if="loading" class="loading">Loading...</div>
+
+    <div v-else-if="error" class="error">{{ error }}</div>
+
     <template v-else>
       <div class="settings-section">
         <h2>Registration</h2>
+
         <label class="toggle-row">
-          <input type="checkbox" v-model="allowRegistration" />
+          <input type="checkbox" v-model="allowRegistration" :disabled="saving" />
           <span>Allow public registration</span>
         </label>
+
         <p class="hint">When disabled, only admins can create new accounts.</p>
       </div>
 
-      <button class="save-btn" @click="save" :disabled="saving">
+      <button class="save-btn" :disabled="saving" @click="saveSettings">
         {{ saving ? 'Saving...' : 'Save Settings' }}
       </button>
-      <p class="msg" v-if="msg">{{ msg }}</p>
+
+      <p v-if="message" class="msg">{{ message }}</p>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { apiRequest } from '@/api/request';
+import { authRequest } from '@/api/request';
+import type { ApiEnvelope } from '@/api/types';
+
+/**
+ * Backend shape assumption:
+ * GET /admin/settings -> { allow_registration: "true" | "false" }
+ */
+interface SettingsData {
+  allow_registration: string;
+}
 
 const allowRegistration = ref(false);
+
 const loading = ref(true);
 const saving = ref(false);
-const msg = ref('');
 
-onMounted(async () => {
+const message = ref('');
+const error = ref('');
+
+async function loadSettings(): Promise<void> {
+  loading.value = true;
+  error.value = '';
+
   try {
-    const res: any = await request.get('/admin/settings');
-    allowRegistration.value = res.data?.allow_registration === 'true';
-  } catch {
-    // ignore
+    const res = await authRequest.get<ApiEnvelope<SettingsData>>('/admin/settings');
+
+    const data = res.data.data;
+
+    allowRegistration.value = data.allow_registration === 'true';
+  } catch (err: any) {
+    const status = err?.response?.status;
+
+    if (status === 401 || status === 403) {
+      // 由 router / store 统一处理，不污染控制台
+      return;
+    }
+
+    console.error('[settings] loadSettings failed:', err);
+    error.value = 'Failed to load settings';
   } finally {
     loading.value = false;
   }
-});
+}
 
-async function save() {
+async function saveSettings(): Promise<void> {
   saving.value = true;
-  msg.value = '';
+  message.value = '';
+  error.value = '';
+
   try {
-    await request.put('/admin/settings', {
+    await authRequest.put<ApiEnvelope<null>>('/admin/settings', {
       allow_registration: allowRegistration.value ? 'true' : 'false',
     });
-    msg.value = 'Settings saved';
-  } catch {
-    msg.value = 'Failed to save';
+
+    message.value = 'Settings saved';
+  } catch (err: any) {
+    const status = err?.response?.status;
+
+    if (status === 401 || status === 403) {
+      return;
+    }
+
+    console.error('[settings] saveSettings failed:', err);
+
+    message.value =
+      err?.response?.data?.message || err?.response?.data?.error || 'Failed to save settings';
   } finally {
     saving.value = false;
   }
 }
+
+onMounted(() => {
+  void loadSettings();
+});
 </script>
 
 <style scoped>
@@ -71,6 +120,11 @@ h2 {
 
 .loading {
   color: #555577;
+}
+
+.error {
+  color: #ff6b6b;
+  font-size: 14px;
 }
 
 .settings-section {
@@ -118,6 +172,7 @@ h2 {
 
 .save-btn:disabled {
   opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .msg {
