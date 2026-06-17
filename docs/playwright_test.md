@@ -3,14 +3,16 @@
 ## Overview
 This document describes how to run Playwright E2E tests for the fyom frontend.
 
+Test files are under `web/tests/`
+
 ## Prerequisites
 
 ### Start Backend Server (Required)
-The E2E tests require a running fyom backend server on port 8080.
+The E2E tests require a running fyom backend server on port 8080
 
 ```bash
 # 1. Build the Go backend
-cd /root/fyom && CGO_ENABLED=0 go build -o /tmp/fyom-server ./cmd/fyom/
+cd fyom && CGO_ENABLED=0 go build -o /tmp/fyom-server ./cmd/fyom/
 
 # 2. Start server with a temporary database
 FYOM_AUTH_JWT_SECRET=***RE_SECRET=*** /tmp/fyom-server -db-path /tmp/fyom-e2e.db &
@@ -28,12 +30,12 @@ export no_proxy="localhost,127.0.0.1,::1"
 
 ### Using Taskfile (Recommended)
 ```bash
-cd /root/fyom && nix develop --command pnpm exec playwright test --config web/playwright.config.ts
+cd fyom && nix develop --command pnpm exec playwright test --config web/playwright.config.ts
 ```
 
 ### Direct Command
 ```bash
-cd /root/fyom/web
+cd fyom/web
 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
 PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true \
 NO_PROXY="localhost,127.0.0.1,::1" \
@@ -43,11 +45,14 @@ npx playwright test --config playwright.config.ts
 
 ### Common Test Commands
 ```bash
+# Enter nix flake development environment
+nix develop
+
+# Go to web directory
+cd web
+
 # Run all E2E tests
 pnpm exec playwright test --config playwright.config.ts
-
-# Run specific test by name pattern
-pnpm exec playwright test -g "V3"
 
 # Run with headed browser (for debugging)
 pnpm exec playwright test --headed
@@ -90,24 +95,19 @@ export default defineConfig({
 });
 ```
 
-### Test Files
-- `web/tests/auth-lifecycle.e2e.test.ts` - Main E2E test suite covering:
-  - V1: Anonymous user cold start → `/login`
-  - V2: Setup → login → lands on `/`
-  - V3: Login from `/login` page → lands on `/`
-  - V4: Logout from `/profile` → redirected to `/login`
-  - V5: `/setup` inaccessible after initialization
-  - V6: Protected pages not accessible to anonymous users
-
 ## Common Issues & Troubleshooting
 
 ### 1. Browser Not Found
+
+Need to setup nix flake development environment 
+
 ```bash
-nix develop /root/fyom --command pnpm exec playwright install chromium
+nix develop
 ```
 
 ### 2. Test Isolation Issues
-Tests share browser context by default. For proper isolation, each test should:
+Tests share browser context by default.
+For proper isolation, each test should:
 - Use fresh browser context
 - Clear localStorage/cookies between tests
 - Reset database state if needed
@@ -120,28 +120,8 @@ export no_proxy="localhost,127.0.0.1,::1"
 ```
 
 ### 4. Server Not Ready
-The `webServer` config in `playwright.config.ts` uses `reuseExistingServer: true` and expects server at `http://127.0.0.1:8080`. Ensure the backend is running before tests.
-
-## Test Scenarios Covered
-
-| Test | Scenario | Expected |
-|------|----------|----------|
-| V1 | Fresh browser → `/` | Redirect to `/login` (not `/setup`) |
-| V2 | Setup → login | Redirect to `/` |
-| V3 | Login from `/login` | Redirect to `/` |
-| V4 | Logout from `/profile` | Redirect to `/login` |
-| V5 | Access `/setup` after init | Redirect away from `/setup` |
-| V6 | Anonymous access to protected pages | Redirect to `/login` |
-
-## Known Issues & Fixes
-
-| Issue | Status | Fix |
-|-------|--------|-----|
-| Login stuck on `/login` | Fixed | Use `fetch` with explicit token in `doLogin()` |
-| `authStatus=unknown` leak | Fixed | Guard sets `anonymous` when no token |
-| Double navigation on logout | Fixed | Removed `router.replace` from `ProfileView` |
-| Route revalidation on redirect | Fixed | `setupRouteRevalidation()` called unconditionally |
-| `wait` decision silent passthrough | Fixed | Return `false` to cancel navigation |
+The `webServer` config in `playwright.config.ts` uses `reuseExistingServer: true` and expects server at `http://127.0.0.1:8080`.
+Ensure the backend is running before tests.
 
 ## Debugging Tips
 
