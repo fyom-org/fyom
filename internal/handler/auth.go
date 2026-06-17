@@ -3,7 +3,10 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
 	fyommiddleware "github.com/fyom/fyom/internal/middleware"
 	"github.com/fyom/fyom/internal/model"
@@ -11,20 +14,33 @@ import (
 	"github.com/fyom/fyom/internal/service"
 	"github.com/fyom/fyom/pkg/errors"
 	"github.com/fyom/fyom/pkg/response"
+	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
 // AuthHandler handles authentication endpoints.
 type AuthHandler struct {
-	authService *service.AuthService
-	settingRepo *repository.SystemSettingRepository
+	authService   *service.AuthService
+	userRepo      *repository.UserRepository
+	settingRepo   *repository.SystemSettingRepository
+	jwtSecret     string
+	tokenTTLHours int
 }
 
 // NewAuthHandler creates a new AuthHandler.
-func NewAuthHandler(userRepo *repository.UserRepository, libPermRepo *repository.LibraryPermissionRepository, settingRepo *repository.SystemSettingRepository, jwtSecret string, tokenTTLHours int) *AuthHandler {
+func NewAuthHandler(
+	userRepo *repository.UserRepository,
+	libPermRepo *repository.LibraryPermissionRepository,
+	settingRepo *repository.SystemSettingRepository,
+	jwtSecret string,
+	tokenTTLHours int,
+) *AuthHandler {
 	return &AuthHandler{
-		authService: service.NewAuthService(userRepo, libPermRepo, jwtSecret, tokenTTLHours),
-		settingRepo: settingRepo,
+		authService:   service.NewAuthService(userRepo, libPermRepo, jwtSecret, tokenTTLHours),
+		userRepo:      userRepo,
+		settingRepo:   settingRepo,
+		jwtSecret:     jwtSecret,
+		tokenTTLHours: tokenTTLHours,
 	}
 }
 
@@ -55,6 +71,17 @@ type LoginRequest struct {
 // LoginResponse represents a login response.
 type LoginResponse struct {
 	AccessToken            string      `json:"access_token"`
+	Token                  string      `json:"token,omitempty"`
+	TokenType              string      `json:"token_type"`
+	ExpiresIn              int         `json:"expires_in"`
+	User                   *model.User `json:"user"`
+	PasswordChangeRequired bool        `json:"password_change_required"`
+}
+
+// BootstrapSessionResponse represents a localhost-only desktop bootstrap session.
+type BootstrapSessionResponse struct {
+	Token                  string      `json:"token"`
+	AccessToken            string      `json:"access_token"`
 	TokenType              string      `json:"token_type"`
 	ExpiresIn              int         `json:"expires_in"`
 	User                   *model.User `json:"user"`
@@ -63,7 +90,6 @@ type LoginResponse struct {
 
 // Register creates a new user account.
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
-	// Check if public registration is allowed
 	allowReg, err := h.settingRepo.GetSetting(r.Context(), "allow_registration")
 	if err != nil || allowReg != "true" {
 		response.Error(w, 403, "registration is disabled")
@@ -71,7 +97,14 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req RegisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" || req.Password == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, 400, "validation error")
+		return
+	}
+
+	req.Username = strings.TrimSpace(req.Username)
+
+	if req.Username == "" || req.Password == "" {
 		response.Error(w, 400, "validation error")
 		return
 	}
@@ -82,6 +115,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, appErr.Code, appErr.Message)
 			return
 		}
+
 		response.Error(w, 500, "internal server error")
 		return
 	}
@@ -96,7 +130,14 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 // Login authenticates a user and returns a JWT.
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" || req.Password == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, 400, "validation error")
+		return
+	}
+
+	req.Username = strings.TrimSpace(req.Username)
+
+	if req.Username == "" || req.Password == "" {
 		response.Error(w, 400, "validation error")
 		return
 	}
@@ -107,15 +148,18 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, appErr.Code, appErr.Message)
 			return
 		}
+
 		response.Error(w, 500, "internal server error")
 		return
 	}
 
-	expiry := int((24 * 3600)) // seconds
+	user = sanitizeUser(user)
+
 	response.Success(w, LoginResponse{
 		AccessToken:            token,
+		Token:                  token,
 		TokenType:              "Bearer",
-		ExpiresIn:              expiry,
+		ExpiresIn:              h.tokenTTLSeconds(),
 		User:                   user,
 		PasswordChangeRequired: user.PasswordChangeRequired,
 	})
@@ -135,78 +179,89 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Never return the password hash
-	user.Password = ""
-
-	response.Success(w, user)
+	response.Success(w, sanitizeUser(user))
 }
 
-// DesktopBootstrap returns the desktop bootstrap token if one was created.
-// This endpoint is used by the Tauri frontend on first run to auto-authenticate.
-// It consumes the token (deletes it) so it can only be used once.
-// Returns both the token and the user with password_change_required flag.
+// DesktopBootstrap returns a legacy desktop bootstrap token if one was created.
+//
+// This endpoint is kept for backward compatibility with older desktop bootstrap
+// flows that stored a one-time token in system settings. New desktop clients
+// should use /api/v1/internal/bootstrap-session instead.
 func (h *AuthHandler) DesktopBootstrap(w http.ResponseWriter, r *http.Request) {
-	// Only allow in desktop/sidecar mode - check if setting exists
 	token, err := h.settingRepo.GetSetting(r.Context(), "desktop_bootstrap_token")
 	if err != nil || token == "" {
 		response.Error(w, 404, "no bootstrap token available")
 		return
 	}
 
-	// Consume the token - delete it so it can't be reused
 	_ = h.settingRepo.SetSetting(r.Context(), "desktop_bootstrap_token", "")
 
-	// Get the bootstrap admin user by username
 	user, err := h.authService.GetUserByUsername(r.Context(), "admin")
 	if err != nil || user == nil {
-		// Fallback: just return the token
-		response.Success(w, map[string]string{
-			"token": token,
+		response.Success(w, map[string]interface{}{
+			"token":        token,
+			"access_token": token,
+			"token_type":   "Bearer",
+			"expires_in":   h.tokenTTLSeconds(),
 		})
 		return
 	}
 
-	// Never return the password hash
-	user.Password = ""
+	user = sanitizeUser(user)
 
-	response.Success(w, map[string]interface{}{
-		"token": token,
-		"user":  user,
+	response.Success(w, BootstrapSessionResponse{
+		Token:                  token,
+		AccessToken:            token,
+		TokenType:              "Bearer",
+		ExpiresIn:              h.tokenTTLSeconds(),
+		User:                   user,
+		PasswordChangeRequired: user.PasswordChangeRequired,
 	})
 }
 
-// InternalBootstrapSession returns the desktop bootstrap session if one exists
-// and the user still has password_change_required=true.
-// This is a localhost-only endpoint for the desktop bridge.
+// InternalBootstrapSession returns a localhost-only desktop bootstrap session.
+//
+// This endpoint is intentionally unauthenticated because it is used before the
+// desktop frontend has any token. The route must remain protected by
+// middleware.AllowLocalOnly in server.go.
+//
+// Security model:
+//   - Only a bootstrap admin with password_change_required=true is eligible.
+//   - Once the user changes password, password_change_required becomes false.
+//   - The endpoint then naturally returns 404.
+//   - No persistent bootstrap token setting is required.
 func (h *AuthHandler) InternalBootstrapSession(w http.ResponseWriter, r *http.Request) {
-	// Only allow in desktop/sidecar mode
-	token, err := h.settingRepo.GetSetting(r.Context(), "desktop_bootstrap_token")
-	if err != nil || token == "" {
+	user, err := h.userRepo.FindBootstrapUser(r.Context())
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+
+	if user == nil {
 		response.Error(w, 404, "no bootstrap session available")
 		return
 	}
 
-	// Get the bootstrap admin user
-	user, err := h.authService.GetUserByUsername(r.Context(), "admin")
-	if err != nil || user == nil {
+	if !isBootstrapSessionUser(user) {
 		response.Error(w, 404, "no bootstrap session available")
 		return
 	}
 
-	// Only return session if user still has password_change_required=true
-	if !user.PasswordChangeRequired {
-		// Clean up the token since it's no longer valid for bootstrap
-		_ = h.settingRepo.SetSetting(r.Context(), "desktop_bootstrap_token", "")
-		response.Error(w, 404, "bootstrap session no longer valid")
+	token, err := h.issueToken(user)
+	if err != nil {
+		response.Error(w, 500, "failed to issue token")
 		return
 	}
 
-	// Never return the password hash
-	user.Password = ""
+	user = sanitizeUser(user)
 
-	response.Success(w, map[string]interface{}{
-		"token": token,
-		"user":  user,
+	response.Success(w, BootstrapSessionResponse{
+		Token:                  token,
+		AccessToken:            token,
+		TokenType:              "Bearer",
+		ExpiresIn:              h.tokenTTLSeconds(),
+		User:                   user,
+		PasswordChangeRequired: user.PasswordChangeRequired,
 	})
 }
 
@@ -217,8 +272,9 @@ type ChangePasswordRequest struct {
 }
 
 // ChangePassword allows the authenticated user to change their password.
-// For users with password_change_required=true, old_password is not required
-// (bootstrap scenario). For regular users, old_password is mandatory.
+//
+// For users with password_change_required=true, old_password is not required.
+// For regular users, old_password is mandatory.
 func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	userID, _ := fyommiddleware.GetUserID(r).(string)
 	if userID == "" {
@@ -227,33 +283,28 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req ChangePasswordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.NewPassword == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, 400, "validation error")
 		return
 	}
 
-	// Fetch user to check password_change_required status
+	if req.NewPassword == "" {
+		response.Error(w, 400, "new_password is required")
+		return
+	}
+
 	user, err := h.authService.GetUserByID(r.Context(), userID)
 	if err != nil || user == nil {
 		response.Error(w, 401, "unauthorized")
 		return
 	}
 
-	// Branch validation based on user state
-	if user.PasswordChangeRequired {
-		// Bootstrap scenario: password_change_required is true
-		// Old password is not required since the user just logged in with temp credentials
-		// Only validate new password
-		if req.NewPassword == "" {
-			response.Error(w, 400, "new_password is required")
-			return
-		}
-	} else {
-		// Regular password change: old_password is required
+	if !user.PasswordChangeRequired {
 		if req.OldPassword == "" {
 			response.Error(w, 400, "old_password is required")
 			return
 		}
+
 		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.OldPassword)); err != nil {
 			response.Error(w, 401, "invalid credentials")
 			return
@@ -266,23 +317,75 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Always clear password_change_required after successful password change
-	// For bootstrap scenario: this clears the flag as expected
-	// For regular scenario: this is a no-op if flag was already false
 	if err := h.authService.UpdatePassword(r.Context(), userID, string(hashedBytes), true); err != nil {
 		response.Error(w, 500, "internal server error")
 		return
 	}
 
-	// Return updated user with cleared password_change_required
 	user, err = h.authService.GetUserByID(r.Context(), userID)
 	if err != nil || user == nil {
 		response.Error(w, 500, "internal server error")
 		return
 	}
-	user.Password = ""
 
 	response.Success(w, map[string]interface{}{
-		"user": user,
+		"user": sanitizeUser(user),
 	})
+}
+
+func (h *AuthHandler) issueToken(user *model.User) (string, error) {
+	if user == nil {
+		return "", fmt.Errorf("cannot issue token for nil user")
+	}
+
+	now := time.Now()
+	ttl := time.Duration(h.tokenTTLHours) * time.Hour
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+
+	claims := jwt.MapClaims{
+		"sub":      user.ID,
+		"username": user.Username,
+		"role":     user.Role,
+		"iat":      now.Unix(),
+		"exp":      now.Add(ttl).Unix(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+
+	return token.SignedString([]byte(h.jwtSecret))
+}
+
+func (h *AuthHandler) tokenTTLSeconds() int {
+	if h.tokenTTLHours <= 0 {
+		return 24 * 3600
+	}
+
+	return h.tokenTTLHours * 3600
+}
+
+func sanitizeUser(user *model.User) *model.User {
+	if user == nil {
+		return nil
+	}
+
+	copy := *user
+	copy.Password = ""
+
+	return &copy
+}
+
+func isBootstrapSessionUser(user *model.User) bool {
+	if user == nil {
+		return false
+	}
+
+	if !user.PasswordChangeRequired {
+		return false
+	}
+
+	role := strings.ToLower(strings.TrimSpace(user.Role))
+
+	return role == "admin" || role == "owner"
 }
