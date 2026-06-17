@@ -32,6 +32,7 @@ func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*m
             password,
             role,
             password_change_required,
+            preferred_language,
             created_at,
             updated_at
         FROM users
@@ -54,6 +55,7 @@ func (r *UserRepository) GetByID(ctx context.Context, id string) (*model.User, e
             password,
             role,
             password_change_required,
+            preferred_language,
             created_at,
             updated_at
         FROM users
@@ -84,6 +86,7 @@ func (r *UserRepository) FindBootstrapUser(ctx context.Context) (*model.User, er
             password,
             role,
             password_change_required,
+            preferred_language,
             created_at,
             updated_at
         FROM users
@@ -129,16 +132,18 @@ func (r *UserRepository) Create(ctx context.Context, u *model.User) error {
             password,
             role,
             password_change_required,
+            preferred_language,
             created_at,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `,
 		u.ID,
 		u.Username,
 		u.Password,
 		u.Role,
 		u.PasswordChangeRequired,
+		u.PreferredLanguage,
 		u.CreatedAt,
 		u.UpdatedAt,
 	)
@@ -201,6 +206,29 @@ func (r *UserRepository) UpdatePasswordAndFlag(
 	return err
 }
 
+// UpdatePreferredLanguage sets the user's preferred UI locale.
+//
+// An empty string clears the preference, causing locale resolution to fall
+// back to system_settings.default_locale → navigator.language → "en".
+// Validation of the locale code against SUPPORTED_LOCALES is the handler's
+// responsibility (see handler.AuthHandler.UpdatePreferences).
+func (r *UserRepository) UpdatePreferredLanguage(ctx context.Context, id string, language string) error {
+	_, err := r.db.ExecContext(
+		ctx,
+		`
+        UPDATE users
+        SET preferred_language = ?,
+            updated_at = ?
+        WHERE id = ?
+        `,
+		language,
+		nowString(),
+		id,
+	)
+
+	return err
+}
+
 type userScanner interface {
 	Scan(dest ...any) error
 }
@@ -214,6 +242,7 @@ func scanUser(row userScanner) (*model.User, error) {
 		&u.Password,
 		&u.Role,
 		&u.PasswordChangeRequired,
+		&u.PreferredLanguage,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)

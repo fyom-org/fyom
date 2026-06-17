@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
-import { login, getMe, changePassword, type User } from '@/api/auth';
+import { login, getMe, changePassword, updatePreferences, type User } from '@/api/auth';
 import { apiRequest } from '@/api/request';
 import type { ApiEnvelope } from '@/api/types';
+import { setGlobalLocale, isSupportedLocale } from '@/composables/useLocale';
 
 export type AuthStatus = 'unknown' | 'rehydrating' | 'authenticated' | 'anonymous' | 'error';
 
@@ -113,6 +114,7 @@ export const useUserStore = defineStore('user', () => {
     status.value = 'authenticated';
     lastAuthError.value = '';
     persistToken(nextToken);
+    applyUserPreferredLanguage(nextUser);
   }
 
   function setAuthenticatedUser(nextUser: User): void {
@@ -122,6 +124,52 @@ export const useUserStore = defineStore('user', () => {
     user.value = nextUser;
     status.value = 'authenticated';
     lastAuthError.value = '';
+    applyUserPreferredLanguage(nextUser);
+  }
+
+  /**
+   * Apply the user's preferred_language to the global i18n locale.
+   *
+   * Resolution: users.preferred_language → DEFAULT_LOCALE.
+   * (system_settings.default_locale is consulted separately by the system
+   * store for anonymous users; for authenticated users the user preference
+   * always wins.)
+   *
+   * If preferred_language is empty or invalid, we keep the current locale
+   * (which may have been set by the browser-detection path for anonymous
+   * users). This avoids clobbering a good locale with a bad DB value.
+   */
+  function applyUserPreferredLanguage(nextUser: User): void {
+    const preferred = (nextUser as User & { preferred_language?: string }).preferred_language;
+
+    if (preferred && isSupportedLocale(preferred)) {
+      setGlobalLocale(preferred);
+    }
+    // If preferred is empty/invalid, fall through: the browser-detected locale
+    // from applyInitialLocale() remains active. Phase 1 will extend this to
+    // consult systemStore.defaultLocale as a middle-tier fallback.
+  }
+
+  /**
+   * Update the current user's preferred language both server-side and in the
+   * local store. Called by the LanguageSwitcher when an authenticated user
+   * changes locale.
+   *
+   * On success, the global i18n locale is also updated (hot-swap, no refresh).
+   * On failure, the locale is NOT changed — the user sees an error and can retry.
+   */
+  async function updatePreferredLanguage(language: string): Promise<void> {
+    if (!user.value) {
+      throw new Error('Cannot update preferences: no authenticated user.');
+    }
+
+    const updatedUser = await updatePreferences({ preferred_language: language });
+
+    user.value = updatedUser;
+
+    if (isSupportedLocale(language)) {
+      setGlobalLocale(language);
+    }
   }
 
   function setAnonymous(): void {
@@ -187,11 +235,18 @@ export const useUserStore = defineStore('user', () => {
           return;
         }
 
-        // Keep the token for a future retry. Network/backend failures are not
-        // proof that the session is invalid.
+        // Network / backend failure (not 401/403): keep the token for a
+        // future retry and STAY in 'rehydrating' status. Transitioning to
+        // 'error' here would make isAuthReady=true, causing the router
+        // guard to treat the session as terminally failed. Keeping
+        // 'rehydrating' means the guard continues to wait, and the app
+        // can retry rehydration when connectivity returns.
         token.value = persisted;
         user.value = null;
-        markAuthError('Unable to verify session. Please try again.');
+        lastAuthError.value = 'Unable to verify session. Please try again.';
+        // Intentionally do NOT call markAuthError() — that would set
+        // status='error'. We leave status='rehydrating' so isAuthReady
+        // stays false and the router guard keeps waiting.
       }
     })().finally(() => {
       rehydrationPromise = null;
@@ -359,8 +414,19 @@ export const useUserStore = defineStore('user', () => {
   }
 
   function handleUnauthorizedEvent(event: Event): void {
+    // Defensive: the event may be undefined or a non-CustomEvent if
+    // dispatched incorrectly (e.g. test helpers calling the handler with
+    // no argument). Guard against null/undefined before reading .detail.
+    if (!event) {
+      clearStaleSession();
+      return;
+    }
+
     const customEvent = event as CustomEvent<AuthEventDetail>;
-    const httpStatus = customEvent.detail?.status;
+    const detail = customEvent.detail;
+
+    // If detail is missing, treat as a generic 401 (clear session).
+    const httpStatus = typeof detail === 'object' && detail !== null ? detail.status : undefined;
 
     // This event should only be emitted by explicit auth-critical requests.
     // Therefore it is safe to clear session here.
@@ -397,6 +463,7 @@ export const useUserStore = defineStore('user', () => {
     markAuthError,
     doLogin,
     updatePassword,
+    updatePreferredLanguage,
     logout,
   };
 });

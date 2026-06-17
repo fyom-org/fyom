@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { apiRequest } from '@/api/request';
+import { setSupportedLocales } from '@/composables/useLocale';
 import type { ApiEnvelope, SystemStatusData } from '@/api/types';
 
 export type SystemStatus = 'unknown' | 'checking' | 'initialized' | 'error';
@@ -9,12 +10,16 @@ type MaybeEnvelope<T> = ApiEnvelope<T> | T;
 
 interface NormalizedSystemStatus {
   initialized: boolean;
+  defaultLocale?: string;
+  supportedLocales?: string[];
 }
 
 export const useSystemStore = defineStore('system', () => {
   const status = ref<SystemStatus>('unknown');
   const checkedOnce = ref(false);
   const lastError = ref('');
+  const defaultLocale = ref<string>('');
+  const supportedLocales = ref<string[]>([]);
 
   let fetchPromise: Promise<void> | null = null;
 
@@ -62,6 +67,19 @@ export const useSystemStore = defineStore('system', () => {
 
       const normalized = normalizeSystemStatus(response.data);
 
+      // Persist i18n config from the backend response.
+      if (normalized.defaultLocale) {
+        defaultLocale.value = normalized.defaultLocale;
+      }
+      if (normalized.supportedLocales && normalized.supportedLocales.length > 0) {
+        supportedLocales.value = normalized.supportedLocales;
+        // Phase 4: push to the i18n module so LanguageSwitcher and any
+        // other reactive consumer re-renders with the backend-advertised
+        // locale set. Codes the frontend cannot render (no bundled
+        // messages) are silently filtered inside setSupportedLocales().
+        setSupportedLocales(normalized.supportedLocales);
+      }
+
       if (normalized.initialized) {
         status.value = 'initialized';
         checkedOnce.value = true;
@@ -99,6 +117,8 @@ export const useSystemStore = defineStore('system', () => {
     status.value = 'unknown';
     checkedOnce.value = false;
     lastError.value = '';
+    defaultLocale.value = '';
+    supportedLocales.value = [];
     fetchPromise = null;
   }
 
@@ -106,6 +126,8 @@ export const useSystemStore = defineStore('system', () => {
     status,
     checkedOnce,
     lastError,
+    defaultLocale,
+    supportedLocales,
     isChecking,
     isInitialized,
     hasError,
@@ -124,9 +146,21 @@ function normalizeSystemStatus(value: unknown): NormalizedSystemStatus {
     throw new Error('system status response is invalid');
   }
 
-  return {
+  const result: NormalizedSystemStatus = {
     initialized: data.initialized === true,
   };
+
+  if (typeof data.default_locale === 'string' && data.default_locale) {
+    result.defaultLocale = data.default_locale;
+  }
+
+  if (Array.isArray(data.supported_locales)) {
+    result.supportedLocales = data.supported_locales.filter(
+      (loc): loc is string => typeof loc === 'string' && loc.length > 0
+    );
+  }
+
+  return result;
 }
 
 function unwrapUnknownEnvelope(value: unknown): unknown {

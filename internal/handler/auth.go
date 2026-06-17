@@ -13,6 +13,7 @@ import (
 	"github.com/fyom/fyom/internal/repository"
 	"github.com/fyom/fyom/internal/service"
 	"github.com/fyom/fyom/pkg/errors"
+	"github.com/fyom/fyom/pkg/locale"
 	"github.com/fyom/fyom/pkg/response"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -92,31 +93,31 @@ type BootstrapSessionResponse struct {
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	allowReg, err := h.settingRepo.GetSetting(r.Context(), "allow_registration")
 	if err != nil || allowReg != "true" {
-		response.Error(w, 403, "registration is disabled")
+		response.ErrorCode(w, http.StatusForbidden, errors.CodeRegistrationDisabled, "")
 		return
 	}
 
 	var req RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, 400, "validation error")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeValidation, "")
 		return
 	}
 
 	req.Username = strings.TrimSpace(req.Username)
 
 	if req.Username == "" || req.Password == "" {
-		response.Error(w, 400, "validation error")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeValidation, "")
 		return
 	}
 
 	user, err := h.authService.Register(r.Context(), req.Username, req.Password)
 	if err != nil {
 		if appErr, ok := errors.IsAppError(err); ok {
-			response.Error(w, appErr.Code, appErr.Message)
+			response.AppError(w, appErr)
 			return
 		}
 
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
@@ -131,25 +132,25 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, 400, "validation error")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeValidation, "")
 		return
 	}
 
 	req.Username = strings.TrimSpace(req.Username)
 
 	if req.Username == "" || req.Password == "" {
-		response.Error(w, 400, "validation error")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeValidation, "")
 		return
 	}
 
 	token, user, err := h.authService.Login(r.Context(), req.Username, req.Password)
 	if err != nil {
 		if appErr, ok := errors.IsAppError(err); ok {
-			response.Error(w, appErr.Code, appErr.Message)
+			response.AppError(w, appErr)
 			return
 		}
 
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
@@ -169,13 +170,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	userID, _ := fyommiddleware.GetUserID(r).(string)
 	if userID == "" {
-		response.Error(w, 401, "unauthorized")
+		response.ErrorCode(w, http.StatusUnauthorized, errors.CodeUnauthorized, "")
 		return
 	}
 
 	user, err := h.authService.GetUserByID(r.Context(), userID)
 	if err != nil || user == nil {
-		response.Error(w, 401, "unauthorized")
+		response.ErrorCode(w, http.StatusUnauthorized, errors.CodeUnauthorized, "")
 		return
 	}
 
@@ -190,7 +191,7 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) DesktopBootstrap(w http.ResponseWriter, r *http.Request) {
 	token, err := h.settingRepo.GetSetting(r.Context(), "desktop_bootstrap_token")
 	if err != nil || token == "" {
-		response.Error(w, 404, "no bootstrap token available")
+		response.ErrorCode(w, http.StatusNotFound, errors.CodeNoBootstrapToken, "")
 		return
 	}
 
@@ -233,23 +234,23 @@ func (h *AuthHandler) DesktopBootstrap(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) InternalBootstrapSession(w http.ResponseWriter, r *http.Request) {
 	user, err := h.userRepo.FindBootstrapUser(r.Context())
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
 	if user == nil {
-		response.Error(w, 404, "no bootstrap session available")
+		response.ErrorCode(w, http.StatusNotFound, errors.CodeNoBootstrapSession, "")
 		return
 	}
 
 	if !isBootstrapSessionUser(user) {
-		response.Error(w, 404, "no bootstrap session available")
+		response.ErrorCode(w, http.StatusNotFound, errors.CodeNoBootstrapSession, "")
 		return
 	}
 
 	token, err := h.issueToken(user)
 	if err != nil {
-		response.Error(w, 500, "failed to issue token")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeFailedToIssueToken, "")
 		return
 	}
 
@@ -271,6 +272,14 @@ type ChangePasswordRequest struct {
 	NewPassword string `json:"new_password"`
 }
 
+// UpdatePreferencesRequest represents a user preferences update body.
+//
+// Currently only preferred_language is supported. Additional preference
+// fields may be added in the future without breaking this endpoint.
+type UpdatePreferencesRequest struct {
+	PreferredLanguage string `json:"preferred_language"`
+}
+
 // ChangePassword allows the authenticated user to change their password.
 //
 // For users with password_change_required=true, old_password is not required.
@@ -278,53 +287,98 @@ type ChangePasswordRequest struct {
 func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	userID, _ := fyommiddleware.GetUserID(r).(string)
 	if userID == "" {
-		response.Error(w, 401, "unauthorized")
+		response.ErrorCode(w, http.StatusUnauthorized, errors.CodeUnauthorized, "")
 		return
 	}
 
 	var req ChangePasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, 400, "validation error")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeValidation, "")
 		return
 	}
 
 	if req.NewPassword == "" {
-		response.Error(w, 400, "new_password is required")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeNewPasswordRequired, "")
 		return
 	}
 
 	user, err := h.authService.GetUserByID(r.Context(), userID)
 	if err != nil || user == nil {
-		response.Error(w, 401, "unauthorized")
+		response.ErrorCode(w, http.StatusUnauthorized, errors.CodeUnauthorized, "")
 		return
 	}
 
 	if !user.PasswordChangeRequired {
 		if req.OldPassword == "" {
-			response.Error(w, 400, "old_password is required")
+			response.ErrorCode(w, http.StatusBadRequest, errors.CodeOldPasswordRequired, "")
 			return
 		}
 
 		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.OldPassword)); err != nil {
-			response.Error(w, 401, "invalid credentials")
+			response.ErrorCode(w, http.StatusUnauthorized, errors.CodeInvalidCredentials, "")
 			return
 		}
 	}
 
 	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
 	if err := h.authService.UpdatePassword(r.Context(), userID, string(hashedBytes), true); err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
 	user, err = h.authService.GetUserByID(r.Context(), userID)
 	if err != nil || user == nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
+		return
+	}
+
+	response.Success(w, map[string]interface{}{
+		"user": sanitizeUser(user),
+	})
+}
+
+// UpdatePreferences allows the authenticated user to update their preferences.
+//
+// Currently supports:
+//   - preferred_language: a locale code ("en", "zh") or "" to clear preference.
+//
+// Validation:
+//   - preferred_language must be in pkg/locale.SupportedLocales, or empty.
+//   - Invalid codes return 400.
+//
+// Response: the updated sanitized user object (so the frontend can update its
+// store without an extra GET /auth/me round-trip).
+func (h *AuthHandler) UpdatePreferences(w http.ResponseWriter, r *http.Request) {
+	userID, _ := fyommiddleware.GetUserID(r).(string)
+	if userID == "" {
+		response.ErrorCode(w, http.StatusUnauthorized, errors.CodeUnauthorized, "")
+		return
+	}
+
+	var req UpdatePreferencesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeValidation, "")
+		return
+	}
+
+	if !locale.IsValid(req.PreferredLanguage) {
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeUnsupportedLocale, "unsupported locale: "+req.PreferredLanguage)
+		return
+	}
+
+	if err := h.userRepo.UpdatePreferredLanguage(r.Context(), userID, req.PreferredLanguage); err != nil {
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
+		return
+	}
+
+	user, err := h.authService.GetUserByID(r.Context(), userID)
+	if err != nil || user == nil {
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 

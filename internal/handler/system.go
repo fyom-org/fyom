@@ -7,6 +7,7 @@ import (
 	"github.com/fyom/fyom/internal/repository"
 	"github.com/fyom/fyom/internal/service"
 	"github.com/fyom/fyom/pkg/errors"
+	"github.com/fyom/fyom/pkg/locale"
 	"github.com/fyom/fyom/pkg/response"
 )
 
@@ -26,25 +27,43 @@ func NewSystemHandler(settingRepo *repository.SystemSettingRepository, authServi
 
 // StatusResponse holds the system status.
 type StatusResponse struct {
-	Initialized      bool `json:"initialized"`
-	AllowRegistration bool `json:"allow_registration"`
+	Initialized       bool     `json:"initialized"`
+	AllowRegistration bool     `json:"allow_registration"`
+	DefaultLocale     string   `json:"default_locale"`
+	SupportedLocales  []string `json:"supported_locales"`
 }
 
 // Status returns whether the system has been initialized and if registration is open.
+//
+// Also returns i18n configuration:
+//   - default_locale: the admin-configured system default locale (from
+//     system_settings.default_locale). Falls back to pkg/locale.DefaultLocale
+//     ("en") if unset.
+//   - supported_locales: the list of locale codes the frontend can render.
+//
+// The frontend uses these to populate the admin Settings default-locale
+// dropdown and to validate user preferences.
 func (h *SystemHandler) Status(w http.ResponseWriter, r *http.Request) {
 	initialized, _ := h.settingRepo.GetSetting(r.Context(), "initialized")
 	allowReg, _ := h.settingRepo.GetSetting(r.Context(), "allow_registration")
+	defaultLocale, _ := h.settingRepo.GetSetting(r.Context(), "default_locale")
+
+	if defaultLocale == "" || !locale.IsValid(defaultLocale) {
+		defaultLocale = locale.DefaultLocale
+	}
 
 	response.Success(w, StatusResponse{
-		Initialized:      initialized == "true",
+		Initialized:       initialized == "true",
 		AllowRegistration: allowReg == "true",
+		DefaultLocale:     defaultLocale,
+		SupportedLocales:  locale.SupportedLocales,
 	})
 }
 
 // InitializeRequest holds the setup wizard form data.
 type InitializeRequest struct {
-	Username         string `json:"username"`
-	Password         string `json:"password"`
+	Username          string `json:"username"`
+	Password          string `json:"password"`
 	AllowRegistration bool   `json:"allow_registration"`
 }
 
@@ -53,17 +72,17 @@ func (h *SystemHandler) Initialize(w http.ResponseWriter, r *http.Request) {
 	// Check if already initialized
 	initialized, err := h.settingRepo.GetSetting(r.Context(), "initialized")
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	if initialized == "true" {
-		response.Error(w, 400, "already initialized")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeAlreadyInitialized, "")
 		return
 	}
 
 	var req InitializeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" || req.Password == "" {
-		response.Error(w, 400, "validation error")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeValidation, "")
 		return
 	}
 
@@ -71,10 +90,10 @@ func (h *SystemHandler) Initialize(w http.ResponseWriter, r *http.Request) {
 	user, err := h.authService.Register(r.Context(), req.Username, req.Password)
 	if err != nil {
 		if appErr, ok := errors.IsAppError(err); ok {
-			response.Error(w, appErr.Code, appErr.Message)
+			response.AppError(w, appErr)
 			return
 		}
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 

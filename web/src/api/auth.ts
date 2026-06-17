@@ -1,7 +1,7 @@
 import { authRequest } from './request';
-import type { ApiEnvelope, LoginData, User } from './types';
+import type { ApiEnvelope, LoginData, UpdatePreferencesPayload, User } from './types';
 
-export type { LoginData, User };
+export type { LoginData, UpdatePreferencesPayload, User };
 
 export interface LoginPayload {
   username: string;
@@ -141,6 +141,38 @@ export async function changePassword(oldPassword: string, newPassword: string): 
     },
     {
       authFailureMode: 'session-check',
+    }
+  );
+
+  const data = unwrapEnvelope(response.data);
+
+  if (isRecord(data) && isRecord(data.user)) {
+    return data.user as unknown as User;
+  }
+
+  return normalizeUser(data);
+}
+
+/**
+ * Update the current user's preferences (currently only preferred_language).
+ *
+ * Sends the preferred locale code to the backend, which validates it against
+ * SUPPORTED_LOCALES and persists it to users.preferred_language.
+ *
+ * Returns the updated user object so the store can update in-place without
+ * a separate GET /auth/me round-trip.
+ *
+ * Phase 1 i18n: this is called by the LanguageSwitcher when an authenticated
+ * user changes locale, so their choice persists across sessions and devices.
+ */
+export async function updatePreferences(payload: UpdatePreferencesPayload): Promise<User> {
+  const response = await authRequest.put<MaybeEnvelope<ChangePasswordResponse | User>>(
+    '/auth/me/preferences',
+    {
+      preferred_language: payload.preferred_language,
+    },
+    {
+      authFailureMode: 'soft',
     }
   );
 
