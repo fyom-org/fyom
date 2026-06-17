@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fyom/fyom/internal/middleware"
 	"github.com/fyom/fyom/internal/model"
 	"github.com/fyom/fyom/internal/provider"
 	"github.com/fyom/fyom/internal/repository"
 	"github.com/fyom/fyom/internal/service"
-	"github.com/fyom/fyom/internal/middleware"
 	"github.com/fyom/fyom/pkg/errors"
 	"github.com/fyom/fyom/pkg/response"
 )
@@ -88,6 +88,7 @@ type MediaItemResponse struct {
 	Playcount         int               `json:"playcount,omitempty"`
 	SetOverview       string            `json:"set_overview,omitempty"`
 }
+
 // MediaHandler handles media-related HTTP endpoints.
 type MediaHandler struct {
 	registry           *provider.Registry
@@ -126,37 +127,37 @@ func NewMediaHandler(registry *provider.Registry, db *repository.DB, mediaRepo *
 // mediaItemToResponse copies all non-URL fields from model.MediaItem to MediaItemResponse.
 func mediaItemToResponse(item *model.MediaItem) MediaItemResponse {
 	resp := MediaItemResponse{
-		ID:             item.ID,
-		Type:           item.Type,
-		Title:          item.Title,
-		SortTitle:      item.SortTitle,
-		Overview:       item.Overview,
-		MetadataSource: item.MetadataSource,
-		Status:         item.Status,
-		MPAA:           item.MPAA,
-		Premiered:      item.Premiered,
-		Outline:        item.Outline,
-		Tagline:        item.Tagline,
-		SetName:        item.SetName,
-		VideoCodec:     item.VideoCodec,
-		VideoWidth:     item.VideoWidth,
-		VideoHeight:    item.VideoHeight,
-		AudioCodec:     item.AudioCodec,
-		AudioChannels:  item.AudioChannels,
-		ShowID:         item.ParentID, // for episodes, parent_id is the show
-		Aired:          item.Aired,
-		Language:       item.Language,
-		CountryCode:    item.CountryCode,
-		CustomRating:   item.CustomRating,
+		ID:               item.ID,
+		Type:             item.Type,
+		Title:            item.Title,
+		SortTitle:        item.SortTitle,
+		Overview:         item.Overview,
+		MetadataSource:   item.MetadataSource,
+		Status:           item.Status,
+		MPAA:             item.MPAA,
+		Premiered:        item.Premiered,
+		Outline:          item.Outline,
+		Tagline:          item.Tagline,
+		SetName:          item.SetName,
+		VideoCodec:       item.VideoCodec,
+		VideoWidth:       item.VideoWidth,
+		VideoHeight:      item.VideoHeight,
+		AudioCodec:       item.AudioCodec,
+		AudioChannels:    item.AudioChannels,
+		ShowID:           item.ParentID, // for episodes, parent_id is the show
+		Aired:            item.Aired,
+		Language:         item.Language,
+		CountryCode:      item.CountryCode,
+		CustomRating:     item.CustomRating,
 		CollectionNumber: item.CollectionNumber,
-		EndDate:        item.EndDate,
-		ReleaseDate:    item.ReleaseDate,
-		DisplayOrder:   item.DisplayOrder,
-		OriginalTitle:  item.OriginalTitle,
-		DateAdded:      item.DateAdded,
-		LastPlayed:     item.LastPlayed,
-		Playcount:      item.Playcount,
-		SetOverview:    item.SetOverview,
+		EndDate:          item.EndDate,
+		ReleaseDate:      item.ReleaseDate,
+		DisplayOrder:     item.DisplayOrder,
+		OriginalTitle:    item.OriginalTitle,
+		DateAdded:        item.DateAdded,
+		LastPlayed:       item.LastPlayed,
+		Playcount:        item.Playcount,
+		SetOverview:      item.SetOverview,
 	}
 
 	if item.Year != 0 {
@@ -275,7 +276,7 @@ func attachPresignedURLs(ctx context.Context, item *model.MediaItem, registry *p
 	p, ok := registry.Get(item.ProviderID)
 	if !ok {
 		logger.Warn("provider not found for media item",
-			"item_id",     item.ID,
+			"item_id", item.ID,
 			"provider_id", item.ProviderID,
 		)
 		return resp
@@ -325,6 +326,87 @@ func attachUserStatuses(ctx context.Context, statusRepo *repository.UserMediaSta
 	}
 }
 
+// filterMediaItemsByAllowedLibraries removes media items whose library the
+// current user is not allowed to access.
+//
+// A nil allowedIDs slice means unrestricted access (admin/owner): the input
+// slice is returned as-is. An empty (non-nil) slice means the user has access
+// to no libraries, so an empty slice is returned.
+func filterMediaItemsByAllowedLibraries(r *http.Request, items []model.MediaItem) []model.MediaItem {
+	allowedIDs := middleware.GetAllowedLibraryIDs(r)
+
+	// nil means unrestricted access, typically admin or owner.
+	if allowedIDs == nil {
+		return items
+	}
+
+	if len(items) == 0 || len(allowedIDs) == 0 {
+		return []model.MediaItem{}
+	}
+
+	allowed := make(map[string]struct{}, len(allowedIDs))
+	for _, id := range allowedIDs {
+		allowed[id] = struct{}{}
+	}
+
+	filtered := make([]model.MediaItem, 0, len(items))
+	for _, item := range items {
+		if _, ok := allowed[item.LibraryID]; ok {
+			filtered = append(filtered, item)
+		}
+	}
+
+	return filtered
+}
+
+// getAccessibleMediaItem loads a single media item by id and enforces that the
+// current user is allowed to access the library it belongs to.
+//
+// On any failure (missing id, load error, not found, forbidden library) it
+// writes the appropriate HTTP response and returns (nil, false). The caller
+// must abort the request when ok is false.
+//
+// Forbidden access is reported as 404 "resource not found" to avoid leaking
+// the existence of a resource (resource enumeration protection).
+func (h *MediaHandler) getAccessibleMediaItem(w http.ResponseWriter, r *http.Request, id string) (*model.MediaItem, bool) {
+	if id == "" {
+		response.Error(w, 400, "missing id")
+		return nil, false
+	}
+
+	item, err := h.repo.Get(r.Context(), id)
+	if err != nil {
+		h.logger.Error("failed to load media item", "id", id, "err", err)
+		response.Error(w, 500, "internal server error")
+		return nil, false
+	}
+
+	if item == nil {
+		response.Error(w, 404, "resource not found")
+		return nil, false
+	}
+
+	if !middleware.IsLibraryAllowed(r, item.LibraryID) {
+		response.Error(w, 404, "resource not found")
+		return nil, false
+	}
+
+	return item, true
+}
+
+// getAuthenticatedUserID extracts the authenticated user id from the request
+// context. On failure it writes a 401 response and returns ("", false).
+func getAuthenticatedUserID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	userID := middleware.GetUserID(r)
+	userIDStr, ok := userID.(string)
+	if !ok || userIDStr == "" {
+		response.Error(w, 401, "unauthorized")
+		return "", false
+	}
+
+	return userIDStr, true
+}
+
 // TODO: re-add path restriction when multi-user mode is implemented
 
 // List returns a paginated list of media items.
@@ -337,50 +419,41 @@ func (h *MediaHandler) List(w http.ResponseWriter, r *http.Request) {
 	if pageSize < 1 || pageSize > 100 {
 		pageSize = 20
 	}
+
 	mediaType := r.URL.Query().Get("type")
-	// Default to movies and shows only — episodes are fetched via /library/:id/episodes.
 	if mediaType == "" {
 		mediaType = "movie,show"
 	}
 
-	// Search query.
 	q := r.URL.Query().Get("q")
 
-	// Sort — validate against allowed set, degrade silently.
 	sort := r.URL.Query().Get("sort")
 	allowedSorts := map[string]bool{
-		"title_asc": true, "title_desc": true,
-		"year_asc": true, "year_desc": true,
-		"rating_desc": true, "created_desc": true,
+		"title_asc":    true,
+		"title_desc":   true,
+		"year_asc":     true,
+		"year_desc":    true,
+		"rating_desc":  true,
+		"created_desc": true,
 	}
 	if !allowedSorts[sort] {
 		sort = "title_asc"
 	}
 
-	// Library access filter.
 	allowedIDs := middleware.GetAllowedLibraryIDs(r)
 
-	// Optional library_id query param — must be in allowed list.
 	if libID := r.URL.Query().Get("library_id"); libID != "" {
-		if allowedIDs != nil {
-			found := false
-			for _, id := range allowedIDs {
-				if id == libID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				response.Error(w, 404, "resource not found")
-				return
-			}
+		if !middleware.IsLibraryAllowed(r, libID) {
+			response.Error(w, 404, "resource not found")
+			return
 		}
-		// Filter to just this library by replacing allowedIDs.
+
 		allowedIDs = []string{libID}
 	}
 
 	items, total, err := h.repo.ListPaged(r.Context(), page, pageSize, mediaType, q, sort, allowedIDs, true)
 	if err != nil {
+		h.logger.Error("failed to list media", "err", err)
 		response.Error(w, 500, "internal server error")
 		return
 	}
@@ -391,9 +464,7 @@ func (h *MediaHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	result := attachPresignedURLsList(r.Context(), items, h.registry, h.logger)
 
-	// Attach user statuses.
-	userID := middleware.GetUserID(r)
-	if userIDStr, ok := userID.(string); ok && userIDStr != "" {
+	if userIDStr, ok := middleware.GetUserID(r).(string); ok && userIDStr != "" {
 		attachUserStatuses(r.Context(), h.statusRepo, userIDStr, result)
 	}
 
@@ -409,42 +480,15 @@ func (h *MediaHandler) List(w http.ResponseWriter, r *http.Request) {
 // Get returns a single media item.
 func (h *MediaHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if id == "" {
-		response.Error(w, 400, "missing id")
-		return
-	}
 
-	item, err := h.repo.Get(r.Context(), id)
-	if err != nil {
-		response.Error(w, 500, "internal server error")
+	item, ok := h.getAccessibleMediaItem(w, r, id)
+	if !ok {
 		return
-	}
-	if item == nil {
-		response.Error(w, 404, "resource not found")
-		return
-	}
-
-	// Check library access.
-	allowedIDs := middleware.GetAllowedLibraryIDs(r)
-	if allowedIDs != nil {
-		found := false
-		for _, libID := range allowedIDs {
-			if libID == item.LibraryID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			response.Error(w, 404, "resource not found")
-			return
-		}
 	}
 
 	result := attachPresignedURLs(r.Context(), item, h.registry, h.logger)
 
-	// Attach user status.
-	userID := middleware.GetUserID(r)
-	if userIDStr, ok := userID.(string); ok && userIDStr != "" {
+	if userIDStr, ok := middleware.GetUserID(r).(string); ok && userIDStr != "" {
 		status, _ := h.statusRepo.GetStatus(r.Context(), userIDStr, id)
 		result.UserStatus = status
 	}
@@ -456,47 +500,32 @@ func (h *MediaHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *MediaHandler) ListEpisodes(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	// Check that the parent show exists and is accessible.
-	parent, err := h.repo.Get(r.Context(), id)
-	if err != nil {
-		response.Error(w, 500, "internal server error")
-		return
-	}
-	if parent == nil {
-		response.Error(w, 404, "resource not found")
+	parent, ok := h.getAccessibleMediaItem(w, r, id)
+	if !ok {
 		return
 	}
 
-	// Check library access for the parent show.
-	allowedIDs := middleware.GetAllowedLibraryIDs(r)
-	if allowedIDs != nil {
-		found := false
-		for _, libID := range allowedIDs {
-			if libID == parent.LibraryID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			response.Error(w, 404, "resource not found")
-			return
-		}
+	if parent.Type != "show" {
+		response.Error(w, 400, "media item is not a show")
+		return
 	}
 
 	items, err := h.repo.GetEpisodesByShowID(r.Context(), id)
 	if err != nil {
+		h.logger.Error("failed to list episodes", "show_id", id, "err", err)
 		response.Error(w, 500, "internal server error")
 		return
 	}
+
 	if items == nil {
 		items = []model.MediaItem{}
 	}
 
+	items = filterMediaItemsByAllowedLibraries(r, items)
+
 	result := attachPresignedURLsList(r.Context(), items, h.registry, h.logger)
 
-	// Attach user statuses.
-	userID := middleware.GetUserID(r)
-	if userIDStr, ok := userID.(string); ok && userIDStr != "" {
+	if userIDStr, ok := middleware.GetUserID(r).(string); ok && userIDStr != "" {
 		attachUserStatuses(r.Context(), h.statusRepo, userIDStr, result)
 	}
 
@@ -506,19 +535,19 @@ func (h *MediaHandler) ListEpisodes(w http.ResponseWriter, r *http.Request) {
 // UpdateProgress records watch progress for the current user.
 func (h *MediaHandler) UpdateProgress(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if id == "" {
-		response.Error(w, 400, "missing id")
+
+	item, ok := h.getAccessibleMediaItem(w, r, id)
+	if !ok {
 		return
 	}
 
-	userID := middleware.GetUserID(r)
-	if userID == nil {
-		response.Error(w, 401, "unauthorized")
+	if item.Type == "show" {
+		response.Error(w, 400, "cannot update progress for show")
 		return
 	}
-	userIDStr, ok := userID.(string)
+
+	userIDStr, ok := getAuthenticatedUserID(w, r)
 	if !ok {
-		response.Error(w, 401, "unauthorized")
 		return
 	}
 
@@ -532,23 +561,28 @@ func (h *MediaHandler) UpdateProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Position < 0 || req.Duration < 0 {
+		response.Error(w, 400, "invalid progress")
+		return
+	}
+
+	if req.Duration > 0 && req.Position > req.Duration {
+		req.Position = req.Duration
+	}
+
 	if err := h.repo.UpsertProgress(r.Context(), userIDStr, id, req.Position, req.Duration, req.Finished); err != nil {
-		h.logger.Error("failed to update progress", "err", err)
+		h.logger.Error("failed to update progress", "media_id", id, "user_id", userIDStr, "err", err)
 		response.Error(w, 500, "internal server error")
 		return
 	}
 
-	// Auto-status transitions.
 	if req.Position > 0 || req.Finished {
 		currentStatus, _ := h.statusRepo.GetStatus(r.Context(), userIDStr, id)
 
-		// Auto: none/want_to_watch → watching (user started playing)
 		if req.Position > 0 && (currentStatus == "none" || currentStatus == "want_to_watch") {
 			_ = h.statusRepo.SetStatus(r.Context(), userIDStr, id, "watching")
 		}
 
-		// Auto: → watched (video ended)
-		// CRITICAL: Do NOT override 'dropped' — manual intent takes precedence.
 		if req.Finished && req.Position > 0 && currentStatus != "dropped" {
 			_ = h.statusRepo.SetStatus(r.Context(), userIDStr, id, "watched")
 		}
@@ -619,8 +653,23 @@ func (h *MediaHandler) GetContinueWatching(w http.ResponseWriter, r *http.Reques
 
 // Delete removes a media item from the catalog.
 func (h *MediaHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	if !middleware.IsUnrestrictedLibraryAccess(r) {
+		response.Error(w, 403, "forbidden")
+		return
+	}
+
 	id := r.PathValue("id")
+	if id == "" {
+		response.Error(w, 400, "missing id")
+		return
+	}
+
+	if _, ok := h.getAccessibleMediaItem(w, r, id); !ok {
+		return
+	}
+
 	if err := h.repo.Delete(r.Context(), id); err != nil {
+		h.logger.Error("failed to delete media item", "media_id", id, "err", err)
 		response.Error(w, 500, "internal server error")
 		return
 	}
@@ -666,16 +715,16 @@ func (h *MediaHandler) GetLibraries(w http.ResponseWriter, r *http.Request) {
 	for i, lib := range allLibs {
 		movies, shows, episodes, _ := h.libRepo.ItemCountsByType(r.Context(), lib.ID)
 		result[i] = map[string]interface{}{
-			"id":             lib.ID,
-			"name":           lib.Name,
-			"type":           lib.Type,
-			"provider_id":    lib.ProviderID,
-			"source_path":    lib.SourcePath,
+			"id":              lib.ID,
+			"name":            lib.Name,
+			"type":            lib.Type,
+			"provider_id":     lib.ProviderID,
+			"source_path":     lib.SourcePath,
 			"metadata_source": lib.MetadataSource,
-			"item_count":     movies + shows + episodes,
-			"movie_count":    movies,
-			"show_count":     shows,
-			"episode_count":  episodes,
+			"item_count":      movies + shows + episodes,
+			"movie_count":     movies,
+			"show_count":      shows,
+			"episode_count":   episodes,
 		}
 	}
 
@@ -685,19 +734,13 @@ func (h *MediaHandler) GetLibraries(w http.ResponseWriter, r *http.Request) {
 // SetStatus sets the user's media status for an item.
 func (h *MediaHandler) SetStatus(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if id == "" {
-		response.Error(w, 400, "missing id")
+
+	if _, ok := h.getAccessibleMediaItem(w, r, id); !ok {
 		return
 	}
 
-	userID := middleware.GetUserID(r)
-	if userID == nil {
-		response.Error(w, 401, "unauthorized")
-		return
-	}
-	userIDStr, ok := userID.(string)
+	userIDStr, ok := getAuthenticatedUserID(w, r)
 	if !ok {
-		response.Error(w, 401, "unauthorized")
 		return
 	}
 
@@ -709,14 +752,20 @@ func (h *MediaHandler) SetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	valid := map[string]bool{"watching": true, "want_to_watch": true, "watched": true, "dropped": true, "none": true}
+	valid := map[string]bool{
+		"watching":      true,
+		"want_to_watch": true,
+		"watched":       true,
+		"dropped":       true,
+		"none":          true,
+	}
 	if !valid[req.Status] {
 		response.Error(w, 400, "invalid status: must be one of: watching, want_to_watch, watched, dropped, none")
 		return
 	}
 
 	if err := h.statusRepo.SetStatus(r.Context(), userIDStr, id, req.Status); err != nil {
-		h.logger.Error("failed to set status", "err", err)
+		h.logger.Error("failed to set status", "media_id", id, "user_id", userIDStr, "err", err)
 		response.Error(w, 500, "internal server error")
 		return
 	}
@@ -729,25 +778,19 @@ func (h *MediaHandler) SetStatus(w http.ResponseWriter, r *http.Request) {
 // GetStatus returns the user's media status for an item.
 func (h *MediaHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if id == "" {
-		response.Error(w, 400, "missing id")
+
+	if _, ok := h.getAccessibleMediaItem(w, r, id); !ok {
 		return
 	}
 
-	userID := middleware.GetUserID(r)
-	if userID == nil {
-		response.Error(w, 401, "unauthorized")
-		return
-	}
-	userIDStr, ok := userID.(string)
+	userIDStr, ok := getAuthenticatedUserID(w, r)
 	if !ok {
-		response.Error(w, 401, "unauthorized")
 		return
 	}
 
 	status, err := h.statusRepo.GetStatus(r.Context(), userIDStr, id)
 	if err != nil {
-		h.logger.Error("failed to get status", "err", err)
+		h.logger.Error("failed to get status", "media_id", id, "user_id", userIDStr, "err", err)
 		response.Error(w, 500, "internal server error")
 		return
 	}
@@ -759,19 +802,18 @@ func (h *MediaHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 
 // GetByStatus returns media items filtered by user status.
 func (h *MediaHandler) GetByStatus(w http.ResponseWriter, r *http.Request) {
-	userID := middleware.GetUserID(r)
-	if userID == nil {
-		response.Error(w, 401, "unauthorized")
-		return
-	}
-	userIDStr, ok := userID.(string)
+	userIDStr, ok := getAuthenticatedUserID(w, r)
 	if !ok {
-		response.Error(w, 401, "unauthorized")
 		return
 	}
 
 	status := r.URL.Query().Get("status")
-	valid := map[string]bool{"watching": true, "want_to_watch": true, "watched": true, "dropped": true}
+	valid := map[string]bool{
+		"watching":      true,
+		"want_to_watch": true,
+		"watched":       true,
+		"dropped":       true,
+	}
 	if !valid[status] {
 		response.Error(w, 400, "invalid status: must be one of: watching, want_to_watch, watched, dropped")
 		return
@@ -786,17 +828,19 @@ func (h *MediaHandler) GetByStatus(w http.ResponseWriter, r *http.Request) {
 
 	items, err := h.statusRepo.GetItemsByStatus(r.Context(), userIDStr, status, limit)
 	if err != nil {
-		h.logger.Error("failed to get items by status", "err", err)
+		h.logger.Error("failed to get items by status", "user_id", userIDStr, "status", status, "err", err)
 		response.Error(w, 500, "internal server error")
 		return
 	}
+
 	if items == nil {
 		items = []model.MediaItem{}
 	}
 
+	items = filterMediaItemsByAllowedLibraries(r, items)
+
 	result := attachPresignedURLsList(r.Context(), items, h.registry, h.logger)
 
-	// Set user_status on each result item.
 	for i := range result {
 		result[i].UserStatus = status
 	}
@@ -822,6 +866,11 @@ type ImportResponse struct {
 
 // Import triggers an asynchronous media import from the given path.
 func (h *MediaHandler) Import(w http.ResponseWriter, r *http.Request) {
+	if !middleware.IsUnrestrictedLibraryAccess(r) {
+		response.Error(w, 403, "forbidden")
+		return
+	}
+
 	var req ImportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SourcePath == "" {
 		response.Error(w, 400, "validation error")
@@ -836,13 +885,16 @@ func (h *MediaHandler) Import(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prevent duplicate refresh for the same library
+	if !middleware.IsLibraryAllowed(r, req.LibraryID) {
+		response.Error(w, 404, "resource not found")
+		return
+	}
+
 	if !h.refreshCoordinator.TryStart(req.LibraryID) {
 		response.Error(w, 409, "refresh already in progress for this library")
 		return
 	}
 
-	// Validate library exists.
 	lib, err := h.libRepo.GetByID(r.Context(), req.LibraryID)
 	if err != nil || lib == nil {
 		h.refreshCoordinator.Finish(req.LibraryID)
@@ -868,33 +920,37 @@ func (h *MediaHandler) Import(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, 400, "import from provider type '"+p.Type()+"' is not supported yet")
 			return
 		}
-		// Get provider record from DB for S3 config
+
 		rec, err := h.providerRepo.GetByID(r.Context(), req.ProviderID)
 		if err != nil || rec == nil {
 			h.refreshCoordinator.Finish(req.LibraryID)
 			response.Error(w, 500, "failed to load provider config")
 			return
 		}
+
 		s3fs, err := service.NewS3ImportFS(r.Context(), rec, req.SourcePath)
 		if err != nil {
 			h.refreshCoordinator.Finish(req.LibraryID)
 			response.Error(w, 500, "failed to create S3 client: "+err.Error())
 			return
 		}
+
 		fs = s3fs
 		providerID = req.ProviderID
 	}
 
-	// Create a fresh importer per request — each import gets its own FS
 	imp := service.NewImporter(fs, providerID, h.db, h.repo, h.jobRepo)
 	imp.SetLibraryID(req.LibraryID)
+
 	job, err := imp.ImportRequest(r.Context(), req.SourcePath)
 	if err != nil {
 		h.refreshCoordinator.Finish(req.LibraryID)
+
 		if appErr, ok := errors.IsAppError(err); ok {
 			response.Error(w, appErr.Code, appErr.Message)
 			return
 		}
+
 		response.Error(w, 500, "internal server error")
 		return
 	}
@@ -908,12 +964,23 @@ func (h *MediaHandler) Import(w http.ResponseWriter, r *http.Request) {
 // GetJob returns the status and progress of an import job.
 func (h *MediaHandler) GetJob(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if id == "" {
+		response.Error(w, 400, "missing id")
+		return
+	}
+
 	job, err := h.jobRepo.Get(r.Context(), id)
 	if err != nil {
 		response.Error(w, 500, "internal server error")
 		return
 	}
+
 	if job == nil {
+		response.Error(w, 404, "resource not found")
+		return
+	}
+
+	if !middleware.IsLibraryAllowed(r, job.LibraryID) {
 		response.Error(w, 404, "resource not found")
 		return
 	}
@@ -924,15 +991,17 @@ func (h *MediaHandler) GetJob(w http.ResponseWriter, r *http.Request) {
 // ServeBackdrop serves a backdrop image.
 func (h *MediaHandler) ServeBackdrop(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	item, err := h.repo.Get(r.Context(), id)
-	if err != nil {
-		response.Error(w, 500, "internal server error")
+
+	item, ok := h.getAccessibleMediaItem(w, r, id)
+	if !ok {
 		return
 	}
-	if item == nil || item.BackdropPath == "" {
+
+	if item.BackdropPath == "" {
 		response.Error(w, 404, "resource not found")
 		return
 	}
+
 	info, err := os.Stat(item.BackdropPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -952,6 +1021,7 @@ func (h *MediaHandler) ServeBackdrop(w http.ResponseWriter, r *http.Request) {
 
 	name := strings.TrimSuffix(filepath.Base(item.BackdropPath), filepath.Ext(item.BackdropPath))
 	modTime := info.ModTime()
+
 	http.ServeContent(w, r, name, modTime, f)
 }
 
@@ -965,6 +1035,11 @@ func (h *MediaHandler) ServeBackdrop(w http.ResponseWriter, r *http.Request) {
 // GetByID and stream-initiation paths, not to these serve handlers.
 
 // ServeContent streams a media file with full HTTP Range Request support.
+//
+// ServeContent is a low-level primitive and performs NO permission checks.
+// Every caller (Stream, Poster, ...) MUST verify library access via
+// getAccessibleMediaItem (or an equivalent IsLibraryAllowed check) before
+// invoking ServeContent.
 func (h *MediaHandler) ServeContent(w http.ResponseWriter, r *http.Request, item *model.MediaItem) {
 	// TODO: re-add path restriction when multi-user mode is implemented
 
@@ -997,16 +1072,18 @@ func (h *MediaHandler) ServeContent(w http.ResponseWriter, r *http.Request, item
 // ServeLogo serves the logo image.
 func (h *MediaHandler) ServeLogo(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	item, err := h.repo.Get(r.Context(), id)
-	if err != nil {
-		response.Error(w, 500, "internal server error")
+
+	item, ok := h.getAccessibleMediaItem(w, r, id)
+	if !ok {
 		return
 	}
-	if item == nil || item.LogoPath == "" {
+
+	if item.LogoPath == "" {
 		response.Error(w, 404, "resource not found")
 		return
 	}
-	_, err = os.Stat(item.LogoPath)
+
+	_, err := os.Stat(item.LogoPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			jsonError(w, 404, "logo file not found on disk")
@@ -1015,18 +1092,20 @@ func (h *MediaHandler) ServeLogo(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, 500, "internal server error")
 		return
 	}
+
 	http.ServeFile(w, r, item.LogoPath)
 }
 
 // Stream serves a media file with Range request support.
 func (h *MediaHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	item, err := h.repo.Get(r.Context(), id)
-	if err != nil {
-		response.Error(w, 500, "internal server error")
+
+	item, ok := h.getAccessibleMediaItem(w, r, id)
+	if !ok {
 		return
 	}
-	if item == nil {
+
+	if item.Status == "missing" || item.FilePath == "" {
 		response.Error(w, 404, "resource not found")
 		return
 	}
@@ -1037,12 +1116,13 @@ func (h *MediaHandler) Stream(w http.ResponseWriter, r *http.Request) {
 // Poster serves a poster/thumbnail image.
 func (h *MediaHandler) Poster(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	item, err := h.repo.Get(r.Context(), id)
-	if err != nil {
-		response.Error(w, 500, "internal server error")
+
+	item, ok := h.getAccessibleMediaItem(w, r, id)
+	if !ok {
 		return
 	}
-	if item == nil || item.PosterPath == "" {
+
+	if item.PosterPath == "" {
 		response.Error(w, 404, "resource not found")
 		return
 	}
