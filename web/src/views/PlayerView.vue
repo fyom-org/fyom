@@ -1,19 +1,30 @@
 <template>
-  <div class="player-view">
+  <main class="player-view">
     <PlayerFallbackNotice
       v-if="showFallbackBanner"
       message="Native player unavailable, using browser playback"
       class="fallback-banner"
     />
 
-    <div v-if="error" class="error">
-      {{ error }}
-    </div>
+    <section v-if="error" class="error-state" role="alert">
+      <h1>Unable to play media</h1>
+      <p>{{ error }}</p>
 
-    <div v-else class="player-surface">
+      <div class="error-actions">
+        <button type="button" class="error-btn" @click="reloadCurrentMedia">Retry</button>
+
+        <router-link v-if="mediaId" :to="`/media/${mediaId}`" class="error-link">
+          Back to details
+        </router-link>
+
+        <router-link to="/library" class="error-link"> Back to library </router-link>
+      </div>
+    </section>
+
+    <section v-else class="player-surface">
       <div v-if="isLoading" class="loading">
-        <span class="spinner"></span>
-        <span>Initializing native player...</span>
+        <span class="spinner" aria-hidden="true"></span>
+        <span>{{ loadingLabel }}</span>
       </div>
 
       <video
@@ -22,33 +33,37 @@
         :src="streamUrl"
         controls
         autoplay
+        playsinline
         class="video-player"
         @timeupdate="onTimeUpdate"
+        @pause="onPause"
         @ended="onEnded"
+        @error="onVideoError"
       >
         Your browser does not support the video tag.
       </video>
 
       <div v-else-if="isNativeReady" class="native-surface">
         <span class="native-status">Native playback active</span>
+        <span class="native-subtitle"> Playback is running in the native player. </span>
       </div>
 
       <div v-else class="loading">
-        <span>Loading...</span>
+        <span>Loading player...</span>
       </div>
-    </div>
-  </div>
+    </section>
+  </main>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { getMediaDetail, type MediaItem } from '@/api/library';
+import { getApiErrorMessage, getHttpStatus, getMediaDetail, type MediaItem } from '@/api/library';
 import { authRequest } from '@/api/request';
 import {
   createInitialNativePlayerState,
-  tryInitializeNativePlayer,
   isNativePlaybackRuntimeAvailable,
+  tryInitializeNativePlayer,
   type NativePlayerState,
 } from '@/lib/player/native-player';
 import PlayerFallbackNotice from '@/components/PlayerFallbackNotice.vue';
@@ -59,19 +74,42 @@ interface ProgressPayload {
   finished: boolean;
 }
 
+interface TauriInvokeApi {
+  invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
+}
+
+interface TauriInternals {
+  tauri?: TauriInvokeApi;
+}
+
+interface TauriWindow extends Window {
+  __TAURI_INTERNALS__?: TauriInternals;
+}
+
+const PROGRESS_REPORT_INTERVAL_SECONDS = 10;
+
 const route = useRoute();
 
 const videoRef = ref<HTMLVideoElement | null>(null);
-const streamUrl = ref<string>('');
+const streamUrl = ref('');
 const error = ref('');
+const loadingMedia = ref(false);
 
 const nativePlayerState = shallowRef<NativePlayerState>(createInitialNativePlayerState());
 
 const nativeInitAttempted = ref(false);
 const lastReportedPosition = ref(0);
 const progressRequestInFlight = ref(false);
+const pendingProgressPayload = ref<ProgressPayload | null>(null);
 
-const mediaId = computed(() => String(route.params.id ?? ''));
+let loadGeneration = 0;
+let disposed = false;
+
+const mediaId = computed(() => {
+  const id = route.params.id;
+
+  return typeof id === 'string' ? id : '';
+});
 
 const isNativeAvailable = computed(() => isNativePlaybackRuntimeAvailable());
 const isInitializing = computed(() => nativePlayerState.value.status === 'initializing');
@@ -80,8 +118,20 @@ const isNativeFailed = computed(() => nativePlayerState.value.status === 'failed
 const isNativeUnavailable = computed(() => nativePlayerState.value.status === 'unavailable');
 const isNativeIdle = computed(() => nativePlayerState.value.status === 'idle');
 
-const showFallbackBanner = computed(() => isNativeAvailable.value && isNativeFailed.value);
-const isLoading = computed(() => isInitializing.value);
+const showFallbackBanner = computed(() => {
+  return isNativeAvailable.value && isNativeFailed.value && showBrowserPlayer.value;
+});
+
+const isLoading = computed(() => {
+  return loadingMedia.value || isInitializing.value;
+});
+
+const loadingLabel = computed(() => {
+  if (loadingMedia.value) return 'Loading media...';
+  if (isInitializing.value) return 'Initializing native player...';
+
+  return 'Loading player...';
+});
 
 const showBrowserPlayer = computed(() => {
   if (error.value) return false;
@@ -95,95 +145,107 @@ const showBrowserPlayer = computed(() => {
   return false;
 });
 
+onMounted(() => {
+  void reloadCurrentMedia();
+});
+
+watch(
+  () => mediaId.value,
+  async (nextId, previousId) => {
+    if (!nextId || nextId === previousId) return;
+
+    await teardownCurrentPlayback();
+    void reloadCurrentMedia();
+  }
+);
+
+onBeforeUnmount(() => {
+  disposed = true;
+  void flushProgressFromVideo(false);
+  void teardownCurrentPlayback();
+});
+
+async function reloadCurrentMedia(): Promise<void> {
+  if (!mediaId.value) {
+    error.value = 'Invalid media id.';
+    return;
+  }
+
+  await loadMedia(mediaId.value);
+}
+
 function resetViewState(): void {
   streamUrl.value = '';
   error.value = '';
+  loadingMedia.value = false;
   nativePlayerState.value = createInitialNativePlayerState();
   nativeInitAttempted.value = false;
   lastReportedPosition.value = 0;
   progressRequestInFlight.value = false;
+  pendingProgressPayload.value = null;
 }
 
-function buildProgressPayload(video: HTMLVideoElement, finished: boolean): ProgressPayload {
-  const duration = Math.floor(video.duration || 0);
-  const position = finished ? duration : Math.floor(video.currentTime || 0);
+async function loadMedia(id: string): Promise<void> {
+  const generation = ++loadGeneration;
 
-  return {
-    position,
-    duration,
-    finished,
-  };
-}
-
-async function reportProgress(payload: ProgressPayload): Promise<void> {
-  if (!mediaId.value) return;
-  if (progressRequestInFlight.value) return;
-
-  progressRequestInFlight.value = true;
+  resetViewState();
+  loadingMedia.value = true;
 
   try {
-    await authRequest.put(`/media/${mediaId.value}/progress`, payload);
-  } catch (err: any) {
-    const status = err?.response?.status;
-    if (status === 401 || status === 403) {
+    const media = await getMediaDetail(id);
+
+    if (generation !== loadGeneration || disposed) return;
+
+    const resolvedStreamUrl = extractStreamUrl(media);
+
+    if (!resolvedStreamUrl) {
+      error.value = 'No stream is available for this media.';
+      nativePlayerState.value = {
+        status: 'unavailable',
+        failure: null,
+        attempted: false,
+      };
       return;
     }
 
-    console.error('[player] reportProgress failed:', err);
-  } finally {
-    progressRequestInFlight.value = false;
-  }
-}
+    streamUrl.value = resolvedStreamUrl;
 
-function onTimeUpdate(): void {
-  const video = videoRef.value;
-  if (!video) return;
+    await nextTick();
 
-  const currentTime = Math.floor(video.currentTime || 0);
+    if (generation !== loadGeneration || disposed) return;
 
-  if (currentTime - lastReportedPosition.value < 10) {
-    return;
-  }
+    await attemptNativeInit(generation);
+  } catch (unknownError) {
+    if (generation !== loadGeneration || disposed) return;
 
-  lastReportedPosition.value = currentTime;
-  void reportProgress(buildProgressPayload(video, false));
-}
+    const status = getHttpStatus(unknownError);
 
-function onEnded(): void {
-  const video = videoRef.value;
-  if (!video) return;
-
-  lastReportedPosition.value = Math.floor(video.duration || 0);
-  void reportProgress(buildProgressPayload(video, true));
-}
-
-async function stopNativePlayer(): Promise<void> {
-  if (!isNativeReady.value) return;
-
-  try {
-    const tauriInvoke = (window as any)?.__TAURI_INTERNALS__?.tauri?.invoke;
-    if (typeof tauriInvoke === 'function') {
-      await tauriInvoke('stop_media');
+    if (status === 401 || status === 403) {
+      error.value = 'You are not authorized to play this media.';
+      return;
     }
-  } catch {
-    // Ignore native cleanup failures
+
+    console.error('[fyom] player load media failed:', unknownError);
+    error.value = getApiErrorMessage(unknownError, 'Failed to load media.');
+  } finally {
+    if (generation === loadGeneration && !disposed) {
+      loadingMedia.value = false;
+    }
   }
 }
 
-async function attemptNativeInit(): Promise<void> {
+function extractStreamUrl(media: MediaItem): string {
+  const raw = media.stream_url;
+
+  return typeof raw === 'string' ? raw : '';
+}
+
+async function attemptNativeInit(generation: number): Promise<void> {
   if (nativeInitAttempted.value) return;
+
   nativeInitAttempted.value = true;
 
-  if (!streamUrl.value) {
-    nativePlayerState.value = {
-      status: 'unavailable',
-      failure: null,
-      attempted: false,
-    };
-    return;
-  }
-
-  if (!isNativePlaybackRuntimeAvailable()) {
+  if (!streamUrl.value || !isNativePlaybackRuntimeAvailable()) {
     nativePlayerState.value = {
       status: 'unavailable',
       failure: null,
@@ -202,6 +264,8 @@ async function attemptNativeInit(): Promise<void> {
     mediaUrl: streamUrl.value,
   });
 
+  if (generation !== loadGeneration || disposed) return;
+
   if (result.ok) {
     nativePlayerState.value = {
       status: 'ready',
@@ -218,96 +282,183 @@ async function attemptNativeInit(): Promise<void> {
   };
 
   console.warn(
-    '[player] native initialization failed:',
+    '[fyom] native player initialization failed:',
     result.failure.stage,
     result.failure.message
   );
 }
 
-function extractStreamUrl(media: MediaItem): string {
-  const raw = media.stream_url;
-  return typeof raw === 'string' ? raw : '';
+function buildProgressPayload(video: HTMLVideoElement, finished: boolean): ProgressPayload | null {
+  const duration = Math.floor(video.duration || 0);
+
+  if (!Number.isFinite(duration) || duration <= 0) {
+    return null;
+  }
+
+  const currentTime = Math.floor(video.currentTime || 0);
+  const position = finished ? duration : Math.min(duration, Math.max(0, currentTime));
+
+  return {
+    position,
+    duration,
+    finished,
+  };
 }
 
-async function loadMedia(): Promise<void> {
-  if (!mediaId.value) {
-    error.value = 'Invalid media id.';
+async function reportProgress(payload: ProgressPayload): Promise<void> {
+  if (!mediaId.value) return;
+
+  if (progressRequestInFlight.value) {
+    pendingProgressPayload.value = payload;
     return;
   }
 
-  resetViewState();
+  progressRequestInFlight.value = true;
 
   try {
-    const media = await getMediaDetail(mediaId.value);
-    const resolvedStreamUrl = extractStreamUrl(media);
+    await authRequest.put(`/media/${encodeURIComponent(mediaId.value)}/progress`, payload, {
+      authFailureMode: 'silent',
+    });
+  } catch (unknownError) {
+    const status = getHttpStatus(unknownError);
 
-    if (!resolvedStreamUrl) {
-      error.value = 'No stream available for this media.';
-      nativePlayerState.value = {
-        status: 'unavailable',
-        failure: null,
-        attempted: false,
-      };
+    if (status === 401 || status === 403 || status === 404) {
       return;
     }
 
-    streamUrl.value = resolvedStreamUrl;
-    await attemptNativeInit();
-  } catch (err: any) {
-    const status = err?.response?.status;
+    console.warn(
+      '[fyom] player progress update failed:',
+      getApiErrorMessage(unknownError, 'Progress update failed.')
+    );
+  } finally {
+    progressRequestInFlight.value = false;
 
-    if (status === 401 || status === 403) {
-      return;
+    const nextPayload = pendingProgressPayload.value;
+    pendingProgressPayload.value = null;
+
+    if (nextPayload && !disposed) {
+      void reportProgress(nextPayload);
     }
-
-    console.error('[player] loadMedia failed:', err);
-    error.value = 'Failed to load media.';
   }
 }
 
-onMounted(() => {
-  void loadMedia();
-});
+function onTimeUpdate(): void {
+  const video = videoRef.value;
+  if (!video) return;
 
-watch(
-  () => mediaId.value,
-  async (nextId, previousId) => {
-    if (!nextId || nextId === previousId) return;
+  const currentTime = Math.floor(video.currentTime || 0);
+  const delta = Math.abs(currentTime - lastReportedPosition.value);
 
-    await stopNativePlayer();
-    void loadMedia();
+  if (delta < PROGRESS_REPORT_INTERVAL_SECONDS) {
+    return;
   }
-);
 
-onUnmounted(() => {
-  void stopNativePlayer();
-});
+  const payload = buildProgressPayload(video, false);
+
+  if (!payload) return;
+
+  lastReportedPosition.value = payload.position;
+  void reportProgress(payload);
+}
+
+function onPause(): void {
+  void flushProgressFromVideo(false);
+}
+
+function onEnded(): void {
+  void flushProgressFromVideo(true);
+}
+
+async function flushProgressFromVideo(finished: boolean): Promise<void> {
+  const video = videoRef.value;
+  if (!video) return;
+
+  const payload = buildProgressPayload(video, finished);
+
+  if (!payload) return;
+
+  lastReportedPosition.value = payload.position;
+  await reportProgress(payload);
+}
+
+function onVideoError(): void {
+  if (isNativeFailed.value || isNativeUnavailable.value || isNativeIdle.value) {
+    error.value = 'Browser playback failed for this media.';
+    return;
+  }
+
+  error.value = 'Playback failed for this media.';
+}
+
+async function teardownCurrentPlayback(): Promise<void> {
+  loadGeneration += 1;
+
+  await stopNativePlayer();
+
+  const video = videoRef.value;
+
+  if (video) {
+    try {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    } catch {
+      // Ignore browser cleanup failures.
+    }
+  }
+}
+
+async function stopNativePlayer(): Promise<void> {
+  if (!isNativeReady.value) return;
+
+  try {
+    const tauriInvoke = getTauriInvoke();
+
+    if (tauriInvoke) {
+      await tauriInvoke('stop_media');
+    }
+  } catch {
+    // Ignore native cleanup failures.
+  } finally {
+    if (!disposed) {
+      nativePlayerState.value = createInitialNativePlayerState();
+    }
+  }
+}
+
+function getTauriInvoke(): TauriInvokeApi['invoke'] | null {
+  if (typeof window === 'undefined') return null;
+
+  const tauriWindow = window as TauriWindow;
+  const invoke = tauriWindow.__TAURI_INTERNALS__?.tauri?.invoke;
+
+  return typeof invoke === 'function' ? invoke : null;
+}
 </script>
 
 <style scoped>
 .player-view {
-  background: #000;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  color: #e0e0e0;
+  background: #000;
 }
 
 .fallback-banner {
   position: fixed;
   top: 0;
-  left: 0;
   right: 0;
+  left: 0;
   z-index: 100;
 }
 
 .player-surface {
+  width: 100%;
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
 }
 
 .video-player {
@@ -315,10 +466,33 @@ onUnmounted(() => {
   max-width: 100vw;
   max-height: 100vh;
   display: block;
+  background: #000;
+}
+
+.native-surface {
+  min-height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  color: #aaaacc;
+  gap: 8px;
+  text-align: center;
+}
+
+.native-status {
+  color: #f0f0ff;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.native-subtitle {
+  color: #666688;
+  font-size: 13px;
 }
 
 .loading {
-  color: #888;
+  color: #8888aa;
   font-size: 18px;
   display: flex;
   flex-direction: column;
@@ -329,10 +503,78 @@ onUnmounted(() => {
 .spinner {
   width: 32px;
   height: 32px;
-  border: 3px solid #333;
-  border-top-color: #888;
+  box-sizing: border-box;
+  border: 3px solid #333344;
+  border-top-color: #8888aa;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
+}
+
+.error-state {
+  min-height: 100vh;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+}
+
+.error-state h1 {
+  margin: 0 0 8px;
+  color: #ffb3b3;
+  font-size: 24px;
+}
+
+.error-state p {
+  max-width: 520px;
+  margin: 0;
+  color: #aaaacc;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.error-actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.error-btn,
+.error-link {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 9px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.error-btn {
+  color: #fff;
+  background: #6c63ff;
+  border: 0;
+  cursor: pointer;
+}
+
+.error-btn:hover {
+  background: #5a52e0;
+}
+
+.error-link {
+  color: #ccccee;
+  background: #1a1a2e;
+  border: 1px solid #2a2a3e;
+  text-decoration: none;
+}
+
+.error-link:hover {
+  color: #fff;
+  border-color: #3a3a5e;
 }
 
 @keyframes spin {
@@ -341,10 +583,25 @@ onUnmounted(() => {
   }
 }
 
-.error {
-  color: #ff4444;
-  font-size: 18px;
-  text-align: center;
-  padding: 40px;
+@media (max-width: 560px) {
+  .error-actions {
+    flex-direction: column;
+  }
+
+  .error-btn,
+  .error-link {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+
+  .error-btn,
+  .error-link {
+    transition: none;
+  }
 }
 </style>

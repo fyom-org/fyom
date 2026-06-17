@@ -55,17 +55,6 @@
             </router-link>
           </div>
         </div>
-
-        <div class="sidebar-footer">
-          <div class="user-summary">
-            <span class="username" :title="username">
-              {{ username }}
-            </span>
-            <span class="role">
-              {{ roleLabel }}
-            </span>
-          </div>
-        </div>
       </aside>
 
       <div
