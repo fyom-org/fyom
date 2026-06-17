@@ -11,50 +11,45 @@ export type AuthFailureMode =
   /**
    * Default behavior.
    * Reject the request error and let the caller decide what to do.
-   * Does not clear token and does not redirect.
+   * Does not clear token and does not dispatch global auth events.
    */
   | 'soft'
 
   /**
    * For optional/background requests.
-   * Reject the request error, but never dispatch global auth events.
    * Intended for progress, polling, recommendations, telemetry, etc.
+   * Never dispatches global auth events.
    */
   | 'silent'
 
   /**
-   * For routes or requests that intentionally want global login redirect behavior.
-   * Only 401 can dispatch auth:unauthorized.
-   * 403 is still treated as permission denied, not as logout.
+   * For explicit auth-critical requests only.
+   * A 401 response dispatches auth:unauthorized.
+   * A 403 response is still treated as a permission/business error and does
+   * not dispatch any global auth event.
    */
   | 'redirect'
 
   /**
-   * For admin/permission-sensitive requests.
-   * 403 should be handled by the page as "no permission".
+   * For permission-sensitive requests.
+   * Intended for admin endpoints where the page should display "forbidden".
+   * Never dispatches global auth events.
    */
   | 'forbidden'
 
   /**
-   * For future session-check flows.
-   * This mode dispatches a non-destructive session-check event on 401,
-   * but does not clear token by itself.
+   * For requests that want to ask the auth store to verify /auth/me.
+   * A 401 response dispatches auth:session-check-required, but does not clear
+   * token and does not redirect by itself.
    */
   | 'session-check';
 
 export interface FyomRequestConfig extends AxiosRequestConfig {
-  /**
-   * Controls how authentication and authorization failures should be handled.
-   *
-   * Important:
-   * - 403 must not clear session.
-   * - 401 should not clear session unless the request explicitly opts in.
-   */
   authFailureMode?: AuthFailureMode;
 
   /**
    * Backward-compatible escape hatch.
-   * If true, no global auth event will be dispatched for this request.
+   * When true, this request never dispatches global auth events.
    */
   skipAuthRedirect?: boolean;
 }
@@ -71,7 +66,7 @@ declare module 'axios' {
   }
 }
 
-interface AuthFailureEventDetail {
+interface AuthEventDetail {
   status: number;
   mode: AuthFailureMode;
   method?: string;
@@ -82,23 +77,11 @@ const DEFAULT_TIMEOUT_MS = 10000;
 
 const apiBaseUrl = getApiBaseUrl();
 
-/**
- * Main API client for general API calls.
- *
- * This client uses the runtime-aware API base URL so it works in both
- * browser and Tauri environments.
- */
 const apiRequest: AxiosInstance = axios.create({
   baseURL: apiBaseUrl,
   timeout: DEFAULT_TIMEOUT_MS,
 });
 
-/**
- * Auth-capable API client.
- *
- * It intentionally uses the same runtime-aware base URL as apiRequest.
- * Keeping both clients on the same base avoids browser/Tauri drift.
- */
 const authRequest: AxiosInstance = axios.create({
   baseURL: apiBaseUrl,
   timeout: DEFAULT_TIMEOUT_MS,
@@ -125,8 +108,7 @@ function attachAuthInterceptor(instance: AxiosInstance): void {
         return config;
       }
 
-      config.headers = config.headers ?? {};
-      config.headers.Authorization = `Bearer ${token}`;
+      setAuthorizationHeader(config, token);
 
       return config;
     },
@@ -135,14 +117,45 @@ function attachAuthInterceptor(instance: AxiosInstance): void {
 }
 
 /**
+ * Set Authorization header in a way that is compatible with Axios 1.x
+ * AxiosHeaders and plain object headers.
+ */
+function setAuthorizationHeader(config: InternalAxiosRequestConfig, token: string): void {
+  const value = `Bearer ${token}`;
+
+  if (!config.headers) {
+    config.headers = {
+      Authorization: value,
+    } as InternalAxiosRequestConfig['headers'];
+
+    return;
+  }
+
+  const headersWithSet = config.headers as {
+    set?: (name: string, value: string) => void;
+    Authorization?: string;
+  };
+
+  if (typeof headersWithSet.set === 'function') {
+    headersWithSet.set('Authorization', value);
+    return;
+  }
+
+  headersWithSet.Authorization = value;
+}
+
+/**
  * Attach auth failure policy.
  *
- * This interceptor deliberately does not clear localStorage by default.
- * Session invalidation must be decided by auth-critical flows such as:
- * - route guards
- * - store.rehydrateSession()
- * - explicit /auth/me verification
- * - user-initiated logout
+ * This interceptor is intentionally non-destructive by default.
+ *
+ * Important rules:
+ * - 403 never clears session.
+ * - 403 never dispatches global auth events.
+ * - 401 does not clear session by default.
+ * - Only explicit authFailureMode: 'redirect' can dispatch auth:unauthorized.
+ * - Only explicit authFailureMode: 'session-check' can dispatch
+ *   auth:session-check-required.
  */
 function attachAuthFailurePolicyInterceptor(instance: AxiosInstance): void {
   instance.interceptors.response.use(
@@ -164,72 +177,64 @@ function handleAuthFailure(error: AxiosError): void {
   const mode = resolveAuthFailureMode(config);
 
   /**
-   * 403 means the user may be authenticated but does not have permission.
-   * It must never clear session globally.
+   * 403 means "forbidden", not "logged out".
+   *
+   * Do not dispatch anything here. Some app-level listeners may treat auth
+   * events as redirect signals, so the safest behavior is complete silence.
    */
   if (status === 403) {
-    dispatchForbiddenEvent(error, mode);
     return;
   }
 
-  /**
-   * Only 401 can be considered an authentication problem.
-   * Even then, the default behavior is non-destructive.
-   */
   if (status !== 401) {
     return;
   }
 
-  if (config?.skipAuthRedirect || mode === 'silent' || mode === 'soft' || mode === 'forbidden') {
+  if (shouldSuppressAuthEvent(config, mode)) {
     return;
   }
 
   if (mode === 'session-check') {
-    dispatchSessionCheckRequiredEvent(error, mode);
+    dispatchAuthEvent('auth:session-check-required', {
+      status,
+      mode,
+      method: error.config?.method,
+      url: error.config?.url,
+    });
+
     return;
   }
 
   if (mode === 'redirect') {
-    dispatchUnauthorizedEvent(error, mode);
+    dispatchAuthEvent('auth:unauthorized', {
+      status,
+      mode,
+      method: error.config?.method,
+      url: error.config?.url,
+    });
   }
+}
+
+function shouldSuppressAuthEvent(
+  config: FyomRequestConfig | undefined,
+  mode: AuthFailureMode
+): boolean {
+  if (config?.skipAuthRedirect) {
+    return true;
+  }
+
+  return mode === 'soft' || mode === 'silent' || mode === 'forbidden';
 }
 
 function resolveAuthFailureMode(config?: FyomRequestConfig): AuthFailureMode {
   return config?.authFailureMode ?? 'soft';
 }
 
-function dispatchUnauthorizedEvent(error: AxiosError, mode: AuthFailureMode): void {
-  dispatchAuthEvent('auth:unauthorized', {
-    status: error.response?.status ?? 401,
-    mode,
-    method: error.config?.method,
-    url: error.config?.url,
-  });
-}
-
-function dispatchSessionCheckRequiredEvent(error: AxiosError, mode: AuthFailureMode): void {
-  dispatchAuthEvent('auth:session-check-required', {
-    status: error.response?.status ?? 401,
-    mode,
-    method: error.config?.method,
-    url: error.config?.url,
-  });
-}
-
-function dispatchForbiddenEvent(error: AxiosError, mode: AuthFailureMode): void {
-  dispatchAuthEvent('auth:forbidden', {
-    status: error.response?.status ?? 403,
-    mode,
-    method: error.config?.method,
-    url: error.config?.url,
-  });
-}
-
-function dispatchAuthEvent(eventName: string, detail: AuthFailureEventDetail): void {
+function dispatchAuthEvent(eventName: string, detail: AuthEventDetail): void {
   if (!isBrowser()) return;
 
   window.dispatchEvent(
-    new CustomEvent<AuthFailureEventDetail>(eventName, {
+    new CustomEvent<AuthEventDetail>(eventName, {
       detail,
     })
   );
