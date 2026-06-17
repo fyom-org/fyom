@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"strings"
 	"time"
 
@@ -147,22 +148,62 @@ func parseAndValidateToken(tokenString string, secret string) (jwt.MapClaims, er
 }
 
 // AllowLocalOnly is a middleware that only allows requests from localhost/loopback.
-// This is used to restrict internal endpoints like the desktop bootstrap session bridge.
+// This is used to restrict internal endpoints like the desktop bootstrap session
+// bridge.
+//
+// Security note: this check deliberately inspects ONLY r.RemoteAddr and ignores
+// X-Forwarded-For / X-Real-IP. The bootstrap session endpoint must remain
+// reachable exclusively from the loopback interface; honoring forwarding
+// headers would let any client spoof a localhost origin. Do not "fix" this by
+// adding XFF handling without a trusted-proxy model.
 func AllowLocalOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := r.RemoteAddr
-		// Handle IPv6 loopback (::1) and IPv4 loopback (127.0.0.1)
-		// Also handle cases where port is included (e.g., "127.0.0.1:12345")
-		host := ip
-		if idx := strings.LastIndex(ip, ":"); idx != -1 {
-			host = ip[:idx]
-		}
-
-		if host != "127.0.0.1" && host != "::1" && host != "localhost" {
+		if !isLoopbackRemoteAddr(r.RemoteAddr) {
 			response.Error(w, 403, "forbidden: localhost only")
 			return
 		}
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isLoopbackRemoteAddr reports whether the given r.RemoteAddr value identifies
+// a loopback origin.
+//
+// Go's net/http server always populates RemoteAddr in "host:port" form —
+// "127.0.0.1:54321" for IPv4 and "[::1]:54321" for IPv6 — so net.SplitHostPort
+// is the correct parser. The previous strings.LastIndex(":") implementation
+// mis-split IPv6 addresses: "[::1]:54321" became "[::1]" (brackets kept, never
+// matching the "::1" branch) and a bare "::1" became "::" (split at the last
+// colon), both causing legitimate loopback requests to be rejected.
+//
+// The fallback handles the rare no-port forms ("127.0.0.1", "::1", "[::1]",
+// "localhost") seen in some test harnesses and proxies, stripping IPv6
+// brackets so the comparison is against the canonical host.
+func isLoopbackRemoteAddr(remoteAddr string) bool {
+	if remoteAddr == "" {
+		return false
+	}
+
+	host := remoteAddr
+	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		// SplitHostPort already strips the brackets from "[::1]:54321" -> "::1".
+		host = h
+	} else {
+		// No port present. Strip IPv6 brackets from a bare "[::1]" form so the
+		// comparison below matches "::1".
+		host = strings.Trim(host, "[]")
+	}
+
+	switch host {
+	case "127.0.0.1", "::1", "localhost":
+		return true
+	default:
+		// Also accept any 127.0.0.0/8 address (e.g., 127.1.2.3), which is
+		// loopback per RFC 5735 but not the literal "127.0.0.1".
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			return true
+		}
+		return false
+	}
 }
