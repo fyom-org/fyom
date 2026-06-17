@@ -1,24 +1,69 @@
 import { nextTick } from 'vue';
-import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router';
+import {
+  createRouter,
+  createWebHistory,
+  type RouteLocationNormalized,
+  type RouteLocationRaw,
+} from 'vue-router';
 import MainLayout from '@/layouts/MainLayout.vue';
 import AdminLayout from '@/layouts/AdminLayout.vue';
 import { useUserStore } from '@/stores/user';
 import { useSystemStore } from '@/stores/system';
 import { resolveNavigationTarget } from '@/lib/navigation/resolveNavigationTarget';
 
+declare module 'vue-router' {
+  interface RouteMeta {
+    requiresAuth?: boolean;
+    requiresAdmin?: boolean;
+    guestOnly?: boolean;
+  }
+}
+
+const LOGIN_PATH = '/login';
+const REGISTER_PATH = '/register';
+const DEFAULT_AUTHENTICATED_PATH = '/';
+const DEFAULT_ADMIN_PATH = '/admin/libraries';
+
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/login', name: 'Login', component: () => import('@/views/LoginView.vue') },
-    { path: '/register', name: 'Register', component: () => import('@/views/RegisterView.vue') },
-    { path: '/home', redirect: '/' },
+    {
+      path: LOGIN_PATH,
+      name: 'Login',
+      component: () => import('@/views/LoginView.vue'),
+      meta: {
+        guestOnly: true,
+      },
+    },
+    {
+      path: REGISTER_PATH,
+      name: 'Register',
+      component: () => import('@/views/RegisterView.vue'),
+      meta: {
+        guestOnly: true,
+      },
+    },
+    {
+      path: '/home',
+      redirect: DEFAULT_AUTHENTICATED_PATH,
+    },
     {
       path: '/',
       component: MainLayout,
-      meta: { requiresAuth: true },
+      meta: {
+        requiresAuth: true,
+      },
       children: [
-        { path: '', name: 'Home', component: () => import('@/views/DashboardView.vue') },
-        { path: 'library', name: 'Library', component: () => import('@/views/LibraryView.vue') },
+        {
+          path: '',
+          name: 'Home',
+          component: () => import('@/views/DashboardView.vue'),
+        },
+        {
+          path: 'library',
+          name: 'Library',
+          component: () => import('@/views/LibraryView.vue'),
+        },
         {
           path: 'library/:libraryId',
           name: 'LibraryFiltered',
@@ -29,15 +74,30 @@ const router = createRouter({
           name: 'MediaDetail',
           component: () => import('@/views/MediaDetailView.vue'),
         },
-        { path: 'play/:id', name: 'Player', component: () => import('@/views/PlayerView.vue') },
-        { path: 'profile', name: 'Profile', component: () => import('@/views/ProfileView.vue') },
+        {
+          path: 'play/:id',
+          name: 'Player',
+          component: () => import('@/views/PlayerView.vue'),
+        },
+        {
+          path: 'profile',
+          name: 'Profile',
+          component: () => import('@/views/ProfileView.vue'),
+        },
       ],
     },
     {
       path: '/admin',
       component: AdminLayout,
-      meta: { requiresAuth: true, requiresAdmin: true },
+      meta: {
+        requiresAuth: true,
+        requiresAdmin: true,
+      },
       children: [
+        {
+          path: '',
+          redirect: DEFAULT_ADMIN_PATH,
+        },
         {
           path: 'libraries',
           name: 'AdminLibraries',
@@ -75,26 +135,29 @@ const router = createRouter({
         },
       ],
     },
+    {
+      path: '/:pathMatch(.*)*',
+      redirect: DEFAULT_AUTHENTICATED_PATH,
+    },
   ],
 });
 
 /**
  * Shared bootstrap promise for first-route resolution.
  *
- * This prevents concurrent navigations from racing system bootstrap and
- * session rehydration, especially on hard refresh of protected deep links
- * such as /admin/libraries.
+ * This prevents concurrent navigations from racing system bootstrap and session
+ * rehydration, especially on hard refresh of protected deep links.
  */
 let navigationBootstrapPromise: Promise<void> | null = null;
 
 /**
  * Route revalidation subscription management.
  */
-let unsubscribe: (() => void) | null = null;
+let unsubscribeRevalidation: (() => void) | null = null;
 let lastRevalidationKey = '';
 
 function isGuestPath(path: string): boolean {
-  return path === '/login' || path === '/register';
+  return path === LOGIN_PATH || path === REGISTER_PATH;
 }
 
 function requiresAdminRoute(to: RouteLocationNormalized): boolean {
@@ -105,47 +168,98 @@ function requiresProtectedRoute(to: RouteLocationNormalized): boolean {
   return to.matched.some((record) => record.meta.requiresAuth === true);
 }
 
+function readPersistedToken(): string | null {
+  if (typeof window === 'undefined') return null;
+
+  return window.localStorage.getItem('token');
+}
+
+function isSafeRedirectPath(value: string): boolean {
+  if (!value.startsWith('/')) return false;
+  if (value.startsWith('//')) return false;
+  if (value.startsWith('/login')) return false;
+  if (value.startsWith('/register')) return false;
+
+  return true;
+}
+
+function getSafeRedirectPath(to: RouteLocationNormalized): string {
+  const candidate = to.fullPath || to.path || DEFAULT_AUTHENTICATED_PATH;
+
+  return isSafeRedirectPath(candidate) ? candidate : DEFAULT_AUTHENTICATED_PATH;
+}
+
+function makeLoginRedirect(to: RouteLocationNormalized): RouteLocationRaw {
+  return {
+    path: LOGIN_PATH,
+    query: {
+      redirect: getSafeRedirectPath(to),
+    },
+  };
+}
+
+function normalizeRedirectTarget(
+  to: RouteLocationNormalized,
+  redirectTo: string
+): RouteLocationRaw {
+  if (redirectTo === LOGIN_PATH) {
+    return makeLoginRedirect(to);
+  }
+
+  return redirectTo;
+}
+
 /**
  * Centralized route revalidation.
  *
  * Re-runs resolveNavigationTarget against the current route whenever
- * system/auth/role state changes. This ensures that state transitions
- * (logout, login, auth invalidation) immediately invalidate the current
- * page — not just future navigations.
- *
- * Uses nextTick() to defer navigation, preventing conflicts with
- * Vue Router's internal navigation state when the subscriber fires
- * synchronously during an async operation (e.g. rehydrateSession).
+ * system/auth/role state changes. This ensures that state transitions such as
+ * logout or session invalidation invalidate the current page immediately.
  */
-function revalidateCurrentRoute() {
+function revalidateCurrentRoute(): void {
   const systemStore = useSystemStore();
   const userStore = useUserStore();
 
   const currentRoute = router.currentRoute.value;
-  const targetPath = currentRoute.path;
 
-  const key = `${systemStore.status}|${userStore.status}|${userStore.isAdmin}|${targetPath}`;
+  if (!currentRoute || currentRoute.path === '') return;
+
+  const key = [
+    systemStore.status,
+    userStore.status,
+    String(userStore.isAuthenticated),
+    String(userStore.isAdmin),
+    currentRoute.fullPath,
+  ].join('|');
+
   if (key === lastRevalidationKey) return;
+
   lastRevalidationKey = key;
 
   const decision = resolveNavigationTarget({
     systemStatus: systemStore.status,
     authStatus: userStore.status,
     isAdmin: userStore.isAdmin,
-    targetPath,
+    targetPath: currentRoute.path,
   });
 
-  if (decision.type === 'redirect' && decision.to !== targetPath) {
-    nextTick(() => {
-      router.replace(decision.to).catch(() => {
-        // ignore duplicate navigation
-      });
-    });
+  if (decision.type !== 'redirect') {
+    return;
   }
+
+  if (decision.to === currentRoute.path || decision.to === currentRoute.fullPath) {
+    return;
+  }
+
+  nextTick(() => {
+    router.replace(normalizeRedirectTarget(currentRoute, decision.to)).catch(() => {
+      // Ignore duplicate navigation and cancelled navigation.
+    });
+  });
 }
 
-function setupRouteRevalidation() {
-  if (unsubscribe) return;
+function setupRouteRevalidation(): void {
+  if (unsubscribeRevalidation) return;
 
   const systemStore = useSystemStore();
   const userStore = useUserStore();
@@ -158,18 +272,22 @@ function setupRouteRevalidation() {
     revalidateCurrentRoute();
   });
 
-  unsubscribe = () => {
+  unsubscribeRevalidation = () => {
     stopSystem();
     stopUser();
+    unsubscribeRevalidation = null;
   };
 }
 
 /**
- * Ensure system truth and auth truth are settled before we let protected
- * or admin routes proceed. This is the critical fix for hard-refresh on
- * protected deep links, especially /admin/*.
+ * Resolve system truth and auth truth before protected/admin route access.
+ *
+ * This function is intentionally conservative:
+ * - Protected routes must not render while auth is still unknown/rehydrating.
+ * - Admin routes must wait until role information is restored.
+ * - Desktop bootstrap auth is attempted before falling back to anonymous.
  */
-async function bootstrapNavigationState(to: RouteLocationNormalized): Promise<void> {
+async function bootstrapNavigationState(): Promise<void> {
   const systemStore = useSystemStore();
   const userStore = useUserStore();
 
@@ -179,32 +297,47 @@ async function bootstrapNavigationState(to: RouteLocationNormalized): Promise<vo
   }
 
   navigationBootstrapPromise = (async () => {
-    // 1. Resolve system status first
     if (systemStore.status === 'unknown') {
       await systemStore.fetchSystemStatus();
     }
 
-    // 2. If system is initialized, auth truth must be resolved before
-    // protected/admin routes are allowed to proceed.
-    if (systemStore.isInitialized) {
-      const persistedToken = localStorage.getItem('token');
-
-      if (userStore.status === 'unknown') {
-        if (persistedToken) {
-          await userStore.rehydrateSession();
-        } else {
-          userStore.setAnonymous();
-        }
-      } else if (userStore.status === 'rehydrating') {
-        // Never allow protected/admin deep links to proceed while role/auth
-        // restoration is still in flight.
-        await userStore.rehydrateSession();
-      }
+    if (!systemStore.isInitialized) {
+      return;
     }
 
-    // 3. Guest routes may still be visited anonymously after bootstrap.
-    // No extra action required here.
-    void to;
+    if (userStore.status === 'authenticated' && userStore.token && userStore.user) {
+      return;
+    }
+
+    if (userStore.status === 'rehydrating') {
+      await userStore.rehydrateSession();
+      return;
+    }
+
+    const persistedToken = readPersistedToken();
+
+    if (persistedToken) {
+      await userStore.rehydrateSession();
+      return;
+    }
+
+    if (userStore.status === 'unknown') {
+      const bootstrapped = await userStore.bootstrapDesktopAuth();
+
+      if (!bootstrapped) {
+        userStore.setAnonymous();
+      }
+
+      return;
+    }
+
+    if (userStore.status === 'error') {
+      const verified = await userStore.verifySession();
+
+      if (!verified && !readPersistedToken()) {
+        userStore.setAnonymous();
+      }
+    }
   })().finally(() => {
     navigationBootstrapPromise = null;
   });
@@ -213,12 +346,32 @@ async function bootstrapNavigationState(to: RouteLocationNormalized): Promise<vo
 }
 
 /**
- * Unified route guard — single decision point using system + auth state machines.
+ * Apply final guard constraints that must hold even if resolveNavigationTarget
+ * is permissive or stale.
+ */
+function enforceRouteAccess(
+  to: RouteLocationNormalized,
+  protectedRoute: boolean,
+  adminRoute: boolean
+): RouteLocationRaw | true {
+  const userStore = useUserStore();
+
+  if (protectedRoute && !userStore.isAuthenticated) {
+    return makeLoginRedirect(to);
+  }
+
+  if (adminRoute && !userStore.isAdmin) {
+    return DEFAULT_AUTHENTICATED_PATH;
+  }
+
+  return true;
+}
+
+/**
+ * Unified route guard.
  *
- * Critical behavior:
- * - We do NOT allow protected/admin routes to slip through while auth is still
- *   "rehydrating".
- * - Admin deep links must wait until user + role have been restored.
+ * Router guard is the only global place that decides login redirection.
+ * API request failures must not directly navigate the app to /login.
  */
 router.beforeEach(async (to) => {
   setupRouteRevalidation();
@@ -231,22 +384,16 @@ router.beforeEach(async (to) => {
   const adminRoute = requiresAdminRoute(to);
 
   try {
-    // Bootstrap is required for:
-    // 1. guest routes (to correctly redirect authenticated users away from /login)
-    // 2. protected routes
-    // 3. admin routes
     if (guestPath || protectedRoute || adminRoute) {
-      await bootstrapNavigationState(to);
+      await bootstrapNavigationState();
     }
-  } catch (err) {
-    console.error('[router] bootstrapNavigationState failed:', err);
+  } catch (unknownError) {
+    console.error('[router] bootstrapNavigationState failed:', unknownError);
 
-    // Fail closed for protected/admin routes.
     if (protectedRoute || adminRoute) {
-      return '/login';
+      return makeLoginRedirect(to);
     }
 
-    // Guest routes may still proceed.
     return true;
   }
 
@@ -258,26 +405,32 @@ router.beforeEach(async (to) => {
   });
 
   switch (decision.type) {
-    case 'allow':
-      return true;
+    case 'allow': {
+      if (guestPath && userStore.isAuthenticated) {
+        return userStore.isAdmin ? DEFAULT_ADMIN_PATH : DEFAULT_AUTHENTICATED_PATH;
+      }
 
-    case 'redirect':
-      return decision.to;
+      return enforceRouteAccess(to, protectedRoute, adminRoute);
+    }
 
-    case 'wait':
-      // Guest routes can still render while anonymous/system settles.
+    case 'redirect': {
+      return normalizeRedirectTarget(to, decision.to);
+    }
+
+    case 'wait': {
       if (guestPath) {
         return true;
       }
 
-      // Important: protected/admin routes must NOT be allowed through
-      // in wait state after bootstrap, otherwise deep-link refresh can
-      // render into a half-restored auth/role state and black-screen.
       if (protectedRoute || adminRoute) {
-        return false;
+        return makeLoginRedirect(to);
       }
 
       return false;
+    }
+
+    default:
+      return enforceRouteAccess(to, protectedRoute, adminRoute);
   }
 });
 
