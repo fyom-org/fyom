@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/fyom/fyom/internal/repository"
+	"github.com/fyom/fyom/pkg/errors"
 	"github.com/fyom/fyom/pkg/response"
 )
 
@@ -128,7 +129,7 @@ func ResolvePermissions(libPermRepo *repository.LibraryPermissionRepository) fun
 			userID := GetUserID(r)
 			userIDStr, ok := userID.(string)
 			if !ok || userIDStr == "" {
-				response.Error(w, 401, "unauthorized")
+				response.ErrorCode(w, http.StatusUnauthorized, errors.CodeUnauthorized, "")
 				return
 			}
 
@@ -139,7 +140,7 @@ func ResolvePermissions(libPermRepo *repository.LibraryPermissionRepository) fun
 					"user_id", userIDStr,
 					"error", err,
 				)
-				response.Error(w, 500, "internal server error")
+				response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 				return
 			}
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/fyom/fyom/internal/model"
 	"github.com/fyom/fyom/internal/repository"
+	"github.com/fyom/fyom/pkg/errors"
 	"github.com/fyom/fyom/pkg/response"
 )
 
@@ -34,7 +35,7 @@ var allowedProviderTypes = map[string]bool{
 func (h *AdminProviderHandler) ListProviders(w http.ResponseWriter, r *http.Request) {
 	providers, err := h.repo.List(r.Context())
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	if providers == nil {
@@ -53,43 +54,43 @@ func (h *AdminProviderHandler) CreateProvider(w http.ResponseWriter, r *http.Req
 		Enabled     bool            `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, 400, "invalid JSON")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeInvalidJSON, "")
 		return
 	}
 
 	// Validate ID.
 	req.ID = strings.TrimSpace(req.ID)
 	if req.ID == "" {
-		response.Error(w, 400, "id is required")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeIDRequired, "")
 		return
 	}
 	if strings.Contains(req.ID, " ") {
-		response.Error(w, 400, "id must not contain spaces")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeIDHasSpaces, "")
 		return
 	}
 	if len(req.ID) > 64 {
-		response.Error(w, 400, "id must be at most 64 characters")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeIDTooLong, "")
 		return
 	}
 	if req.ID == "local" {
-		response.Error(w, 400, "id \"local\" is reserved for the built-in LocalProvider")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeIDLocalReserved, "")
 		return
 	}
 
 	// Validate type.
 	if !allowedProviderTypes[req.Type] {
-		response.Error(w, 400, "type must be one of: s3, remote_fyom")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeTypeInvalid, "")
 		return
 	}
 
 	// Validate display name.
 	req.DisplayName = strings.TrimSpace(req.DisplayName)
 	if req.DisplayName == "" {
-		response.Error(w, 400, "display_name is required")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeDisplayNameRequired, "")
 		return
 	}
 	if len(req.DisplayName) > 128 {
-		response.Error(w, 400, "display_name must be at most 128 characters")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeDisplayNameTooLong, "")
 		return
 	}
 
@@ -97,7 +98,7 @@ func (h *AdminProviderHandler) CreateProvider(w http.ResponseWriter, r *http.Req
 	if req.Config != nil {
 		var raw json.RawMessage
 		if err := json.Unmarshal(req.Config, &raw); err != nil {
-			response.Error(w, 400, "config must be valid JSON")
+			response.ErrorCode(w, http.StatusBadRequest, errors.CodeConfigInvalidJSON, "")
 			return
 		}
 	}
@@ -118,7 +119,7 @@ func (h *AdminProviderHandler) CreateProvider(w http.ResponseWriter, r *http.Req
 
 	if err := h.repo.Create(r.Context(), record); err != nil {
 		h.logger.Error("failed to create provider", "err", err)
-		response.Error(w, 500, "failed to create provider")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeFailedToCreateProvider, "")
 		return
 	}
 
@@ -130,7 +131,7 @@ func (h *AdminProviderHandler) CreateProvider(w http.ResponseWriter, r *http.Req
 func (h *AdminProviderHandler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		response.Error(w, 400, "missing id")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeMissingID, "")
 		return
 	}
 
@@ -140,18 +141,18 @@ func (h *AdminProviderHandler) UpdateProvider(w http.ResponseWriter, r *http.Req
 		Enabled     bool            `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, 400, "invalid JSON")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeInvalidJSON, "")
 		return
 	}
 
 	// Validate display name.
 	req.DisplayName = strings.TrimSpace(req.DisplayName)
 	if req.DisplayName == "" {
-		response.Error(w, 400, "display_name is required")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeDisplayNameRequired, "")
 		return
 	}
 	if len(req.DisplayName) > 128 {
-		response.Error(w, 400, "display_name must be at most 128 characters")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeDisplayNameTooLong, "")
 		return
 	}
 
@@ -159,7 +160,7 @@ func (h *AdminProviderHandler) UpdateProvider(w http.ResponseWriter, r *http.Req
 	if req.Config != nil {
 		var raw json.RawMessage
 		if err := json.Unmarshal(req.Config, &raw); err != nil {
-			response.Error(w, 400, "config must be valid JSON")
+			response.ErrorCode(w, http.StatusBadRequest, errors.CodeConfigInvalidJSON, "")
 			return
 		}
 	}
@@ -178,18 +179,18 @@ func (h *AdminProviderHandler) UpdateProvider(w http.ResponseWriter, r *http.Req
 
 	if err := h.repo.Update(r.Context(), record); err != nil {
 		if strings.Contains(err.Error(), "provider not found") {
-			response.Error(w, 404, "provider not found")
+			response.ErrorCode(w, http.StatusNotFound, errors.CodeProviderNotFound, "")
 			return
 		}
 		h.logger.Error("failed to update provider", "err", err)
-		response.Error(w, 500, "failed to update provider")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeFailedToUpdateProvider, "")
 		return
 	}
 
 	// Return the updated record.
 	updated, err := h.repo.GetByID(r.Context(), id)
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	response.Success(w, updated)
@@ -199,22 +200,22 @@ func (h *AdminProviderHandler) UpdateProvider(w http.ResponseWriter, r *http.Req
 func (h *AdminProviderHandler) DeleteProvider(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		response.Error(w, 400, "missing id")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeMissingID, "")
 		return
 	}
 
 	if err := h.repo.Delete(r.Context(), id); err != nil {
 		errStr := err.Error()
 		if strings.Contains(errStr, "provider not found") {
-			response.Error(w, 404, "provider not found")
+			response.ErrorCode(w, http.StatusNotFound, errors.CodeProviderNotFound, "")
 			return
 		}
 		if strings.Contains(errStr, "still reference it") {
-			response.Error(w, 409, errStr)
+			response.ErrorCode(w, http.StatusConflict, errors.CodeConflict, errStr)
 			return
 		}
 		h.logger.Error("failed to delete provider", "err", err)
-		response.Error(w, 500, "failed to delete provider")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeFailedToDeleteProvider, "")
 		return
 	}
 

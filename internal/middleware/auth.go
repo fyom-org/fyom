@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fyom/fyom/internal/repository"
+	"github.com/fyom/fyom/pkg/errors"
 	"github.com/fyom/fyom/pkg/response"
 	"github.com/golang-jwt/jwt/v5"
 	"net/http"
@@ -51,32 +52,32 @@ func AuthMiddlewareWithUserRepo(jwtSecret string, userRepo *repository.UserRepos
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				response.Error(w, 401, "missing authorization header")
+				response.ErrorCode(w, http.StatusUnauthorized, errors.CodeMissingAuthHeader, "")
 				return
 			}
 
 			parts := strings.SplitN(authHeader, " ", 2)
 			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-				response.Error(w, 401, "invalid authorization header format")
+				response.ErrorCode(w, http.StatusUnauthorized, errors.CodeInvalidAuthHeader, "")
 				return
 			}
 
 			claims, err := parseAndValidateToken(parts[1], jwtSecret)
 			if err != nil {
-				response.Error(w, 401, err.Error())
+				response.ErrorCode(w, http.StatusUnauthorized, errors.CodeUnauthorized, err.Error())
 				return
 			}
 
 			userID, _ := claims["sub"].(string)
 			if userID == "" {
-				response.Error(w, 401, "token missing subject claim")
+				response.ErrorCode(w, http.StatusUnauthorized, errors.CodeTokenMissingSubject, "")
 				return
 			}
 
 			if userRepo != nil {
 				user, err := userRepo.GetByID(r.Context(), userID)
 				if err != nil || user == nil {
-					response.Error(w, 401, "unauthorized")
+					response.ErrorCode(w, http.StatusUnauthorized, errors.CodeUnauthorized, "")
 					return
 				}
 				ctx := context.WithValue(r.Context(), keyUserID, user.ID)
@@ -105,7 +106,7 @@ func RequireAdmin(next http.Handler) http.Handler {
 		}
 		if roleStr != "admin" {
 			slog.Warn("rbac_rejected", "role", roleStr, "path", r.URL.Path)
-			response.Error(w, 403, "admin role required")
+			response.ErrorCode(w, http.StatusForbidden, errors.CodeAdminRoleRequired, "")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -159,7 +160,7 @@ func parseAndValidateToken(tokenString string, secret string) (jwt.MapClaims, er
 func AllowLocalOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !isLoopbackRemoteAddr(r.RemoteAddr) {
-			response.Error(w, 403, "forbidden: localhost only")
+			response.ErrorCode(w, http.StatusForbidden, errors.CodeLocalhostOnly, "")
 			return
 		}
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/fyom/fyom/internal/model"
 	"github.com/fyom/fyom/internal/repository"
+	"github.com/fyom/fyom/pkg/errors"
 	"github.com/fyom/fyom/pkg/response"
 )
 
@@ -43,12 +44,12 @@ func (h *AdminLibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MetadataSource string `json:"metadata_source"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, 400, "invalid JSON")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeInvalidJSON, "")
 		return
 	}
 
 	if req.Name == "" {
-		response.Error(w, 400, "name is required")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeNameRequired, "")
 		return
 	}
 	lib := &model.Library{
@@ -61,7 +62,7 @@ func (h *AdminLibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.Create(r.Context(), lib); err != nil {
-		response.Error(w, 400, err.Error())
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeBadRequest, err.Error())
 		return
 	}
 
@@ -80,7 +81,7 @@ func (h *AdminLibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *AdminLibraryHandler) List(w http.ResponseWriter, r *http.Request) {
 	libs, err := h.repo.List(r.Context())
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
@@ -102,11 +103,11 @@ func (h *AdminLibraryHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	lib, err := h.repo.GetByID(r.Context(), id)
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	if lib == nil {
-		response.Error(w, 404, "not found")
+		response.ErrorCode(w, http.StatusNotFound, errors.CodeNotFound, "")
 		return
 	}
 	movies, shows, episodes, _ := h.repo.ItemCountsByType(r.Context(), id)
@@ -123,11 +124,11 @@ func (h *AdminLibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	lib, err := h.repo.GetByID(r.Context(), id)
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	if lib == nil {
-		response.Error(w, 404, "not found")
+		response.ErrorCode(w, http.StatusNotFound, errors.CodeNotFound, "")
 		return
 	}
 
@@ -139,7 +140,7 @@ func (h *AdminLibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		MetadataSource *string `json:"metadata_source"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, 400, "invalid JSON")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeInvalidJSON, "")
 		return
 	}
 
@@ -160,7 +161,7 @@ func (h *AdminLibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.Update(r.Context(), lib); err != nil {
-		response.Error(w, 400, err.Error())
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeBadRequest, err.Error())
 		return
 	}
 	movies, shows, episodes, _ := h.repo.ItemCountsByType(r.Context(), id)
@@ -174,7 +175,7 @@ func (h *AdminLibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *AdminLibraryHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := h.repo.Delete(r.Context(), id); err != nil {
-		response.Error(w, 409, err.Error())
+		response.ErrorCode(w, http.StatusConflict, errors.CodeConflict, err.Error())
 		return
 	}
 	response.NoContent(w)
@@ -191,17 +192,17 @@ func (h *AdminLibraryHandler) DeleteLibraryWithItems(w http.ResponseWriter, r *h
 
 	if mode == "cascade" {
 		if err := h.repo.DeleteWithItems(r.Context(), id); err != nil {
-			response.Error(w, 500, "internal server error")
+			response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 			return
 		}
 	} else if mode == "orphan" {
 		// Move items to an empty placeholder — for now just error since
 		// there's no "default" library concept anymore.
 		// Admins should delete items first, then delete the empty library.
-		response.Error(w, 400, "orphan mode: delete items first, then delete the empty library")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeOrphanModeDeleteItemsFirst, "")
 		return
 	} else {
-		response.Error(w, 400, "invalid mode: use 'cascade'")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeInvalidMode, "")
 		return
 	}
 
@@ -213,11 +214,11 @@ func (h *AdminLibraryHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	lib, err := h.repo.GetByID(r.Context(), id)
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	if lib == nil {
-		response.Error(w, 404, "library not found")
+		response.ErrorCode(w, http.StatusNotFound, errors.CodeLibraryNotFound, "")
 		return
 	}
 
@@ -237,17 +238,17 @@ func (h *AdminLibraryHandler) CheckMissing(w http.ResponseWriter, r *http.Reques
 	id := r.PathValue("id")
 	lib, err := h.repo.GetByID(r.Context(), id)
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	if lib == nil {
-		response.Error(w, 404, "library not found")
+		response.ErrorCode(w, http.StatusNotFound, errors.CodeLibraryNotFound, "")
 		return
 	}
 
 	paths, err := h.repo.GetLocalItemPaths(r.Context(), id)
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
@@ -262,13 +263,13 @@ func (h *AdminLibraryHandler) CheckMissing(w http.ResponseWriter, r *http.Reques
 
 	if len(missingIDs) > 0 {
 		if err := h.repo.MarkMissing(r.Context(), missingIDs); err != nil {
-			response.Error(w, 500, "internal server error")
+			response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 			return
 		}
 	}
 
 	if err := h.repo.MarkAvailableByLibrary(r.Context(), id, missingIDs); err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 

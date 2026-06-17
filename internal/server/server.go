@@ -208,6 +208,7 @@ func registerUserRoutes(
 
 		r.Get("/api/v1/auth/me", authHandler.Me)
 		r.Put("/api/v1/auth/me/password", authHandler.ChangePassword)
+		r.Put("/api/v1/auth/me/preferences", authHandler.UpdatePreferences)
 
 		r.Get("/api/v1/libraries", mediaHandler.GetLibraries)
 

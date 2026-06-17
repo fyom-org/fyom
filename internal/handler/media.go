@@ -370,24 +370,24 @@ func filterMediaItemsByAllowedLibraries(r *http.Request, items []model.MediaItem
 // the existence of a resource (resource enumeration protection).
 func (h *MediaHandler) getAccessibleMediaItem(w http.ResponseWriter, r *http.Request, id string) (*model.MediaItem, bool) {
 	if id == "" {
-		response.Error(w, 400, "missing id")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeMissingID, "")
 		return nil, false
 	}
 
 	item, err := h.repo.Get(r.Context(), id)
 	if err != nil {
 		h.logger.Error("failed to load media item", "id", id, "err", err)
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return nil, false
 	}
 
 	if item == nil {
-		response.Error(w, 404, "resource not found")
+		response.ErrorCode(w, http.StatusNotFound, errors.CodeResourceNotFound, "")
 		return nil, false
 	}
 
 	if !middleware.IsLibraryAllowed(r, item.LibraryID) {
-		response.Error(w, 404, "resource not found")
+		response.ErrorCode(w, http.StatusNotFound, errors.CodeResourceNotFound, "")
 		return nil, false
 	}
 
@@ -400,7 +400,7 @@ func getAuthenticatedUserID(w http.ResponseWriter, r *http.Request) (string, boo
 	userID := middleware.GetUserID(r)
 	userIDStr, ok := userID.(string)
 	if !ok || userIDStr == "" {
-		response.Error(w, 401, "unauthorized")
+		response.ErrorCode(w, http.StatusUnauthorized, errors.CodeUnauthorized, "")
 		return "", false
 	}
 
@@ -444,7 +444,7 @@ func (h *MediaHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	if libID := r.URL.Query().Get("library_id"); libID != "" {
 		if !middleware.IsLibraryAllowed(r, libID) {
-			response.Error(w, 404, "resource not found")
+			response.ErrorCode(w, http.StatusNotFound, errors.CodeResourceNotFound, "")
 			return
 		}
 
@@ -454,7 +454,7 @@ func (h *MediaHandler) List(w http.ResponseWriter, r *http.Request) {
 	items, total, err := h.repo.ListPaged(r.Context(), page, pageSize, mediaType, q, sort, allowedIDs, true)
 	if err != nil {
 		h.logger.Error("failed to list media", "err", err)
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
@@ -506,14 +506,14 @@ func (h *MediaHandler) ListEpisodes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if parent.Type != "show" {
-		response.Error(w, 400, "media item is not a show")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeMediaItemNotShow, "")
 		return
 	}
 
 	items, err := h.repo.GetEpisodesByShowID(r.Context(), id)
 	if err != nil {
 		h.logger.Error("failed to list episodes", "show_id", id, "err", err)
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
@@ -542,7 +542,7 @@ func (h *MediaHandler) UpdateProgress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if item.Type == "show" {
-		response.Error(w, 400, "cannot update progress for show")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeCannotUpdateProgressForShow, "")
 		return
 	}
 
@@ -557,12 +557,12 @@ func (h *MediaHandler) UpdateProgress(w http.ResponseWriter, r *http.Request) {
 		Finished bool `json:"finished"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, 400, "invalid JSON")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeInvalidJSON, "")
 		return
 	}
 
 	if req.Position < 0 || req.Duration < 0 {
-		response.Error(w, 400, "invalid progress")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeInvalidProgress, "")
 		return
 	}
 
@@ -572,7 +572,7 @@ func (h *MediaHandler) UpdateProgress(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.repo.UpsertProgress(r.Context(), userIDStr, id, req.Position, req.Duration, req.Finished); err != nil {
 		h.logger.Error("failed to update progress", "media_id", id, "user_id", userIDStr, "err", err)
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
@@ -595,12 +595,12 @@ func (h *MediaHandler) UpdateProgress(w http.ResponseWriter, r *http.Request) {
 func (h *MediaHandler) GetContinueWatching(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r)
 	if userID == nil {
-		response.Error(w, 401, "unauthorized")
+		response.ErrorCode(w, http.StatusUnauthorized, errors.CodeUnauthorized, "")
 		return
 	}
 	userIDStr, ok := userID.(string)
 	if !ok {
-		response.Error(w, 401, "unauthorized")
+		response.ErrorCode(w, http.StatusUnauthorized, errors.CodeUnauthorized, "")
 		return
 	}
 
@@ -609,7 +609,7 @@ func (h *MediaHandler) GetContinueWatching(w http.ResponseWriter, r *http.Reques
 	items, err := h.repo.GetContinueWatching(r.Context(), userIDStr, 20, allowedIDs)
 	if err != nil {
 		h.logger.Error("failed to get continue watching", "err", err)
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	if items == nil {
@@ -654,13 +654,13 @@ func (h *MediaHandler) GetContinueWatching(w http.ResponseWriter, r *http.Reques
 // Delete removes a media item from the catalog.
 func (h *MediaHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if !middleware.IsUnrestrictedLibraryAccess(r) {
-		response.Error(w, 403, "forbidden")
+		response.ErrorCode(w, http.StatusForbidden, errors.CodeForbidden, "")
 		return
 	}
 
 	id := r.PathValue("id")
 	if id == "" {
-		response.Error(w, 400, "missing id")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeMissingID, "")
 		return
 	}
 
@@ -670,7 +670,7 @@ func (h *MediaHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.repo.Delete(r.Context(), id); err != nil {
 		h.logger.Error("failed to delete media item", "media_id", id, "err", err)
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
@@ -707,7 +707,7 @@ func (h *MediaHandler) GetLibraries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
@@ -748,7 +748,7 @@ func (h *MediaHandler) SetStatus(w http.ResponseWriter, r *http.Request) {
 		Status string `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, 400, "invalid JSON")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeInvalidJSON, "")
 		return
 	}
 
@@ -760,13 +760,13 @@ func (h *MediaHandler) SetStatus(w http.ResponseWriter, r *http.Request) {
 		"none":          true,
 	}
 	if !valid[req.Status] {
-		response.Error(w, 400, "invalid status: must be one of: watching, want_to_watch, watched, dropped, none")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeInvalidStatus, "invalid status: must be one of: watching, want_to_watch, watched, dropped, none")
 		return
 	}
 
 	if err := h.statusRepo.SetStatus(r.Context(), userIDStr, id, req.Status); err != nil {
 		h.logger.Error("failed to set status", "media_id", id, "user_id", userIDStr, "err", err)
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
@@ -791,7 +791,7 @@ func (h *MediaHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	status, err := h.statusRepo.GetStatus(r.Context(), userIDStr, id)
 	if err != nil {
 		h.logger.Error("failed to get status", "media_id", id, "user_id", userIDStr, "err", err)
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
@@ -815,7 +815,7 @@ func (h *MediaHandler) GetByStatus(w http.ResponseWriter, r *http.Request) {
 		"dropped":       true,
 	}
 	if !valid[status] {
-		response.Error(w, 400, "invalid status: must be one of: watching, want_to_watch, watched, dropped")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeInvalidStatus, "invalid status: must be one of: watching, want_to_watch, watched, dropped")
 		return
 	}
 
@@ -829,7 +829,7 @@ func (h *MediaHandler) GetByStatus(w http.ResponseWriter, r *http.Request) {
 	items, err := h.statusRepo.GetItemsByStatus(r.Context(), userIDStr, status, limit)
 	if err != nil {
 		h.logger.Error("failed to get items by status", "user_id", userIDStr, "status", status, "err", err)
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
@@ -867,13 +867,13 @@ type ImportResponse struct {
 // Import triggers an asynchronous media import from the given path.
 func (h *MediaHandler) Import(w http.ResponseWriter, r *http.Request) {
 	if !middleware.IsUnrestrictedLibraryAccess(r) {
-		response.Error(w, 403, "forbidden")
+		response.ErrorCode(w, http.StatusForbidden, errors.CodeForbidden, "")
 		return
 	}
 
 	var req ImportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SourcePath == "" {
-		response.Error(w, 400, "validation error")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeValidation, "")
 		return
 	}
 
@@ -881,24 +881,24 @@ func (h *MediaHandler) Import(w http.ResponseWriter, r *http.Request) {
 		req.ProviderID = "local"
 	}
 	if req.LibraryID == "" {
-		response.Error(w, 400, "library_id is required")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeLibraryIDRequired, "")
 		return
 	}
 
 	if !middleware.IsLibraryAllowed(r, req.LibraryID) {
-		response.Error(w, 404, "resource not found")
+		response.ErrorCode(w, http.StatusNotFound, errors.CodeResourceNotFound, "")
 		return
 	}
 
 	if !h.refreshCoordinator.TryStart(req.LibraryID) {
-		response.Error(w, 409, "refresh already in progress for this library")
+		response.ErrorCode(w, http.StatusConflict, errors.CodeRefreshAlreadyInProgress, "")
 		return
 	}
 
 	lib, err := h.libRepo.GetByID(r.Context(), req.LibraryID)
 	if err != nil || lib == nil {
 		h.refreshCoordinator.Finish(req.LibraryID)
-		response.Error(w, 400, "library not found: "+req.LibraryID)
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeLibraryNotFound, "library not found: "+req.LibraryID)
 		return
 	}
 
@@ -912,26 +912,26 @@ func (h *MediaHandler) Import(w http.ResponseWriter, r *http.Request) {
 		p, ok := h.registry.Get(req.ProviderID)
 		if !ok {
 			h.refreshCoordinator.Finish(req.LibraryID)
-			response.Error(w, 400, "provider not found: "+req.ProviderID)
+			response.ErrorCode(w, http.StatusBadRequest, errors.CodeProviderNotFound, "provider not found: "+req.ProviderID)
 			return
 		}
 		if p.Type() != "s3" {
 			h.refreshCoordinator.Finish(req.LibraryID)
-			response.Error(w, 400, "import from provider type '"+p.Type()+"' is not supported yet")
+			response.ErrorCode(w, http.StatusBadRequest, errors.CodeImportFromProviderTypeUnsupported, "import from provider type '"+p.Type()+"' is not supported yet")
 			return
 		}
 
 		rec, err := h.providerRepo.GetByID(r.Context(), req.ProviderID)
 		if err != nil || rec == nil {
 			h.refreshCoordinator.Finish(req.LibraryID)
-			response.Error(w, 500, "failed to load provider config")
+			response.ErrorCode(w, http.StatusInternalServerError, errors.CodeFailedToLoadProviderConfig, "")
 			return
 		}
 
 		s3fs, err := service.NewS3ImportFS(r.Context(), rec, req.SourcePath)
 		if err != nil {
 			h.refreshCoordinator.Finish(req.LibraryID)
-			response.Error(w, 500, "failed to create S3 client: "+err.Error())
+			response.ErrorCode(w, http.StatusInternalServerError, errors.CodeFailedToCreateS3Client, "failed to create S3 client: "+err.Error())
 			return
 		}
 
@@ -947,11 +947,11 @@ func (h *MediaHandler) Import(w http.ResponseWriter, r *http.Request) {
 		h.refreshCoordinator.Finish(req.LibraryID)
 
 		if appErr, ok := errors.IsAppError(err); ok {
-			response.Error(w, appErr.Code, appErr.Message)
+			response.AppError(w, appErr)
 			return
 		}
 
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
@@ -965,23 +965,23 @@ func (h *MediaHandler) Import(w http.ResponseWriter, r *http.Request) {
 func (h *MediaHandler) GetJob(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		response.Error(w, 400, "missing id")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeMissingID, "")
 		return
 	}
 
 	job, err := h.jobRepo.Get(r.Context(), id)
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
 	if job == nil {
-		response.Error(w, 404, "resource not found")
+		response.ErrorCode(w, http.StatusNotFound, errors.CodeResourceNotFound, "")
 		return
 	}
 
 	if !middleware.IsLibraryAllowed(r, job.LibraryID) {
-		response.Error(w, 404, "resource not found")
+		response.ErrorCode(w, http.StatusNotFound, errors.CodeResourceNotFound, "")
 		return
 	}
 
@@ -998,7 +998,7 @@ func (h *MediaHandler) ServeBackdrop(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if item.BackdropPath == "" {
-		response.Error(w, 404, "resource not found")
+		response.ErrorCode(w, http.StatusNotFound, errors.CodeResourceNotFound, "")
 		return
 	}
 
@@ -1079,7 +1079,7 @@ func (h *MediaHandler) ServeLogo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if item.LogoPath == "" {
-		response.Error(w, 404, "resource not found")
+		response.ErrorCode(w, http.StatusNotFound, errors.CodeResourceNotFound, "")
 		return
 	}
 
@@ -1106,7 +1106,7 @@ func (h *MediaHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if item.Status == "missing" || item.FilePath == "" {
-		response.Error(w, 404, "resource not found")
+		response.ErrorCode(w, http.StatusNotFound, errors.CodeResourceNotFound, "")
 		return
 	}
 
@@ -1123,7 +1123,7 @@ func (h *MediaHandler) Poster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if item.PosterPath == "" {
-		response.Error(w, 404, "resource not found")
+		response.ErrorCode(w, http.StatusNotFound, errors.CodeResourceNotFound, "")
 		return
 	}
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/fyom/fyom/internal/model"
 	"github.com/fyom/fyom/internal/repository"
+	"github.com/fyom/fyom/pkg/errors"
 	"github.com/fyom/fyom/pkg/response"
 )
 
@@ -29,7 +30,7 @@ func NewAdminHandler(repo *repository.AdminRepository, mediaRepo *repository.Med
 func (h *AdminHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	stats, err := h.repo.GetStats(r.Context())
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	response.Success(w, stats)
@@ -48,7 +49,7 @@ func (h *AdminHandler) ListImportJobs(w http.ResponseWriter, r *http.Request) {
 
 	jobs, total, err := h.repo.ListJobs(r.Context(), page, limit)
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	if jobs == nil {
@@ -67,7 +68,7 @@ func (h *AdminHandler) ListImportJobs(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.settingRepo.List(r.Context())
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	result := make(map[string]string)
@@ -81,13 +82,13 @@ func (h *AdminHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var body map[string]string
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		response.Error(w, 400, "invalid JSON")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeInvalidJSON, "")
 		return
 	}
 
 	existing, err := h.settingRepo.List(r.Context())
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	allowed := make(map[string]bool)
@@ -97,11 +98,11 @@ func (h *AdminHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	for key, value := range body {
 		if !allowed[key] && !strings.HasPrefix(key, "library_refresh_interval_") {
-			response.Error(w, 400, "unknown setting: "+key)
+			response.ErrorCode(w, http.StatusBadRequest, errors.CodeUnknownSetting, "unknown setting: "+key)
 			return
 		}
 		if err := h.settingRepo.SetSetting(r.Context(), key, value); err != nil {
-			response.Error(w, 500, "internal server error")
+			response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 			return
 		}
 	}
@@ -161,7 +162,7 @@ func (h *AdminHandler) ListMedia(w http.ResponseWriter, r *http.Request) {
 	var total int
 	countQuery := "SELECT COUNT(*) FROM media_items" + where
 	if err := h.db.QueryRowContext(r.Context(), countQuery, whereArgs...).Scan(&total); err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
@@ -171,14 +172,14 @@ func (h *AdminHandler) ListMedia(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.db.QueryContext(r.Context(), dataQuery, dataArgs...)
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	defer func() { _ = rows.Close() }()
 
 	items, err := repository.ScanMediaItemRows(rows)
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
@@ -194,28 +195,28 @@ func (h *AdminHandler) ListMedia(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) DeleteMedia(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		response.Error(w, 400, "missing id")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeMissingID, "")
 		return
 	}
 
 	item, err := h.mediaRepo.Get(r.Context(), id)
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	if item == nil {
-		response.Error(w, 404, "not found")
+		response.ErrorCode(w, http.StatusNotFound, errors.CodeNotFound, "")
 		return
 	}
 
 	if item.Type == "show" {
 		if err := h.mediaRepo.DeleteShowWithEpisodes(r.Context(), id); err != nil {
-			response.Error(w, 500, "internal server error")
+			response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 			return
 		}
 	} else {
 		if err := h.mediaRepo.Delete(r.Context(), id); err != nil {
-			response.Error(w, 500, "internal server error")
+			response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 			return
 		}
 	}
@@ -226,7 +227,7 @@ func (h *AdminHandler) DeleteMedia(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) ListPermissions(w http.ResponseWriter, r *http.Request) {
 	perms, err := h.libPermRepo.GetAllPermissions(r.Context())
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	if perms == nil {
@@ -243,16 +244,16 @@ func (h *AdminHandler) UpdatePermission(w http.ResponseWriter, r *http.Request) 
 		CanView   bool   `json:"can_view"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, 400, "invalid JSON")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeInvalidJSON, "")
 		return
 	}
 	if req.UserID == "" || req.LibraryID == "" {
-		response.Error(w, 400, "user_id and library_id are required")
+		response.ErrorCode(w, http.StatusBadRequest, errors.CodeUserIDAndLibraryIDRequired, "")
 		return
 	}
 
 	if err := h.libPermRepo.SetPermission(r.Context(), req.UserID, req.LibraryID, req.CanView); err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	response.NoContent(w)
@@ -280,7 +281,7 @@ func (h *AdminHandler) ListMissing(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.db.QueryContext(r.Context(), query, args...)
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	defer func() { _ = rows.Close() }()
@@ -300,7 +301,7 @@ func (h *AdminHandler) ListMissing(w http.ResponseWriter, r *http.Request) {
 			&m.Language, &m.CountryCode, &m.CustomRating, &m.CollectionNumber,
 			&m.EndDate, &m.ReleaseDate, &m.DisplayOrder, &m.OriginalTitle,
 			&m.UserRating, &m.DateAdded, &m.LastPlayed, &m.Playcount); err != nil {
-			response.Error(w, 500, "internal server error")
+			response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 			return
 		}
 		m.Season = repository.IntPtr(season)
@@ -316,7 +317,7 @@ func (h *AdminHandler) ListMissing(w http.ResponseWriter, r *http.Request) {
 		countArgs = append(countArgs, libraryID)
 	}
 	if err := h.db.QueryRowContext(r.Context(), countQuery, countArgs...).Scan(&total); err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
@@ -337,7 +338,7 @@ func (h *AdminHandler) DeleteMissing(w http.ResponseWriter, r *http.Request) {
 
 	tx, err := h.db.BeginTx(r.Context(), nil)
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	defer func() { _ = tx.Rollback() }()
@@ -351,7 +352,7 @@ func (h *AdminHandler) DeleteMissing(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := tx.QueryContext(r.Context(), query, args...)
 	if err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	var ids []string
@@ -359,7 +360,7 @@ func (h *AdminHandler) DeleteMissing(w http.ResponseWriter, r *http.Request) {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			response.Error(w, 500, "internal server error")
+			response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 			return
 		}
 		ids = append(ids, id)
@@ -379,22 +380,22 @@ func (h *AdminHandler) DeleteMissing(w http.ResponseWriter, r *http.Request) {
 		idArgs[i] = id
 	}
 	if _, err := tx.ExecContext(r.Context(), "DELETE FROM watch_progress WHERE media_item_id IN ("+strings.Join(placeholders, ",")+")", idArgs...); err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	// Delete episodes whose parent is in the list.
 	if _, err := tx.ExecContext(r.Context(), "DELETE FROM media_items WHERE parent_id IN ("+strings.Join(placeholders, ",")+")", idArgs...); err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 	// Delete the items themselves.
 	if _, err := tx.ExecContext(r.Context(), "DELETE FROM media_items WHERE id IN ("+strings.Join(placeholders, ",")+")", idArgs...); err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 
 	if err := tx.Commit(); err != nil {
-		response.Error(w, 500, "internal server error")
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
 

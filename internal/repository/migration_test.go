@@ -76,11 +76,11 @@ func TestMigration_EmptyToLatest(t *testing.T) {
 	assert.True(t, columns["video_codec"], "video_codec column should exist")
 	assert.True(t, columns["logo_path"], "logo_path column should exist")
 
-	// Verify schema_migrations table has all 18 migrations applied
+	// Verify schema_migrations table has all 19 migrations applied
 	var count int
 	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, 18, count, "all 18 migrations should be applied")
+	assert.Equal(t, 19, count, "all 19 migrations should be applied")
 }
 
 // TestMigration_PrePhase8ToLatest simulates a database at schema version 0011
@@ -100,9 +100,9 @@ func TestMigration_PrePhase8ToLatest(t *testing.T) {
 
 	// Create schema_migrations table manually
 	_, err = sqlDB.Exec(`CREATE TABLE schema_migrations (
-		version INTEGER PRIMARY KEY,
-		applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-	)`)
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )`)
 	require.NoError(t, err)
 
 	// Run migrations 0001 through 0011 manually
@@ -132,7 +132,7 @@ func TestMigration_PrePhase8ToLatest(t *testing.T) {
 
 	// Insert a sample media_items row using only pre-Phase-8 columns
 	_, err = sqlDB.Exec(`INSERT INTO media_items (id, type, title, year, file_path, metadata_source)
-		VALUES (?, ?, ?, ?, ?, ?)`,
+                VALUES (?, ?, ?, ?, ?, ?)`,
 		"test-1", "movie", "Test Movie", 2020, "/test.mkv", "filename")
 	require.NoError(t, err)
 
@@ -160,11 +160,11 @@ func TestMigration_PrePhase8ToLatest(t *testing.T) {
 	assert.Equal(t, "", language, "language should default to empty string")
 	assert.Equal(t, "", countryCode, "country_code should default to empty string")
 
-	// Verify schema_migrations has all 18 entries
+	// Verify schema_migrations has all 19 entries
 	var count int
 	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, 18, count, "all 18 migrations should be applied")
+	assert.Equal(t, 19, count, "all 19 migrations should be applied")
 }
 
 // padInt zero-pads an integer to 4 digits for migration filename matching.

@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/fyom/fyom/internal/model"
@@ -77,8 +78,8 @@ func (s *AuthService) RegisterWithFlag(ctx context.Context, username, password s
 // createUserWithRoleAndFlag stores a new user with a pre-hashed password, explicit role, and password_change_required flag.
 func (s *AuthService) createUserWithRoleAndFlag(ctx context.Context, username string, hashedBytes []byte, role string, passwordChangeRequired bool) (*model.User, error) {
 	user := &model.User{
-		Username:              username,
-		Role:                  role,
+		Username:               username,
+		Role:                   role,
 		PasswordChangeRequired: passwordChangeRequired,
 	}
 	user.Password = bytesToStr(hashedBytes)
@@ -103,11 +104,11 @@ func (s *AuthService) Login(ctx context.Context, username, password string) (str
 		return "", nil, errors.Wrap(err, errors.ErrInternal)
 	}
 	if user == nil {
-		return "", nil, &errors.AppError{Code: 401, Message: "invalid credentials"}
+		return "", nil, errors.NewWithCode(http.StatusUnauthorized, errors.CodeInvalidCredentials, "")
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
-		return "", nil, &errors.AppError{Code: 401, Message: "invalid credentials"}
+		return "", nil, errors.NewWithCode(http.StatusUnauthorized, errors.CodeInvalidCredentials, "")
 	}
 
 	now := time.Now()
