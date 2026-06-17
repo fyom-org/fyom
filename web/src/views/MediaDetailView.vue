@@ -1,13 +1,16 @@
 <template>
-  <div v-if="item" class="detail-view media-detail">
-    <div class="backdrop">
+  <main v-if="item" class="detail-view media-detail">
+    <div class="backdrop" aria-hidden="true">
       <img
         v-if="!backdropFailed && backdropUrl"
         :src="backdropUrl"
+        alt=""
         @error="backdropFailed = true"
       />
+
       <div class="backdrop-overlay"></div>
-      <div class="backdrop-progress" v-if="hasProgress">
+
+      <div v-if="hasProgress" class="backdrop-progress">
         <div
           class="backdrop-progress-fill"
           :style="{ transform: `scaleX(${progressPercent / 100})` }"
@@ -16,517 +19,1407 @@
     </div>
 
     <div class="content">
-      <router-link to="/library" class="back-link">&#8592; Back to Library</router-link>
+      <router-link :to="backTarget" class="back-link">
+        {{ backLabel }}
+      </router-link>
 
-      <div class="main-row">
-        <img v-if="posterUrl" class="poster" :src="posterUrl" />
+      <div v-if="error" class="error-banner" role="alert">
+        <span>{{ error }}</span>
+        <button type="button" class="error-action" @click="reloadCurrentMedia">Retry</button>
+      </div>
+
+      <section class="hero-section">
+        <div class="poster-wrap">
+          <img
+            v-if="posterUrl && !posterFailed"
+            class="poster"
+            :src="posterUrl"
+            :alt="`${item.title} poster`"
+            @error="posterFailed = true"
+          />
+
+          <div v-else class="poster-fallback" aria-hidden="true">
+            {{ posterInitial }}
+          </div>
+        </div>
 
         <div class="meta">
           <img
             v-if="logoUrl && !logoFailed"
             class="logo-image"
             :src="logoUrl"
+            :alt="`${item.title} logo`"
             @error="logoFailed = true"
           />
+
           <h1 class="title" :class="{ 'with-logo': logoUrl && !logoFailed }">
             {{ item.title }}
           </h1>
-          <p class="tagline" v-if="item.tagline">{{ item.tagline }}</p>
+
+          <p v-if="item.tagline" class="tagline">
+            {{ item.tagline }}
+          </p>
+
           <div class="facts">
             <span v-if="item.year">{{ item.year }}</span>
-            <span class="mpaa-badge" v-if="item.mpaa">{{ item.mpaa }}</span>
-            <span v-if="item.rating">&#9733; {{ item.rating.toFixed(1) }}</span>
-            <span v-if="item.user_rating" class="user-rating" :title="'User Rating'"
-              >&#9734; {{ item.user_rating.toFixed(1) }}</span
+
+            <span v-if="item.mpaa" class="mpaa-badge">
+              {{ item.mpaa }}
+            </span>
+
+            <span v-if="isFiniteNumber(item.rating)"> ★ {{ formatRating(item.rating) }} </span>
+
+            <span v-if="isFiniteNumber(item.user_rating)" class="user-rating" title="User rating">
+              ☆ {{ formatRating(item.user_rating) }}
+            </span>
+
+            <span v-if="item.duration">
+              {{ formatDuration(item.duration) }}
+            </span>
+
+            <span class="type-badge">
+              {{ typeLabel }}
+            </span>
+          </div>
+
+          <div v-if="metadataChips.length > 0" class="movie-meta-row">
+            <span
+              v-for="chip in metadataChips"
+              :key="chip.label + chip.value"
+              class="meta-chip"
+              :class="{ 'mpaa-chip': chip.kind === 'mpaa' }"
+              :title="chip.label"
             >
-            <span v-if="item.duration">{{ formatDuration(item.duration) }}</span>
-            <span class="type-badge">{{ item.type }}</span>
+              {{ chip.value }}
+            </span>
           </div>
 
-          <!-- Movie metadata row -->
-          <div class="movie-meta-row">
-            <span v-if="item.original_title" class="meta-chip" :title="'Original Title'">{{
-              item.original_title
-            }}</span>
-            <span v-if="item.language" class="meta-chip" :title="'Language'">{{
-              item.language
-            }}</span>
-            <span v-if="item.country_code" class="meta-chip" :title="'Country Code'">{{
-              item.country_code
-            }}</span>
-            <span v-if="item.custom_rating" class="meta-chip" :title="'Custom Rating'">{{
-              item.custom_rating
-            }}</span>
-            <span v-if="item.mpaa && !item.custom_rating" class="meta-chip mpaa-chip">{{
-              item.mpaa
-            }}</span>
+          <div v-if="dateChips.length > 0" class="movie-dates">
+            <span v-for="chip in dateChips" :key="chip.label" class="date-chip">
+              {{ chip.label }}: {{ chip.value }}
+            </span>
           </div>
 
-          <!-- Dates and additional info -->
-          <div class="movie-dates">
-            <span v-if="item.release_date" class="date-chip"
-              >Released: {{ item.release_date }}</span
-            >
-            <span v-if="item.end_date" class="date-chip">End: {{ item.end_date }}</span>
-            <span v-if="item.date_added" class="date-chip">Added: {{ item.date_added }}</span>
-            <span v-if="item.playcount > 0" class="date-chip">Played: {{ item.playcount }}x</span>
-          </div>
-          <div class="genres" v-if="item.genres?.length">
-            <span class="genre-tag" v-for="g in item.genres" :key="g">{{ g }}</span>
+          <div v-if="item.genres?.length" class="genres">
+            <span v-for="genre in item.genres" :key="genre" class="genre-tag">
+              {{ genre }}
+            </span>
           </div>
 
-          <div class="action-row" v-if="item.type !== 'show'">
+          <div v-if="canPlayItem" class="action-row">
             <router-link :to="`/play/${item.id}`" class="play-btn">
               <span class="play-text">{{ playLabel }}</span>
             </router-link>
           </div>
-          <p class="resume-info" v-if="hasProgress && item.type !== 'show'">{{ resumeLabel }}</p>
 
-          <div class="status-row">
+          <p v-if="hasProgress && canPlayItem" class="resume-info">
+            {{ resumeLabel }}
+          </p>
+
+          <section class="status-row" aria-label="Media status">
             <span class="status-label">Mark as:</span>
-            <button
-              :class="['status-btn', { active: userStatus === 'want_to_watch' }]"
-              @click="setStatus('want_to_watch')"
-            >
-              ✦ Want
-            </button>
-            <button
-              :class="['status-btn', { active: userStatus === 'watching' }]"
-              @click="setStatus('watching')"
-            >
-              ▶ Watching
-            </button>
-            <button
-              :class="['status-btn', { active: userStatus === 'watched' }]"
-              @click="setStatus('watched')"
-            >
-              ✓ Watched
-            </button>
-            <button
-              :class="['status-btn', { active: userStatus === 'dropped' }]"
-              @click="setStatus('dropped')"
-            >
-              ✕ Dropped
-            </button>
-            <button
-              class="status-btn clear-btn"
-              v-if="userStatus !== 'none'"
-              @click="setStatus('none')"
-            >
-              ✕ Clear
-            </button>
-          </div>
-        </div>
-      </div>
 
-      <div class="overview-section" v-if="item.overview">
-        <p class="overview" :class="{ collapsed: !overviewExpanded }">
+            <button
+              v-for="status in statusOptions"
+              :key="status.value"
+              type="button"
+              class="status-btn"
+              :class="[status.className, { active: userStatus === status.value }]"
+              :disabled="statusSaving"
+              @click="setStatus(status.value)"
+            >
+              {{ status.label }}
+            </button>
+
+            <button
+              v-if="userStatus !== STATUS_NONE"
+              type="button"
+              class="status-btn clear-btn"
+              :disabled="statusSaving"
+              @click="setStatus(STATUS_NONE)"
+            >
+              Clear
+            </button>
+          </section>
+
+          <p v-if="statusError" class="status-error" role="alert">
+            {{ statusError }}
+          </p>
+        </div>
+      </section>
+
+      <section v-if="item.overview" class="overview-section">
+        <p class="overview" :class="{ collapsed: !overviewExpanded && overviewNeedsExpand }">
           {{ item.overview }}
         </p>
+
         <button
-          class="expand-btn"
           v-if="overviewNeedsExpand"
+          type="button"
+          class="expand-btn"
           @click="overviewExpanded = !overviewExpanded"
         >
           {{ overviewExpanded ? 'Show less' : 'Show more' }}
         </button>
-      </div>
+      </section>
 
-      <div class="cast-section" v-if="item.actors?.length">
-        <h3 class="section-subtitle">Cast</h3>
-        <div class="cast-list">
-          <div class="cast-member" v-for="a in item.actors.slice(0, 6)" :key="a.name">
-            <div class="cast-avatar">{{ a.name?.[0] || '?' }}</div>
-            <div class="cast-info">
-              <span class="cast-name">{{ a.name }}</span>
-              <span class="cast-role" v-if="a.role">{{ a.role }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Episode-specific section -->
-      <div class="episode-detail-section" v-if="item.type === 'episode'">
+      <section v-if="item.type === 'episode'" class="episode-detail-section">
         <div class="episode-detail-header">
           <router-link v-if="item.show_id" :to="`/media/${item.show_id}`" class="back-to-show">
-            ← Back to Show
+            Back to show
           </router-link>
         </div>
-        <div class="episode-detail-meta">
-          <h2 class="episode-detail-number">
-            <span v-if="item.season"> S{{ String(item.season).padStart(2, '0') }} </span>
-            <span v-if="item.episode"> E{{ String(item.episode).padStart(2, '0') }} </span>
-          </h2>
-          <span v-if="item.aired" class="episode-aired">Aired: {{ item.aired }}</span>
-          <span v-if="item.rating" class="episode-rating"
-            >&#9733; {{ item.rating.toFixed(1) }}</span
-          >
-        </div>
-        <p class="episode-plot" v-if="item.overview">{{ item.overview }}</p>
-      </div>
 
-      <section class="guest-stars" v-if="item.guest_stars?.length">
-        <h3 class="section-subtitle">Guest Stars</h3>
-        <div class="cast-grid">
-          <div class="cast-card" v-for="g in item.guest_stars" :key="g.name">
-            <div class="cast-avatar">{{ g.name?.[0] || '?' }}</div>
-            <div class="cast-name">{{ g.name }}</div>
-            <div class="cast-role" v-if="g.role">{{ g.role }}</div>
-          </div>
+        <div class="episode-detail-meta">
+          <h2 v-if="episodeCode" class="episode-detail-number">
+            {{ episodeCode }}
+          </h2>
+
+          <span v-if="item.aired" class="episode-aired"> Aired: {{ item.aired }} </span>
+
+          <span v-if="isFiniteNumber(item.rating)" class="episode-rating">
+            ★ {{ formatRating(item.rating) }}
+          </span>
+        </div>
+
+        <p v-if="item.overview" class="episode-plot">
+          {{ item.overview }}
+        </p>
+      </section>
+
+      <section v-if="visibleActors.length > 0" class="cast-section">
+        <div class="section-header">
+          <h3 class="section-subtitle">Cast</h3>
+        </div>
+
+        <div class="cast-list">
+          <article
+            v-for="actor in visibleActors"
+            :key="actor.name + actor.role"
+            class="cast-member"
+          >
+            <div class="cast-avatar" aria-hidden="true">
+              {{ getInitial(actor.name) }}
+            </div>
+
+            <div class="cast-info">
+              <span class="cast-name">{{ actor.name }}</span>
+              <span v-if="actor.role" class="cast-role">{{ actor.role }}</span>
+            </div>
+          </article>
         </div>
       </section>
-      <!-- Collection / Set info -->
+
+      <section v-if="visibleGuestStars.length > 0" class="guest-stars">
+        <div class="section-header">
+          <h3 class="section-subtitle">Guest Stars</h3>
+        </div>
+
+        <div class="cast-grid">
+          <article
+            v-for="guest in visibleGuestStars"
+            :key="guest.name + guest.role"
+            class="cast-card"
+          >
+            <div class="cast-avatar large" aria-hidden="true">
+              {{ getInitial(guest.name) }}
+            </div>
+
+            <div class="cast-name">{{ guest.name }}</div>
+            <div v-if="guest.role" class="cast-role">{{ guest.role }}</div>
+          </article>
+        </div>
+      </section>
+
       <section
-        class="collection-section"
         v-if="item.set_name || item.collection_number || item.set_overview"
+        class="collection-section"
       >
         <h3 class="section-subtitle">Collection</h3>
-        <div class="collection-info">
-          <span class="collection-name" v-if="item.set_name">{{ item.set_name }}</span>
-          <span class="collection-number" v-if="item.collection_number"
-            >TMDb Collection ID: {{ item.collection_number }}</span
-          >
-        </div>
-        <p class="collection-overview" v-if="item.set_overview">{{ item.set_overview }}</p>
-      </section>
-      <EpisodeList v-if="item.type === 'show'" :show-id="item.id" />
-    </div>
-  </div>
 
-  <div v-else-if="loading" class="loading">Loading...</div>
-  <div v-else class="loading">Not found</div>
+        <div class="collection-info">
+          <span v-if="item.set_name" class="collection-name">
+            {{ item.set_name }}
+          </span>
+
+          <span v-if="item.collection_number" class="collection-number">
+            TMDb Collection ID: {{ item.collection_number }}
+          </span>
+        </div>
+
+        <p v-if="item.set_overview" class="collection-overview">
+          {{ item.set_overview }}
+        </p>
+      </section>
+
+      <EpisodeList v-if="item.type === 'show'" :show-id="item.id" class="episode-list" />
+    </div>
+  </main>
+
+  <main v-else-if="loading" class="state-view">
+    <div class="state-card">Loading media...</div>
+  </main>
+
+  <main v-else class="state-view">
+    <div class="state-card">
+      <h1>Media not found</h1>
+      <p>{{ error || 'The requested media item could not be loaded.' }}</p>
+
+      <div class="state-actions">
+        <button type="button" class="state-btn" @click="reloadCurrentMedia">Retry</button>
+
+        <router-link to="/library" class="state-link"> Back to library </router-link>
+      </div>
+    </div>
+  </main>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { getMediaDetail, setMediaStatus } from '@/api/library';
-import { apiRequest } from '@/api/request';
 import EpisodeList from '@/components/EpisodeList.vue';
 import { resolveResourceUrl } from '@/lib/runtime/resource';
 
-const route = useRoute();
-const item = ref<any>(null);
-const loading = ref(true);
-const backdropFailed = ref(false);
-const logoFailed = ref(false);
-const progress = ref<any>(null);
-const userStatus = ref('none');
+interface CastMember {
+  name: string;
+  role?: string;
+}
 
-// Normalize resource URLs for the current runtime (browser vs Tauri).
+interface MediaItem {
+  id: string;
+  title: string;
+  type: 'movie' | 'show' | 'episode' | string;
+  year?: number;
+  poster_url?: string;
+  backdrop_url?: string;
+  logo_url?: string;
+  tagline?: string;
+  overview?: string;
+  rating?: number;
+  user_rating?: number;
+  duration?: number;
+  mpaa?: string;
+  custom_rating?: string;
+  original_title?: string;
+  language?: string;
+  country_code?: string;
+  release_date?: string;
+  end_date?: string;
+  date_added?: string;
+  playcount?: number;
+  genres?: string[];
+  actors?: CastMember[];
+  guest_stars?: CastMember[];
+  user_status?: MediaStatus;
+  show_id?: string;
+  season?: number;
+  episode?: number;
+  aired?: string;
+  set_name?: string;
+  collection_number?: string | number;
+  set_overview?: string;
+}
+
+interface ProgressState {
+  position: number;
+  duration: number;
+  finished: boolean;
+}
+
+interface MetadataChip {
+  label: string;
+  value: string;
+  kind?: 'mpaa';
+}
+
+interface DateChip {
+  label: string;
+  value: string | number;
+}
+
+type MediaStatus = 'none' | 'want_to_watch' | 'watching' | 'watched' | 'dropped';
+
+interface StatusOption {
+  value: MediaStatus;
+  label: string;
+  className: string;
+}
+
+const STATUS_NONE: MediaStatus = 'none';
+const STATUS_WANT: MediaStatus = 'want_to_watch';
+const STATUS_WATCHING: MediaStatus = 'watching';
+const STATUS_WATCHED: MediaStatus = 'watched';
+const STATUS_DROPPED: MediaStatus = 'dropped';
+
+// This endpoint is intentionally called with native fetch instead of apiRequest.
+// Reason: progress can legitimately return 401/403 for non-playable or unauthorized
+// progress records, and that must not trigger the global axios unauthorized handler.
+const API_BASE_URL = normalizeBaseUrl(
+  (import.meta.env.VITE_API_BASE_URL as string | undefined) || '/api/v1'
+);
+
+const route = useRoute();
+
+const item = ref<MediaItem | null>(null);
+const progress = ref<ProgressState | null>(null);
+
+const loading = ref(true);
+const error = ref('');
+const statusError = ref('');
+const statusSaving = ref(false);
+
+const backdropFailed = ref(false);
+const posterFailed = ref(false);
+const logoFailed = ref(false);
+const overviewExpanded = ref(false);
+
+const userStatus = ref<MediaStatus>(STATUS_NONE);
+
+let fetchGeneration = 0;
+
+const statusOptions: StatusOption[] = [
+  {
+    value: STATUS_WANT,
+    label: 'Want',
+    className: 'want',
+  },
+  {
+    value: STATUS_WATCHING,
+    label: 'Watching',
+    className: 'watching',
+  },
+  {
+    value: STATUS_WATCHED,
+    label: 'Watched',
+    className: 'watched',
+  },
+  {
+    value: STATUS_DROPPED,
+    label: 'Dropped',
+    className: 'dropped',
+  },
+];
+
 const posterUrl = computed(() => resolveResourceUrl(item.value?.poster_url));
 const backdropUrl = computed(() => resolveResourceUrl(item.value?.backdrop_url));
 const logoUrl = computed(() => resolveResourceUrl(item.value?.logo_url));
 
-const overviewExpanded = ref(false);
-const overviewNeedsExpand = ref(false);
+const posterInitial = computed(() => getInitial(item.value?.title || 'F'));
 
-watch(
-  item,
-  (val) => {
-    if (val?.overview && val.overview.length > 200) {
-      overviewNeedsExpand.value = true;
-    } else {
-      overviewNeedsExpand.value = false;
-    }
-    if (val) userStatus.value = val.user_status || 'none';
-  },
-  { immediate: true }
-);
-
-async function fetchMediaDetail(id: string) {
-  loading.value = true;
-  backdropFailed.value = false;
-  logoFailed.value = false;
-  progress.value = null;
-  userStatus.value = 'none';
-  try {
-    item.value = await getMediaDetail(id);
-    try {
-      const progressRes: any = await request.get(`/media/${id}/progress`);
-      progress.value = progressRes.data;
-    } catch {
-      progress.value = null;
-    }
-  } finally {
-    loading.value = false;
-  }
-}
-
-const hasProgress = computed(
-  () => progress.value && progress.value.position > 0 && !progress.value.finished
-);
-
-const resumeLabel = computed(() => {
-  if (!hasProgress.value) return '';
-  const pos = formatDuration(progress.value.position);
-  const dur = formatDuration(progress.value.duration);
-  return `Resume from ${pos} / ${dur}`;
+const canPlayItem = computed(() => {
+  return item.value?.type !== 'show';
 });
 
-const playLabel = computed(() => {
-  if (progress.value?.finished) return '\u25b6 Play Again';
-  if (hasProgress.value) return '\u25b6 Resume';
-  return '\u25b6 Play';
+const typeLabel = computed(() => {
+  switch (item.value?.type) {
+    case 'movie':
+      return 'Movie';
+    case 'show':
+      return 'Show';
+    case 'episode':
+      return 'Episode';
+    default:
+      return item.value?.type || 'Media';
+  }
+});
+
+const backTarget = computed(() => {
+  if (item.value?.type === 'episode' && item.value.show_id) {
+    return `/media/${item.value.show_id}`;
+  }
+
+  return '/library';
+});
+
+const backLabel = computed(() => {
+  if (item.value?.type === 'episode' && item.value.show_id) {
+    return 'Back to show';
+  }
+
+  return 'Back to library';
+});
+
+const metadataChips = computed<MetadataChip[]>(() => {
+  const media = item.value;
+  if (!media) return [];
+
+  const chips: MetadataChip[] = [];
+
+  if (media.original_title) {
+    chips.push({
+      label: 'Original title',
+      value: media.original_title,
+    });
+  }
+
+  if (media.language) {
+    chips.push({
+      label: 'Language',
+      value: media.language,
+    });
+  }
+
+  if (media.country_code) {
+    chips.push({
+      label: 'Country code',
+      value: media.country_code,
+    });
+  }
+
+  if (media.custom_rating) {
+    chips.push({
+      label: 'Custom rating',
+      value: media.custom_rating,
+    });
+  } else if (media.mpaa) {
+    chips.push({
+      label: 'MPAA',
+      value: media.mpaa,
+      kind: 'mpaa',
+    });
+  }
+
+  return chips;
+});
+
+const dateChips = computed<DateChip[]>(() => {
+  const media = item.value;
+  if (!media) return [];
+
+  const chips: DateChip[] = [];
+
+  if (media.release_date) {
+    chips.push({
+      label: 'Released',
+      value: media.release_date,
+    });
+  }
+
+  if (media.end_date) {
+    chips.push({
+      label: 'End',
+      value: media.end_date,
+    });
+  }
+
+  if (media.date_added) {
+    chips.push({
+      label: 'Added',
+      value: media.date_added,
+    });
+  }
+
+  if (media.playcount && media.playcount > 0) {
+    chips.push({
+      label: 'Played',
+      value: `${media.playcount}x`,
+    });
+  }
+
+  return chips;
+});
+
+const visibleActors = computed(() => {
+  return Array.isArray(item.value?.actors) ? item.value.actors.slice(0, 8) : [];
+});
+
+const visibleGuestStars = computed(() => {
+  return Array.isArray(item.value?.guest_stars) ? item.value.guest_stars.slice(0, 12) : [];
+});
+
+const overviewNeedsExpand = computed(() => {
+  return Boolean(item.value?.overview && item.value.overview.length > 280);
+});
+
+const hasProgress = computed(() => {
+  return Boolean(
+    progress.value &&
+    progress.value.position > 0 &&
+    progress.value.duration > 0 &&
+    !progress.value.finished
+  );
 });
 
 const progressPercent = computed(() => {
-  if (!progress.value || !progress.value.duration) return 0;
+  if (!progress.value?.duration) return 0;
+
   return Math.min((progress.value.position / progress.value.duration) * 100, 100);
 });
 
-async function setStatus(status: string) {
-  try {
-    await setMediaStatus(item.value.id, status);
-    userStatus.value = status;
-    item.value.user_status = status;
-  } catch {
-    console.error('Failed to update status');
-  }
-}
+const resumeLabel = computed(() => {
+  if (!hasProgress.value || !progress.value) return '';
 
-// Watch for same-component navigation (e.g., show -> episode detail)
+  const position = formatDuration(progress.value.position);
+  const duration = formatDuration(progress.value.duration);
+
+  return `Resume from ${position} / ${duration}`;
+});
+
+const playLabel = computed(() => {
+  if (progress.value?.finished) return 'Play again';
+  if (hasProgress.value) return 'Resume';
+  return 'Play';
+});
+
+const episodeCode = computed(() => {
+  const media = item.value;
+  if (!media) return '';
+
+  const parts: string[] = [];
+
+  if (media.season !== undefined && media.season !== null) {
+    parts.push(`S${String(media.season).padStart(2, '0')}`);
+  }
+
+  if (media.episode !== undefined && media.episode !== null) {
+    parts.push(`E${String(media.episode).padStart(2, '0')}`);
+  }
+
+  return parts.join(' ');
+});
+
 watch(
   () => route.params.id,
-  (newId) => {
-    if (newId) {
-      item.value = null;
-      window.scrollTo(0, 0);
-      fetchMediaDetail(newId as string);
-    }
+  () => {
+    void reloadCurrentMedia();
+  },
+  {
+    immediate: true,
   }
 );
 
-onMounted(async () => {
-  await fetchMediaDetail(route.params.id as string);
-});
+async function reloadCurrentMedia(): Promise<void> {
+  const id = route.params.id;
 
-function formatDuration(sec: number) {
-  if (!sec) return '';
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  if (typeof id !== 'string' || !id) {
+    item.value = null;
+    error.value = 'Invalid media id.';
+    loading.value = false;
+    return;
+  }
+
+  if (typeof window !== 'undefined') {
+    window.scrollTo({
+      top: 0,
+      behavior: 'auto',
+    });
+  }
+
+  await fetchMediaDetail(id);
+}
+
+async function fetchMediaDetail(id: string): Promise<void> {
+  const generation = ++fetchGeneration;
+
+  loading.value = true;
+  error.value = '';
+  statusError.value = '';
+  item.value = null;
+  progress.value = null;
+  userStatus.value = STATUS_NONE;
+  overviewExpanded.value = false;
+  backdropFailed.value = false;
+  posterFailed.value = false;
+  logoFailed.value = false;
+
+  try {
+    const detail = await getMediaDetail(id);
+
+    if (generation !== fetchGeneration) return;
+
+    const normalizedItem = normalizeMediaItem(detail);
+
+    item.value = normalizedItem;
+    userStatus.value = normalizeStatus(normalizedItem.user_status);
+
+    if (normalizedItem.type !== 'show') {
+      await fetchProgressSafely(id, generation);
+    }
+  } catch (unknownError) {
+    if (generation !== fetchGeneration) return;
+
+    console.error('[fyom] fetch media detail failed:', unknownError);
+    error.value = getErrorMessage(unknownError, 'Failed to load media detail.');
+    item.value = null;
+  } finally {
+    if (generation === fetchGeneration) {
+      loading.value = false;
+    }
+  }
+}
+
+async function fetchProgressSafely(id: string, generation: number): Promise<void> {
+  const token = readPersistedToken();
+
+  if (!token) {
+    progress.value = null;
+    return;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/media/${encodeURIComponent(id)}/progress`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (generation !== fetchGeneration) return;
+
+    // Progress is optional. Authorization failures here must not invalidate the
+    // whole user session because some media records may not expose progress.
+    if (response.status === 401 || response.status === 403 || response.status === 404) {
+      progress.value = null;
+      return;
+    }
+
+    if (!response.ok) {
+      progress.value = null;
+      return;
+    }
+
+    const payload = await response.json();
+    const nextProgress = normalizeProgressResponse(payload);
+
+    if (generation !== fetchGeneration) return;
+
+    progress.value = nextProgress;
+  } catch {
+    if (generation !== fetchGeneration) return;
+
+    progress.value = null;
+  }
+}
+
+async function setStatus(status: MediaStatus): Promise<void> {
+  if (!item.value || statusSaving.value || userStatus.value === status) return;
+
+  const previousStatus = userStatus.value;
+
+  statusSaving.value = true;
+  statusError.value = '';
+  userStatus.value = status;
+
+  try {
+    await setMediaStatus(item.value.id, status);
+
+    if (item.value) {
+      item.value.user_status = status;
+    }
+  } catch (unknownError) {
+    console.error('[fyom] update media status failed:', unknownError);
+    userStatus.value = previousStatus;
+
+    if (item.value) {
+      item.value.user_status = previousStatus;
+    }
+
+    statusError.value = getErrorMessage(unknownError, 'Failed to update status.');
+  } finally {
+    statusSaving.value = false;
+  }
+}
+
+function normalizeMediaItem(value: unknown): MediaItem {
+  if (isRecord(value) && isRecord(value.data)) {
+    return value.data as unknown as MediaItem;
+  }
+
+  return value as MediaItem;
+}
+
+function normalizeProgressResponse(value: unknown): ProgressState | null {
+  const data = isRecord(value) && 'data' in value ? value.data : value;
+
+  if (!isRecord(data)) return null;
+
+  const position = Number(data.position);
+  const duration = Number(data.duration);
+
+  if (!Number.isFinite(position) || !Number.isFinite(duration)) {
+    return null;
+  }
+
+  return {
+    position,
+    duration,
+    finished: Boolean(data.finished),
+  };
+}
+
+function normalizeStatus(status: unknown): MediaStatus {
+  switch (status) {
+    case STATUS_WANT:
+    case STATUS_WATCHING:
+    case STATUS_WATCHED:
+    case STATUS_DROPPED:
+    case STATUS_NONE:
+      return status;
+    default:
+      return STATUS_NONE;
+  }
+}
+
+function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '';
+
+  const totalSeconds = Math.floor(seconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+
+  return `${Math.max(1, minutes)}m`;
+}
+
+function formatRating(value: number): string {
+  return value.toFixed(1);
+}
+
+function getInitial(value: string): string {
+  const trimmed = value.trim();
+
+  if (!trimmed) return '?';
+
+  return trimmed.slice(0, 1).toUpperCase();
+}
+
+function getErrorMessage(errorValue: unknown, fallback: string): string {
+  if (isRecord(errorValue)) {
+    const response = errorValue.response;
+
+    if (isRecord(response)) {
+      const data = response.data;
+
+      if (isRecord(data)) {
+        const message = data.message || data.error || data.detail;
+
+        if (typeof message === 'string' && message.trim()) {
+          return message;
+        }
+      }
+    }
+
+    const message = errorValue.message;
+
+    if (typeof message === 'string' && message.trim()) {
+      return message;
+    }
+  }
+
+  return fallback;
+}
+
+function readPersistedToken(): string | null {
+  if (typeof window === 'undefined') return null;
+
+  return window.localStorage.getItem('token');
+}
+
+function normalizeBaseUrl(value: string): string {
+  return value.replace(/\/+$/, '');
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 </script>
 
 <style scoped>
 .detail-view {
   min-height: 100vh;
+  color: #e0e0e0;
   background: #0f0f1a;
 }
 
 .backdrop {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
+  inset: 0 0 auto;
+  z-index: 0;
   height: 100vh;
   overflow: hidden;
-  background: #1a1a2e;
-  z-index: 0;
+  background:
+    radial-gradient(circle at top left, rgb(108 99 255 / 14%), transparent 30rem), #1a1a2e;
 }
 
 .backdrop img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: blur(4px) brightness(0.35);
+  filter: blur(5px) brightness(0.32) saturate(1.08);
+  transform: scale(1.03);
 }
 
 .backdrop-overlay {
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    to bottom,
-    rgba(15, 15, 26, 0.1) 0%,
-    rgba(15, 15, 26, 0.85) 60%,
-    #0f0f1a 100%
-  );
+  background:
+    linear-gradient(to bottom, rgb(15 15 26 / 20%) 0%, rgb(15 15 26 / 82%) 58%, #0f0f1a 100%),
+    linear-gradient(
+      to right,
+      rgb(15 15 26 / 82%) 0%,
+      rgb(15 15 26 / 22%) 52%,
+      rgb(15 15 26 / 88%) 100%
+    );
 }
 
 .backdrop-progress {
   position: absolute;
+  right: 0;
   bottom: 0;
   left: 0;
-  right: 0;
   height: 4px;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgb(255 255 255 / 10%);
 }
 
 .backdrop-progress-fill {
-  height: 100%;
-  background: #6c63ff;
-  transition: transform 0.3s;
-  transform-origin: left;
   width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, #6c63ff, #2196f3);
+  transform-origin: left;
+  transition: transform 0.25s ease;
 }
 
 .content {
   position: relative;
   z-index: 1;
-  max-width: 960px;
+  width: 100%;
+  max-width: 1080px;
+  box-sizing: border-box;
   margin: 0 auto;
-  padding: 72px 24px 40px;
+  padding: 72px 24px 48px;
 }
 
-.back-link {
-  color: #8888aa;
+.back-link,
+.back-to-show {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 18px;
+  color: #aaaacc;
   font-size: 14px;
   text-decoration: none;
-  display: inline-block;
-  margin-bottom: 16px;
+  transition: color 0.15s ease;
 }
 
-.back-link:hover {
-  color: #e0e0e0;
+.back-link::before,
+.back-to-show::before {
+  content: '←';
+  margin-right: 6px;
 }
 
-.main-row {
+.back-link:hover,
+.back-to-show:hover {
+  color: #fff;
+}
+
+.error-banner {
   display: flex;
-  gap: 24px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  color: #ffb3b3;
+  background: #2a1a1a;
+  border: 1px solid #5a2a2a;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.error-action {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  color: #fff;
+  background: #5a2a2a;
+  border: 1px solid #7a3a3a;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.error-action:hover {
+  background: #6a3030;
+}
+
+.hero-section {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.poster-wrap {
+  width: 190px;
+}
+
+.poster,
+.poster-fallback {
+  width: 190px;
+  aspect-ratio: 2 / 3;
+  border-radius: 12px;
+  box-shadow: 0 18px 46px rgb(0 0 0 / 55%);
 }
 
 .poster {
-  width: 180px;
-  min-width: 180px;
-  aspect-ratio: 2 / 3;
-  border-radius: 8px;
+  display: block;
   object-fit: cover;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+.poster-fallback {
+  display: grid;
+  place-items: center;
+  color: #777799;
+  background: linear-gradient(135deg, rgb(108 99 255 / 20%), rgb(33 150 243 / 10%)), #1a1a2e;
+  border: 1px solid rgb(255 255 255 / 7%);
+  font-size: 56px;
+  font-weight: 900;
 }
 
 .meta {
-  flex: 1;
-}
-
-.title {
-  font-size: 28px;
-  color: #e0e0e0;
-  margin: 0 0 12px;
-}
-
-.title.with-logo {
-  display: none;
+  min-width: 0;
 }
 
 .logo-image {
-  max-width: 320px;
-  max-height: 100px;
-  margin-bottom: 12px;
   display: block;
+  max-width: min(360px, 100%);
+  max-height: 110px;
+  margin-bottom: 14px;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.title {
+  margin: 0 0 12px;
+  color: #f3f3ff;
+  font-size: clamp(2rem, 5vw, 4rem);
+  font-weight: 900;
+  letter-spacing: -0.055em;
+  line-height: 0.98;
+}
+
+.title.with-logo {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.tagline {
+  max-width: 760px;
+  margin: 0 0 14px;
+  color: #9f99ff;
+  font-size: 15px;
+  font-style: italic;
+  line-height: 1.55;
 }
 
 .facts {
   display: flex;
-  gap: 16px;
-  color: #8888aa;
-  font-size: 14px;
-  margin-bottom: 20px;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 10px 16px;
+  margin-bottom: 16px;
+  color: #aaaacc;
+  font-size: 14px;
+}
+
+.type-badge,
+.mpaa-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  box-sizing: border-box;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .type-badge {
+  color: #ccccee;
   background: #2a2a3e;
-  padding: 2px 10px;
-  border-radius: 4px;
-  font-size: 12px;
   text-transform: capitalize;
 }
 
 .mpaa-badge {
-  font-size: 11px;
-  padding: 2px 6px;
+  color: #aaaacc;
   border: 1px solid #3a3a5e;
-  border-radius: 3px;
-  color: #8888aa;
-  font-weight: 600;
-}
-
-.tagline {
-  color: #6c63ff;
-  font-size: 15px;
-  font-style: italic;
-  margin: 4px 0 0;
-  font-weight: 300;
-}
-
-.genres {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 12px;
-}
-
-.genre-tag {
-  background: #1a1a2e;
-  color: #8888aa;
-  padding: 3px 10px;
-  border-radius: 4px;
-  font-size: 12px;
-  border: 1px solid #2a2a3e;
-}
-
-.genre-tag:hover {
-  border-color: #3a3a3e;
-}
-
-.movie-meta-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 10px;
-}
-
-.meta-chip {
-  background: #1a1a2e;
-  color: #9999bb;
-  padding: 3px 10px;
-  border-radius: 4px;
-  font-size: 12px;
-  border: 1px solid #2a2a3e;
-}
-
-.meta-chip.mpaa-chip {
-  color: #8888aa;
-  font-weight: 600;
-  border-color: #3a3a5e;
-}
-
-.movie-dates {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.date-chip {
-  color: #666688;
-  font-size: 12px;
-  padding: 2px 8px;
-  background: rgba(26, 26, 46, 0.5);
-  border-radius: 3px;
 }
 
 .user-rating {
   color: #ffaa00;
-  font-size: 14px;
 }
 
-.collection-section {
-  margin-top: 24px;
+.movie-meta-row,
+.movie-dates,
+.genres {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.movie-meta-row {
+  margin-top: 10px;
+}
+
+.movie-dates {
+  margin-top: 8px;
+}
+
+.genres {
+  margin-top: 12px;
+}
+
+.meta-chip,
+.date-chip,
+.genre-tag {
+  display: inline-flex;
+  align-items: center;
+  color: #9999bb;
+  background: rgb(26 26 46 / 70%);
+  border: 1px solid #2a2a3e;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.meta-chip,
+.genre-tag {
+  padding: 4px 10px;
+}
+
+.date-chip {
+  padding: 3px 9px;
+  color: #777799;
+}
+
+.meta-chip.mpaa-chip {
+  color: #aaaacc;
+  border-color: #3a3a5e;
+  font-weight: 700;
+}
+
+.action-row {
+  margin-top: 20px;
+}
+
+.play-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 13px 34px;
+  color: #fff;
+  background: #6c63ff;
+  border-radius: 12px;
+  box-shadow: 0 10px 32px rgb(108 99 255 / 35%);
+  font-size: 17px;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  transition:
+    background-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.play-btn::before {
+  content: '▶';
+  margin-right: 10px;
+  font-size: 13px;
+}
+
+.play-btn:hover {
+  background: #5a52e0;
+  box-shadow: 0 12px 38px rgb(108 99 255 / 45%);
+  transform: translateY(-1px);
+}
+
+.resume-info {
+  margin: 9px 0 0;
+  color: #9f99ff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.status-label {
+  color: #666688;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.status-btn {
+  min-height: 32px;
+  padding: 6px 13px;
+  color: #8888aa;
+  background: #1a1a2e;
+  border: 1px solid #2a2a3e;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.status-btn:hover:not(:disabled) {
+  color: #ccccee;
+  border-color: #3a3a5e;
+}
+
+.status-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.status-btn.active {
+  color: #fff;
+}
+
+.status-btn.active.want {
+  background: #1565c0;
+  border-color: #2196f3;
+}
+
+.status-btn.active.watching {
+  background: #5a52e0;
+  border-color: #6c63ff;
+}
+
+.status-btn.active.watched {
+  background: #2e7d32;
+  border-color: #4caf50;
+}
+
+.status-btn.active.dropped {
+  background: #c62828;
+  border-color: #ff6b6b;
+}
+
+.clear-btn {
+  color: #666688;
+}
+
+.clear-btn:hover:not(:disabled) {
+  color: #ff8f8f;
+  border-color: #ff6b6b;
+}
+
+.status-error {
+  margin: 8px 0 0;
+  color: #ff8f8f;
+  font-size: 12px;
+}
+
+.overview-section,
+.cast-section,
+.guest-stars,
+.collection-section,
+.episode-detail-section,
+.episode-list {
+  margin-top: 28px;
+}
+
+.overview {
+  max-width: 760px;
+  margin: 0;
+  color: #b5b5d6;
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.overview.collapsed {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+}
+
+.expand-btn {
+  margin-top: 6px;
+  padding: 4px 0;
+  color: #8f89ff;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.expand-btn:hover {
+  color: #b4b0ff;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.section-subtitle {
+  margin: 0 0 13px;
+  color: #8888aa;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cast-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.cast-member {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  background: rgb(26 26 46 / 55%);
+  border: 1px solid rgb(255 255 255 / 5%);
+  border-radius: 12px;
+}
+
+.cast-avatar {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: #aaaacc;
+  background: #2a2a3e;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.cast-avatar.large {
+  width: 48px;
+  height: 48px;
+  font-size: 17px;
+}
+
+.cast-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.cast-name {
+  color: #ddddef;
+  font-size: 13px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.cast-role {
+  margin-top: 2px;
+  color: #666688;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.cast-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 12px;
+}
+
+.cast-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 118px;
+  gap: 7px;
+  padding: 12px;
+  text-align: center;
+  background: rgb(26 26 46 / 55%);
+  border: 1px solid rgb(255 255 255 / 5%);
+  border-radius: 12px;
+}
+
+.episode-detail-section {
+  padding: 16px;
+  background: rgb(26 26 46 / 45%);
+  border: 1px solid rgb(255 255 255 / 6%);
+  border-radius: 14px;
+}
+
+.episode-detail-header {
+  margin-bottom: 10px;
+}
+
+.episode-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  color: #8888aa;
+  font-size: 13px;
+}
+
+.episode-detail-number {
+  margin: 0;
+  color: #ccccee;
+  background: #2a2a3e;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.episode-aired {
+  color: #777799;
+}
+
+.episode-rating {
+  color: #ffaa00;
+}
+
+.episode-plot {
+  max-width: 760px;
+  margin: 12px 0 0;
+  color: #9999bb;
+  font-size: 14px;
+  line-height: 1.7;
 }
 
 .collection-info {
   display: flex;
-  gap: 12px;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 8px 12px;
   margin-bottom: 8px;
 }
 
 .collection-name {
   color: #ccccee;
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 800;
 }
 
 .collection-number {
@@ -535,276 +1428,174 @@ function formatDuration(sec: number) {
 }
 
 .collection-overview {
+  max-width: 760px;
+  margin: 0;
   color: #9999bb;
   font-size: 14px;
   line-height: 1.7;
-  margin: 0;
-  max-width: 640px;
-}
-.section-subtitle {
-  font-size: 14px;
-  color: #8888aa;
-  margin: 0 0 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 
-.cast-section {
-  margin-top: 24px;
+.state-view {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  padding: 24px;
+  color: #e0e0e0;
+  background: #0f0f1a;
 }
 
-.cast-list {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
+.state-card {
+  width: 100%;
+  max-width: 440px;
+  padding: 28px;
+  text-align: center;
+  background: #1a1a2e;
+  border: 1px solid rgb(255 255 255 / 6%);
+  border-radius: 16px;
+  box-shadow: 0 18px 48px rgb(0 0 0 / 35%);
 }
 
-.cast-member {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.cast-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: #2a2a3e;
-  color: #666688;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.cast-info {
-  display: flex;
-  flex-direction: column;
-}
-
-.cast-name {
-  color: #ccccee;
-  font-size: 13px;
-}
-
-.cast-role {
-  color: #555577;
-  font-size: 11px;
-}
-
-.episode-detail-section {
-  margin-top: 24px;
-}
-
-.episode-detail-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.back-to-show {
-  color: #6c63ff;
-  font-size: 14px;
-  text-decoration: none;
-}
-
-.back-to-show:hover {
-  color: #8b83ff;
-}
-
-.episode-detail-number {
-  background: #2a2a3e;
-  padding: 2px 10px;
-  border-radius: 4px;
-  font-size: 12px;
-  text-transform: capitalize;
-  margin-right: 16px;
-}
-
-.episode-detail-meta {
-  display: flex;
-  gap: 16px;
-  color: #8888aa;
-  font-size: 13px;
-  margin-bottom: 12px;
-}
-
-.episode-aired {
-  color: #666688;
-}
-
-.episode-rating {
-  color: #ffaa00;
-}
-
-.episode-plot {
-  color: #9999bb;
-  font-size: 14px;
-  line-height: 1.7;
-  margin: 0;
-  max-width: 640px;
-}
-
-.guest-stars {
-  margin-top: 24px;
-}
-
-.cast-grid {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.cast-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  width: 80px;
-}
-
-.action-row {
-  margin-top: 8px;
-  margin-bottom: 0;
-}
-
-.play-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-  padding: 16px 40px;
-  background: #6c63ff;
-  color: #ffffff;
-  border-radius: 12px;
-  text-decoration: none;
-  font-size: 18px;
-  font-weight: 700;
-  box-shadow: 0 4px 24px rgba(108, 99, 255, 0.4);
-  transition: all 0.2s;
-}
-
-.play-btn:hover {
-  background: #5a52e0;
-  transform: translateY(-1px);
-  box-shadow: 0 6px 32px rgba(108, 99, 255, 0.5);
-}
-
-.play-icon {
+.state-card h1 {
+  margin: 0 0 8px;
+  color: #f3f3ff;
   font-size: 22px;
 }
 
-.play-text {
-  letter-spacing: 0.5px;
-}
-
-.resume-info {
-  color: #6c63ff;
-  font-size: 13px;
-  margin-top: 8px;
-  margin-bottom: 0;
-  font-weight: 500;
-}
-
-.status-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.status-label {
-  color: #555577;
-  font-size: 12px;
-}
-
-.status-btn {
-  padding: 6px 14px;
-  background: #1a1a2e;
-  border: 1px solid #2a2a3e;
-  border-radius: 6px;
+.state-card p {
+  margin: 0;
   color: #8888aa;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.state-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.state-btn,
+.state-link {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 9px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.state-btn {
+  color: #fff;
+  background: #6c63ff;
+  border: 0;
   cursor: pointer;
-  font-size: 12px;
-  transition: all 0.15s;
 }
 
-.status-btn:hover {
-  border-color: #3a3a5e;
+.state-link {
   color: #ccccee;
+  background: #2a2a3e;
+  text-decoration: none;
 }
 
-.status-btn.active {
+.state-btn:hover {
+  background: #5a52e0;
+}
+
+.state-link:hover {
   color: #fff;
 }
 
-.status-btn.active:first-of-type {
-  background: #1565c0;
-  border-color: #2196f3;
-}
-.status-btn.active:nth-of-type(2) {
-  background: #5a52e0;
-  border-color: #6c63ff;
-}
-.status-btn.active:nth-of-type(3) {
-  background: #2e7d32;
-  border-color: #4caf50;
-}
-.status-btn.active:nth-of-type(4) {
-  background: #c62828;
-  border-color: #ff6b6b;
+@media (max-width: 760px) {
+  .content {
+    padding: 44px 16px 36px;
+  }
+
+  .hero-section {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .poster-wrap {
+    width: 138px;
+  }
+
+  .poster,
+  .poster-fallback {
+    width: 138px;
+    border-radius: 10px;
+  }
+
+  .poster-fallback {
+    font-size: 42px;
+  }
+
+  .title {
+    font-size: clamp(2rem, 11vw, 3rem);
+  }
+
+  .facts {
+    gap: 8px 12px;
+  }
+
+  .play-btn {
+    width: 100%;
+  }
+
+  .status-row {
+    align-items: stretch;
+  }
+
+  .status-label {
+    flex-basis: 100%;
+  }
+
+  .status-btn {
+    flex: 1 1 auto;
+  }
+
+  .cast-list,
+  .cast-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .error-banner {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .error-action {
+    width: 100%;
+  }
 }
 
-.clear-btn {
-  margin-left: 4px;
-  color: #555577;
-  border-color: #2a2a3e;
-  font-size: 11px;
+@media (max-width: 480px) {
+  .state-actions {
+    flex-direction: column;
+  }
+
+  .state-btn,
+  .state-link {
+    width: 100%;
+    box-sizing: border-box;
+  }
 }
 
-.clear-btn:hover {
-  color: #ff6b6b;
-  border-color: #ff6b6b;
-}
+@media (prefers-reduced-motion: reduce) {
+  .backdrop-progress-fill,
+  .back-link,
+  .back-to-show,
+  .error-action,
+  .play-btn,
+  .status-btn {
+    transition: none;
+  }
 
-.overview-section {
-  margin-top: 16px;
-}
-
-.overview-section .overview {
-  color: #9999bb;
-  font-size: 14px;
-  line-height: 1.7;
-  margin: 0;
-  max-width: 640px;
-}
-
-.overview-section .overview.collapsed {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  overflow: hidden;
-}
-
-.expand-btn {
-  background: none;
-  border: none;
-  color: #6c63ff;
-  font-size: 13px;
-  cursor: pointer;
-  padding: 4px 0;
-  margin-top: 4px;
-}
-
-.expand-btn:hover {
-  color: #8b83ff;
-}
-
-.loading {
-  text-align: center;
-  padding: 80px;
-  color: #666;
+  .play-btn:hover {
+    transform: none;
+  }
 }
 </style>
