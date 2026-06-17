@@ -108,7 +108,7 @@
             :disabled="isLibraryBusy(lib.id)"
             @click="refreshLibrary(lib)"
           >
-            {{ refreshing === lib.id ? 'Scanning...' : 'Refresh' }}
+            {{ refreshing === lib.id ? 'Starting...' : 'Refresh' }}
           </button>
 
           <button
@@ -160,18 +160,18 @@
         <div
           v-if="activeJob && activeJob.libraryId === lib.id"
           class="job-panel"
-          :class="activeJob.status"
+          :class="[activeJob.status, { unavailable: activeJob.statusUnavailable }]"
         >
           <div class="job-row">
             <div>
               <p class="job-title">
                 {{ jobTitle }}
               </p>
-              <p class="job-meta">Job ID: {{ activeJob.id }}</p>
+              <p v-if="activeJob.id" class="job-meta">Job ID: {{ activeJob.id }}</p>
             </div>
 
             <span class="job-badge">
-              {{ activeJob.status }}
+              {{ activeJob.statusUnavailable ? 'status unavailable' : activeJob.status }}
             </span>
           </div>
 
@@ -188,18 +188,20 @@
           </p>
 
           <div class="job-actions">
-            <button
-              v-if="isTerminalJob"
-              type="button"
-              class="job-action-btn"
-              @click="clearActiveJob"
-            >
-              Dismiss
+            <button type="button" class="job-action-btn" @click="reloadLibraries">
+              Reload libraries
             </button>
 
-            <button v-else type="button" class="job-action-btn" @click="pollActiveJobNow">
+            <button
+              v-if="canCheckActiveJob"
+              type="button"
+              class="job-action-btn"
+              @click="pollActiveJobNow"
+            >
               Check now
             </button>
+
+            <button type="button" class="job-action-btn" @click="clearActiveJob">Dismiss</button>
           </div>
         </div>
       </div>
@@ -213,6 +215,15 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { authRequest } from '@/api/request';
 import type { ApiEnvelope } from '@/api/types';
+import {
+  getApiErrorMessage,
+  getJobStatusSilent,
+  isFailedJobStatus,
+  isTerminalJobStatus,
+  tryStartAdminLibraryRefresh,
+  type JobStatus,
+  type JobStatusValue,
+} from '@/api/library';
 
 interface Library {
   id: string;
@@ -245,39 +256,6 @@ interface LibraryForm {
   metadata_source: string;
 }
 
-interface ImportConfig {
-  id: string;
-  source_path: string;
-  provider_id: string;
-}
-
-interface ImportJobResponse {
-  job_id?: string;
-  id?: string;
-}
-
-type JobStatusValue =
-  | 'queued'
-  | 'pending'
-  | 'running'
-  | 'processing'
-  | 'completed'
-  | 'success'
-  | 'failed'
-  | 'error'
-  | 'cancelled'
-  | 'unknown';
-
-interface JobStatusResponse {
-  id?: string;
-  job_id?: string;
-  status?: string;
-  progress?: number;
-  message?: string;
-  error?: string;
-  detail?: string;
-}
-
 interface ActiveJob {
   id: string;
   libraryId: string;
@@ -285,6 +263,8 @@ interface ActiveJob {
   progress: number;
   message: string;
   error: string;
+  statusUnavailable: boolean;
+  conflict: boolean;
 }
 
 const JOB_POLL_INTERVAL_MS = 2500;
@@ -334,19 +314,36 @@ const activeJobProgress = computed(() => {
 const isTerminalJob = computed(() => {
   if (!activeJob.value) return false;
 
-  return isTerminalStatus(activeJob.value.status);
+  return isTerminalJobStatus(activeJob.value.status);
+});
+
+const canCheckActiveJob = computed(() => {
+  if (!activeJob.value) return false;
+  if (activeJob.value.conflict) return false;
+  if (activeJob.value.statusUnavailable) return false;
+
+  return !isTerminalJobStatus(activeJob.value.status);
 });
 
 const jobTitle = computed(() => {
   if (!activeJob.value) return '';
 
-  switch (activeJob.value.status) {
+  if (activeJob.value.conflict) {
+    return 'Refresh already in progress';
+  }
+
+  if (activeJob.value.statusUnavailable) {
+    return 'Refresh started';
+  }
+
+  switch (String(activeJob.value.status).toLowerCase()) {
     case 'queued':
     case 'pending':
       return 'Refresh is queued';
     case 'running':
     case 'processing':
       return 'Refresh is running';
+    case 'done':
     case 'completed':
     case 'success':
       return 'Refresh completed';
@@ -378,9 +375,15 @@ async function loadInitialData(): Promise<void> {
 
   try {
     const [libRes, provRes, settingsRes] = await Promise.all([
-      authRequest.get<ApiEnvelope<Library[]>>('/admin/libraries'),
-      authRequest.get<ApiEnvelope<Provider[]>>('/admin/providers'),
-      authRequest.get<ApiEnvelope<SettingsMap>>('/admin/settings'),
+      authRequest.get<ApiEnvelope<Library[]>>('/admin/libraries', {
+        authFailureMode: 'forbidden',
+      }),
+      authRequest.get<ApiEnvelope<Provider[]>>('/admin/providers', {
+        authFailureMode: 'forbidden',
+      }),
+      authRequest.get<ApiEnvelope<SettingsMap>>('/admin/settings', {
+        authFailureMode: 'forbidden',
+      }),
     ]);
 
     libraries.value = normalizeEnvelopeData(libRes.data, []);
@@ -389,13 +392,13 @@ async function loadInitialData(): Promise<void> {
     const settings = normalizeEnvelopeData(settingsRes.data, {});
     schedules.value = extractLibrarySchedules(settings);
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
-      error.value = 'Your session is not authorized for library administration.';
+    if (isUnauthorizedOrForbidden(err)) {
+      error.value = 'You do not have permission to manage libraries.';
       return;
     }
 
     console.error('[fyom] load libraries failed:', err);
-    error.value = getErrorMessage(err, 'Failed to load libraries.');
+    error.value = getApiErrorMessage(err, 'Failed to load libraries.');
   } finally {
     loading.value = false;
   }
@@ -403,15 +406,19 @@ async function loadInitialData(): Promise<void> {
 
 async function reloadLibraries(): Promise<void> {
   try {
-    const res = await authRequest.get<ApiEnvelope<Library[]>>('/admin/libraries');
+    const res = await authRequest.get<ApiEnvelope<Library[]>>('/admin/libraries', {
+      authFailureMode: 'forbidden',
+    });
+
     libraries.value = normalizeEnvelopeData(res.data, []);
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
+    if (isUnauthorizedOrForbidden(err)) {
       error.value = 'Unable to reload libraries because the request was not authorized.';
       return;
     }
 
     console.error('[fyom] reload libraries failed:', err);
+    error.value = getApiErrorMessage(err, 'Failed to reload libraries.');
   }
 }
 
@@ -428,21 +435,27 @@ async function setSchedule(libId: string, interval: string): Promise<void> {
   error.value = '';
 
   try {
-    await authRequest.put('/admin/settings', {
-      [`library_refresh_interval_${libId}`]: interval,
-    });
+    await authRequest.put(
+      '/admin/settings',
+      {
+        [`library_refresh_interval_${libId}`]: interval,
+      },
+      {
+        authFailureMode: 'forbidden',
+      }
+    );
 
     schedules.value = {
       ...schedules.value,
       [libId]: interval,
     };
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
+    if (isUnauthorizedOrForbidden(err)) {
       error.value = 'Unable to save schedule because the request was not authorized.';
       return;
     }
 
-    error.value = getErrorMessage(err, 'Failed to save schedule.');
+    error.value = getApiErrorMessage(err, 'Failed to save schedule.');
   } finally {
     savingSchedule.value = '';
   }
@@ -461,25 +474,31 @@ async function createLibrary(): Promise<void> {
   saving.value = true;
 
   try {
-    await authRequest.post('/admin/libraries', {
-      name: form.name.trim(),
-      type: form.type,
-      provider_id: form.provider_id,
-      source_path: form.source_path.trim(),
-      metadata_source: form.metadata_source,
-    });
+    await authRequest.post(
+      '/admin/libraries',
+      {
+        name: form.name.trim(),
+        type: form.type,
+        provider_id: form.provider_id,
+        source_path: form.source_path.trim(),
+        metadata_source: form.metadata_source,
+      },
+      {
+        authFailureMode: 'forbidden',
+      }
+    );
 
     resetForm();
     showForm.value = false;
 
     await reloadLibraries();
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
+    if (isUnauthorizedOrForbidden(err)) {
       error.value = 'Unable to create library because the request was not authorized.';
       return;
     }
 
-    formError.value = getErrorMessage(err, 'Failed to create library.');
+    formError.value = getApiErrorMessage(err, 'Failed to create library.');
   } finally {
     saving.value = false;
   }
@@ -528,9 +547,16 @@ async function deleteLibrary(lib: Library): Promise<void> {
 
   try {
     if (lib.item_count > 0) {
-      await authRequest.delete(`/admin/libraries/${lib.id}/items?mode=cascade`);
+      await authRequest.delete(
+        `/admin/libraries/${encodeURIComponent(lib.id)}/items?mode=cascade`,
+        {
+          authFailureMode: 'forbidden',
+        }
+      );
     } else {
-      await authRequest.delete(`/admin/libraries/${lib.id}`);
+      await authRequest.delete(`/admin/libraries/${encodeURIComponent(lib.id)}`, {
+        authFailureMode: 'forbidden',
+      });
     }
 
     if (activeJob.value?.libraryId === lib.id) {
@@ -539,12 +565,12 @@ async function deleteLibrary(lib: Library): Promise<void> {
 
     await reloadLibraries();
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
+    if (isUnauthorizedOrForbidden(err)) {
       error.value = 'Unable to delete library because the request was not authorized.';
       return;
     }
 
-    error.value = getErrorMessage(err, 'Failed to delete library.');
+    error.value = getApiErrorMessage(err, 'Failed to delete library.');
   }
 }
 
@@ -558,46 +584,63 @@ async function refreshLibrary(lib: Library): Promise<void> {
   clearActiveJob();
 
   try {
-    const configRes = await authRequest.post<ApiEnvelope<ImportConfig>>(
-      `/admin/libraries/${lib.id}/refresh`
-    );
+    const result = await tryStartAdminLibraryRefresh(lib.id);
 
-    const config = normalizeEnvelopeData<ImportConfig | null>(configRes.data, null);
+    if (!result.ok) {
+      activeJob.value = {
+        id: '',
+        libraryId: lib.id,
+        status: 'unknown',
+        progress: 0,
+        message:
+          result.reason === 'already_in_progress'
+            ? 'A refresh is already running for this library. New media may appear when the current scan finishes.'
+            : result.message,
+        error: '',
+        statusUnavailable: true,
+        conflict: true,
+      };
 
-    if (!config?.source_path || !config?.provider_id || !config?.id) {
-      throw new Error('Refresh configuration is incomplete.');
+      await reloadLibraries();
+      return;
     }
 
-    const jobRes = await authRequest.post<ApiEnvelope<ImportJobResponse>>('/library/import', {
-      source_path: config.source_path,
-      provider_id: config.provider_id,
-      library_id: config.id,
-    });
+    if (!result.job.job_id) {
+      activeJob.value = {
+        id: '',
+        libraryId: lib.id,
+        status: 'unknown',
+        progress: 0,
+        message:
+          'Refresh was started, but the server did not return a job id. New media may still appear after the scan completes.',
+        error: '',
+        statusUnavailable: true,
+        conflict: false,
+      };
 
-    const jobData = normalizeEnvelopeData<ImportJobResponse | null>(jobRes.data, null);
-    const jobId = jobData?.job_id || jobData?.id || '';
-
-    if (!jobId) {
-      throw new Error('Refresh started, but no job id was returned.');
+      await reloadLibraries();
+      return;
     }
 
     activeJob.value = {
-      id: jobId,
+      id: result.job.job_id,
       libraryId: lib.id,
-      status: 'queued',
+      status: normalizeJobStatus(result.job.status || 'queued'),
       progress: 0,
       message: 'Refresh job has been created.',
       error: '',
+      statusUnavailable: false,
+      conflict: false,
     };
 
     startJobPolling();
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
+    if (isUnauthorizedOrForbidden(err)) {
       error.value = 'Unable to refresh library because the request was not authorized.';
       return;
     }
 
-    error.value = getErrorMessage(err, 'Refresh failed.');
+    error.value = getApiErrorMessage(err, 'Refresh failed.');
   } finally {
     refreshing.value = '';
   }
@@ -609,7 +652,11 @@ async function checkMissing(lib: Library): Promise<void> {
 
   try {
     const res = await authRequest.post<ApiEnvelope<{ missing: number }>>(
-      `/admin/libraries/${lib.id}/check-missing`
+      `/admin/libraries/${encodeURIComponent(lib.id)}/check-missing`,
+      undefined,
+      {
+        authFailureMode: 'forbidden',
+      }
     );
 
     const result = normalizeEnvelopeData(res.data, { missing: 0 });
@@ -626,12 +673,12 @@ async function checkMissing(lib: Library): Promise<void> {
 
     await reloadLibraries();
   } catch (err: unknown) {
-    if (isUnauthorized(err)) {
+    if (isUnauthorizedOrForbidden(err)) {
       error.value = 'Unable to check missing media because the request was not authorized.';
       return;
     }
 
-    error.value = getErrorMessage(err, 'Check failed.');
+    error.value = getApiErrorMessage(err, 'Check failed.');
   } finally {
     checking.value = '';
   }
@@ -654,7 +701,7 @@ function startJobPolling(): void {
 }
 
 function stopJobPolling(): void {
-  jobPollGeneration++;
+  jobPollGeneration += 1;
 
   if (jobPollTimer) {
     window.clearInterval(jobPollTimer);
@@ -663,59 +710,84 @@ function stopJobPolling(): void {
 }
 
 async function pollActiveJobNow(): Promise<void> {
-  if (!activeJob.value) return;
+  if (!activeJob.value || !activeJob.value.id) return;
 
-  await pollJobStatus(jobPollGeneration);
+  const generation = jobPollGeneration;
+
+  await pollJobStatus(generation);
 }
 
 async function pollJobStatus(generation: number): Promise<void> {
   const job = activeJob.value;
 
-  if (!job || generation !== jobPollGeneration) return;
+  if (!job || !job.id || generation !== jobPollGeneration) return;
 
   try {
-    const res = await authRequest.get<ApiEnvelope<JobStatusResponse>>(`/library/jobs/${job.id}`);
-    const data = normalizeEnvelopeData<JobStatusResponse>(res.data, {});
+    const data = await getJobStatusSilent(job.id);
 
     if (generation !== jobPollGeneration || !activeJob.value) return;
 
-    const status = normalizeJobStatus(data.status);
-    const nextProgress = normalizeJobProgress(data.progress, status);
+    if (!data) {
+      markJobStatusUnavailable();
+      stopJobPolling();
+      await reloadLibraries();
+      return;
+    }
 
-    activeJob.value = {
-      ...activeJob.value,
-      status,
-      progress: nextProgress,
-      message: data.message || data.detail || activeJob.value.message,
-      error: data.error || '',
-    };
+    applyJobStatus(data);
 
-    if (isTerminalStatus(status)) {
+    if (isTerminalJobStatus(activeJob.value.status)) {
       stopJobPolling();
       await reloadLibraries();
     }
   } catch (err: unknown) {
     if (generation !== jobPollGeneration || !activeJob.value) return;
 
-    console.error('[fyom] job status poll failed:', err);
-
-    if (isUnauthorized(err)) {
-      activeJob.value = {
-        ...activeJob.value,
-        status: 'unknown',
-        error:
-          'Unable to read job status because the status request was not authorized. The scan may still be running.',
-      };
-
-      stopJobPolling();
-      return;
-    }
-
     activeJob.value = {
       ...activeJob.value,
-      error: getErrorMessage(err, 'Failed to read job status.'),
+      status: 'unknown',
+      statusUnavailable: true,
+      error: getApiErrorMessage(err, 'Failed to read job status. The scan may still be running.'),
     };
+
+    stopJobPolling();
   }
+}
+
+function applyJobStatus(data: JobStatus): void {
+  if (!activeJob.value) return;
+
+  const status = normalizeJobStatus(data.status);
+  const nextProgress = normalizeJobProgress(
+    data.progress,
+    data.done_items,
+    data.total_items,
+    status
+  );
+  const failed = isFailedJobStatus(status);
+
+  activeJob.value = {
+    ...activeJob.value,
+    status,
+    progress: nextProgress,
+    message: data.message || activeJob.value.message || 'Refresh job status updated.',
+    error: data.error || data.error_msg || (failed ? 'Refresh job ended with an error.' : ''),
+    statusUnavailable: false,
+  };
+}
+
+function markJobStatusUnavailable(): void {
+  if (!activeJob.value) return;
+
+  activeJob.value = {
+    ...activeJob.value,
+    status: 'unknown',
+    progress: activeJob.value.progress || 0,
+    message:
+      'Refresh started, but this client cannot read job status. New media may still appear after the scan completes.',
+    error: '',
+    statusUnavailable: true,
+  };
 }
 
 function clearActiveJob(): void {
@@ -733,6 +805,7 @@ function normalizeJobStatus(status: unknown): JobStatusValue {
     case 'pending':
     case 'running':
     case 'processing':
+    case 'done':
     case 'completed':
     case 'success':
     case 'failed':
@@ -744,19 +817,29 @@ function normalizeJobStatus(status: unknown): JobStatusValue {
   }
 }
 
-function normalizeJobProgress(progress: unknown, status: JobStatusValue): number {
-  if (status === 'completed' || status === 'success') return 100;
+function normalizeJobProgress(
+  progress: unknown,
+  doneItems: unknown,
+  totalItems: unknown,
+  status: JobStatusValue
+): number {
+  if (status === 'done' || status === 'completed' || status === 'success') return 100;
   if (status === 'failed' || status === 'error' || status === 'cancelled') return 100;
 
-  const value = Number(progress);
+  const directProgress = Number(progress);
 
-  if (!Number.isFinite(value)) return activeJob.value?.progress || 0;
+  if (Number.isFinite(directProgress)) {
+    return Math.min(100, Math.max(0, directProgress));
+  }
 
-  return Math.min(100, Math.max(0, value));
-}
+  const done = Number(doneItems);
+  const total = Number(totalItems);
 
-function isTerminalStatus(status: JobStatusValue): boolean {
-  return ['completed', 'success', 'failed', 'error', 'cancelled'].includes(status);
+  if (Number.isFinite(done) && Number.isFinite(total) && total > 0) {
+    return Math.min(100, Math.max(0, (done / total) * 100));
+  }
+
+  return activeJob.value?.progress || 0;
 }
 
 /* =========================
@@ -777,7 +860,12 @@ function isLibraryBusy(libId: string): boolean {
     refreshing.value === libId ||
     checking.value === libId ||
     savingSchedule.value === libId ||
-    (activeJob.value?.libraryId === libId && !isTerminalStatus(activeJob.value.status))
+    Boolean(
+      activeJob.value?.libraryId === libId &&
+      !activeJob.value.statusUnavailable &&
+      !activeJob.value.conflict &&
+      !isTerminalJobStatus(activeJob.value.status)
+    )
   );
 }
 
@@ -816,31 +904,7 @@ function normalizeEnvelopeData<T>(envelope: ApiEnvelope<T> | T | undefined, fall
   return envelope as T;
 }
 
-function getErrorMessage(err: unknown, fallback: string): string {
-  if (isRecord(err)) {
-    const response = err.response;
-
-    if (isRecord(response)) {
-      const data = response.data;
-
-      if (isRecord(data)) {
-        const message = data.message || data.error || data.detail;
-
-        if (typeof message === 'string' && message.trim()) {
-          return message;
-        }
-      }
-    }
-
-    if (err.message && typeof err.message === 'string') {
-      return err.message;
-    }
-  }
-
-  return fallback;
-}
-
-function isUnauthorized(err: unknown): boolean {
+function isUnauthorizedOrForbidden(err: unknown): boolean {
   if (!isRecord(err)) return false;
 
   const response = err.response;
@@ -1149,6 +1213,7 @@ h1 {
 }
 
 .job-panel.completed,
+.job-panel.done,
 .job-panel.success {
   border-color: rgb(76 175 80 / 34%);
 }
@@ -1156,6 +1221,10 @@ h1 {
 .job-panel.failed,
 .job-panel.error {
   border-color: rgb(255 107 107 / 34%);
+}
+
+.job-panel.unavailable {
+  border-color: rgb(251 191 36 / 30%);
 }
 
 .job-row {
@@ -1221,6 +1290,9 @@ h1 {
 }
 
 .job-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: 12px;
 }
 
@@ -1268,7 +1340,8 @@ h1 {
     flex-direction: column;
   }
 
-  .error-action {
+  .error-action,
+  .job-action-btn {
     width: 100%;
   }
 }
