@@ -1,165 +1,507 @@
 <template>
-  <div class="login-page">
-    <div class="setup-card">
-      <div class="logo">fyom</div>
-      <h1 class="title">Welcome back</h1>
-      <p class="subtitle">Sign in to your account</p>
+  <main class="login-page">
+    <section class="login-card" aria-labelledby="login-title">
+      <router-link to="/" class="brand-link" aria-label="Go to home">
+        <div class="logo">fyom</div>
+      </router-link>
 
-      <form @submit.prevent="handleLogin">
+      <header class="login-header">
+        <h1 id="login-title" class="title">Welcome back</h1>
+        <p class="subtitle">Sign in to continue to your library</p>
+      </header>
+
+      <form class="login-form" novalidate @submit.prevent="handleLogin">
         <div class="field">
-          <label>Username</label>
-          <input v-model="username" type="text" required autocomplete="username" />
-        </div>
-        <div class="field">
-          <label>Password</label>
-          <input v-model="password" type="password" required autocomplete="current-password" />
+          <label for="username">Username</label>
+          <input
+            id="username"
+            ref="usernameInput"
+            v-model.trim="username"
+            type="text"
+            required
+            autocomplete="username"
+            inputmode="text"
+            class="input"
+            :class="{ invalid: Boolean(fieldErrors.username) }"
+            :aria-invalid="Boolean(fieldErrors.username)"
+            :aria-describedby="fieldErrors.username ? 'username-error' : undefined"
+            :disabled="loading"
+            @input="clearFieldError('username')"
+          />
+          <p v-if="fieldErrors.username" id="username-error" class="field-error">
+            {{ fieldErrors.username }}
+          </p>
         </div>
 
-        <p v-if="error" class="error">{{ error }}</p>
-        <button type="submit" class="submit-btn" :disabled="loading">
-          {{ loading ? 'Signing in...' : 'Sign In' }}
+        <div class="field">
+          <label for="password">Password</label>
+
+          <div class="password-wrap">
+            <input
+              id="password"
+              v-model="password"
+              :type="showPassword ? 'text' : 'password'"
+              required
+              autocomplete="current-password"
+              class="input password-input"
+              :class="{ invalid: Boolean(fieldErrors.password) }"
+              :aria-invalid="Boolean(fieldErrors.password)"
+              :aria-describedby="fieldErrors.password ? 'password-error' : undefined"
+              :disabled="loading"
+              @input="clearFieldError('password')"
+            />
+
+            <button
+              type="button"
+              class="password-toggle"
+              :disabled="loading || password.length === 0"
+              :aria-label="showPassword ? 'Hide password' : 'Show password'"
+              @click="showPassword = !showPassword"
+            >
+              {{ showPassword ? 'Hide' : 'Show' }}
+            </button>
+          </div>
+
+          <p v-if="fieldErrors.password" id="password-error" class="field-error">
+            {{ fieldErrors.password }}
+          </p>
+        </div>
+
+        <div v-if="error" class="error-banner" role="alert">
+          {{ error }}
+        </div>
+
+        <button type="submit" class="submit-btn" :disabled="loading || !canSubmit">
+          <span v-if="loading" class="spinner" aria-hidden="true"></span>
+          <span>{{ loading ? 'Signing in...' : 'Sign in' }}</span>
         </button>
       </form>
 
       <p class="bottom-link">
-        No account? <router-link to="/register">Create one</router-link>
+        No account?
+        <router-link to="/register"> Create one </router-link>
       </p>
-    </div>
-  </div>
+    </section>
+  </main>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, nextTick, onMounted, reactive, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useUserStore } from '@/stores/user';
 
+type LoginField = 'username' | 'password';
+
 const router = useRouter();
+const route = useRoute();
 const store = useUserStore();
+
+const usernameInput = ref<HTMLInputElement | null>(null);
 
 const username = ref('');
 const password = ref('');
 const loading = ref(false);
 const error = ref('');
+const showPassword = ref(false);
+
+const fieldErrors = reactive<Record<LoginField, string>>({
+  username: '',
+  password: '',
+});
+
+const canSubmit = computed(() => {
+  return username.value.trim().length > 0 && password.value.length > 0;
+});
+
+onMounted(async () => {
+  await nextTick();
+  usernameInput.value?.focus();
+});
 
 async function handleLogin() {
+  if (loading.value) return;
+
   error.value = '';
+  clearAllFieldErrors();
+
+  if (!validateForm()) {
+    focusFirstInvalidField();
+    return;
+  }
+
   loading.value = true;
+
   try {
-    await store.doLogin(username.value, password.value);
-    // Role is validated server-side; no localStorage storage needed
-  } catch (err) {
-    console.error('[fyom] login failed:', err);
-    error.value = err instanceof Error ? err.message : 'Login failed';
+    await store.doLogin(username.value.trim(), password.value);
+
+    await router.replace(getRedirectPath());
+  } catch (unknownError) {
+    error.value = getLoginErrorMessage(unknownError);
+    password.value = '';
+    showPassword.value = false;
+
+    await nextTick();
+    usernameInput.value?.focus();
   } finally {
     loading.value = false;
   }
+}
+
+function validateForm() {
+  let valid = true;
+
+  if (!username.value.trim()) {
+    fieldErrors.username = 'Username is required.';
+    valid = false;
+  }
+
+  if (!password.value) {
+    fieldErrors.password = 'Password is required.';
+    valid = false;
+  }
+
+  return valid;
+}
+
+function clearFieldError(field: LoginField) {
+  fieldErrors[field] = '';
+
+  if (error.value) {
+    error.value = '';
+  }
+}
+
+function clearAllFieldErrors() {
+  fieldErrors.username = '';
+  fieldErrors.password = '';
+}
+
+function focusFirstInvalidField() {
+  if (fieldErrors.username) {
+    usernameInput.value?.focus();
+  }
+}
+
+function getRedirectPath() {
+  const redirect = route.query.redirect;
+
+  if (typeof redirect !== 'string' || !redirect.startsWith('/')) {
+    return '/';
+  }
+
+  // Prevent protocol-relative redirects like //example.com
+  if (redirect.startsWith('//')) {
+    return '/';
+  }
+
+  return redirect;
+}
+
+function getLoginErrorMessage(unknownError: unknown) {
+  if (unknownError instanceof Error && unknownError.message) {
+    const message = unknownError.message.trim();
+
+    if (isSafeLoginMessage(message)) {
+      return message;
+    }
+  }
+
+  return 'Unable to sign in. Please check your username and password.';
+}
+
+function isSafeLoginMessage(message: string) {
+  const normalized = message.toLowerCase();
+
+  const unsafeFragments = [
+    'sql',
+    'stack',
+    'trace',
+    'exception',
+    'internal server',
+    'jwt',
+    'token',
+    'undefined',
+    'null',
+  ];
+
+  return !unsafeFragments.some((fragment) => normalized.includes(fragment));
 }
 </script>
 
 <style scoped>
 .login-page {
   min-height: 100vh;
-  background: #0f0f1a;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 24px;
+  color: #e0e0e0;
+  background:
+    radial-gradient(circle at top left, rgb(108 99 255 / 18%), transparent 34rem),
+    radial-gradient(circle at bottom right, rgb(33 150 243 / 10%), transparent 28rem), #0f0f1a;
 }
 
-.setup-card {
-  background: #1a1a2e;
-  padding: 40px;
-  border-radius: 12px;
+.login-card {
   width: 100%;
   max-width: 420px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  box-sizing: border-box;
+  padding: 40px;
+  background: rgb(26 26 46 / 94%);
+  border: 1px solid rgb(255 255 255 / 6%);
+  border-radius: 16px;
+  box-shadow:
+    0 24px 70px rgb(0 0 0 / 42%),
+    inset 0 1px 0 rgb(255 255 255 / 4%);
+  backdrop-filter: blur(14px);
+}
+
+.brand-link {
+  display: block;
+  width: fit-content;
+  margin: 0 auto 10px;
+  text-decoration: none;
 }
 
 .logo {
-  font-size: 28px;
-  font-weight: 800;
   color: #6c63ff;
+  font-size: 30px;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+  line-height: 1;
   text-align: center;
-  margin-bottom: 8px;
+}
+
+.login-header {
+  margin-bottom: 32px;
+  text-align: center;
 }
 
 .title {
-  font-size: 22px;
-  color: #e0e0e0;
-  text-align: center;
-  margin: 0 0 4px;
+  margin: 0 0 6px;
+  color: #f3f3ff;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.2;
 }
 
 .subtitle {
+  margin: 0;
+  color: #777799;
   font-size: 14px;
-  color: #666688;
-  text-align: center;
-  margin: 0 0 32px;
+  line-height: 1.5;
+}
+
+.login-form {
+  width: 100%;
+}
+
+.field {
+  margin-bottom: 16px;
 }
 
 .field label {
   display: block;
-  color: #8888aa;
+  margin-bottom: 7px;
+  color: #aaaacc;
   font-size: 13px;
-  margin-bottom: 6px;
+  font-weight: 600;
 }
 
-.field input {
+.input {
   width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
   padding: 10px 12px;
+  color: #f0f0ff;
   background: #0f0f1a;
   border: 1px solid #2a2a3e;
-  border-radius: 6px;
-  color: #e0e0e0;
-  font-size: 14px;
+  border-radius: 8px;
   outline: none;
-  box-sizing: border-box;
+  font-size: 14px;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background-color 0.15s ease;
 }
 
-.field input:focus {
+.input:hover:not(:disabled) {
+  border-color: #3a3a5e;
+}
+
+.input:focus {
   border-color: #6c63ff;
+  box-shadow: 0 0 0 3px rgb(108 99 255 / 16%);
 }
 
-.field + .field {
-  margin-top: 16px;
+.input:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
 }
 
-.error {
-  color: #ff6b6b;
+.input.invalid {
+  border-color: #ff6b6b;
+}
+
+.input.invalid:focus {
+  box-shadow: 0 0 0 3px rgb(255 107 107 / 14%);
+}
+
+.password-wrap {
+  position: relative;
+}
+
+.password-input {
+  padding-right: 72px;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  min-width: 52px;
+  padding: 5px 8px;
+  color: #aaaacc;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transform: translateY(-50%);
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.password-toggle:hover:not(:disabled) {
+  color: #fff;
+  background: rgb(255 255 255 / 6%);
+}
+
+.password-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.field-error {
+  margin: 6px 0 0;
+  color: #ff8f8f;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.error-banner {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  color: #ffb3b3;
+  background: #2a1a1a;
+  border: 1px solid #5a2a2a;
+  border-radius: 8px;
   font-size: 13px;
-  margin-top: 12px;
+  line-height: 1.45;
 }
 
 .submit-btn {
   width: 100%;
-  padding: 12px;
-  background: #6c63ff;
-  color: #fff;
-  border: none;
-  border-radius: 8px;
-  font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
+  min-height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   margin-top: 20px;
+  padding: 12px 16px;
+  color: #fff;
+  background: #6c63ff;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 800;
+  transition:
+    background-color 0.15s ease,
+    transform 0.15s ease,
+    opacity 0.15s ease;
 }
 
 .submit-btn:hover:not(:disabled) {
   background: #5a52e0;
 }
 
+.submit-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
 .submit-btn:disabled {
-  opacity: 0.6;
   cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.spinner {
+  width: 15px;
+  height: 15px;
+  box-sizing: border-box;
+  border: 2px solid rgb(255 255 255 / 35%);
+  border-top-color: #fff;
+  border-radius: 999px;
+  animation: spin 0.75s linear infinite;
 }
 
 .bottom-link {
-  text-align: center;
-  margin-top: 20px;
-  color: #666688;
+  margin: 22px 0 0;
+  color: #777799;
   font-size: 14px;
+  line-height: 1.5;
+  text-align: center;
 }
 
 .bottom-link a {
-  color: #6c63ff;
+  color: #8f89ff;
+  font-weight: 700;
   text-decoration: none;
+}
+
+.bottom-link a:hover {
+  color: #b4b0ff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 520px) {
+  .login-page {
+    align-items: stretch;
+    padding: 16px;
+  }
+
+  .login-card {
+    max-width: none;
+    margin: auto 0;
+    padding: 28px 22px;
+    border-radius: 14px;
+  }
+
+  .title {
+    font-size: 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .input,
+  .password-toggle,
+  .submit-btn,
+  .bottom-link a {
+    transition: none;
+  }
+
+  .spinner {
+    animation: none;
+  }
 }
 </style>
