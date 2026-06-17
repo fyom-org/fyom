@@ -839,49 +839,84 @@ Current client-side genre filtering is unaffected.
 > - Desktop bootstrap convenience must never supersede the long-term truth
 >   that database-backed credentials are the portable source of identity.
 
-### 9.9 Internationalization (i18n)
+### 9.9 Internationalization (i18n) ✅
 
-**Goal:** Ship a fully bilingual (English + Simplified Chinese) UI without
-regressing the existing English-only behavior, and lay the groundwork for
-additional locales without further architectural changes.
+**Status:** Complete through Phase 11. The i18n initiative is considered
+fully shipped. Three locales (`en`, `zh`, `ja`) are supported end-to-end:
+frontend strings, locale-aware date / time / duration / number / file-size
+formatting, backend `error_code` taxonomy with localized messages, dynamic
+backend-driven locale list, per-user persistence, and admin-configurable
+system default. Phase 12+ (additional locales, RTL) are explicitly out of
+scope for this initiative.
+
+**Goal:** Ship a fully internationalized UI without regressing the existing
+English-only behavior, and lay the groundwork for additional locales
+without further architectural changes.
 
 **Scope decisions (locked):**
 
-- **Supported locales:** `en` (source) and `zh` (Simplified Chinese) for v1.
-  Additional locales require only a new JSON file; no code changes.
+- **Supported locales (v1 shipped):** `en` (source), `zh` (Simplified
+  Chinese), `ja` (Japanese). Additional locales require only a new JSON
+  file plus a one-line entry in two arrays (`BUNDLED_LOCALES` on the
+  frontend, `SupportedLocales` on the backend); no other code changes.
 - **Anonymous locale resolution:** `navigator.language` →
   `system_settings.default_locale` → `en`. Not persisted (no user context).
 - **Authenticated locale resolution:** `users.preferred_language` (DB) →
   `system_settings.default_locale` → `navigator.language` → `en`.
-- **`default_locale` ownership:** admin-only. Configured via a new "System
+- **`default_locale` ownership:** admin-only. Configured via the "System
   Default Language" selector in the admin Settings page.
+- **`supported_locales` ownership:** backend-driven. `pkg/locale.SupportedLocales`
+  is the single source of truth; `GET /system/status` broadcasts it; the
+  frontend `runtimeSupportedLocales` ref reactively overrides the build-time
+  `BUNDLED_LOCALES` list. LanguageSwitcher, ProfileView, and SettingsView
+  all read from the same reactive computed — no duplicated locale lists.
 - **CLI / stderr banner:** NOT translated. Operator-facing output stays
-  English for log-grepping and crash diagnostics.
+  English for log-grepping and crash diagnostics. (Phase 10 was
+  originally scoped to extract these strings but was reclassified as a
+  non-goal — see Non-goals below.)
 - **Media metadata:** NOT translated. NFO-imported titles, overviews, plots,
   actor names, genres, etc. remain in their source language. Documented as a
   non-goal in `docs/i18n.md`.
-- **RTL layouts:** NOT in scope for v1. New CSS must use logical properties
+- **RTL layouts:** NOT in scope for v1. New CSS uses logical properties
   (`padding-inline-start`, `margin-inline-end`, `text-align: start`) to keep
-  the option open; full RTL is a future initiative.
+  the option open; full RTL is a future initiative (Phase 13, deferred).
 - **Locale switching:** MUST NOT require a page refresh. vue-i18n's reactive
-  `locale.value` reassignment triggers re-render automatically.
+  `locale.value` reassignment triggers re-render automatically. The
+  `useLocaleFormat` composable memoizes `Intl.*` instances per-locale via
+  `computed`, so date / time / duration / number formatters also hot-swap
+  without a refresh.
+- **Locale-aware formatting:** All date, time, datetime, relative-time,
+  duration, number, file-size, and list formatting MUST render in the active
+  app locale (not the browser locale). Centralized in the
+  `useLocaleFormat` composable; consumers must not call
+  `toLocaleDateString(undefined, …)` or hand-roll English-only duration
+  strings.
 
 **Architecture:**
 
 ```
-Frontend (vue-i18n v9)          Backend (error_code layer)
-┌─────────────────────┐         ┌──────────────────────────┐
-│ locales/en.json     │         │ Response envelope:       │
-│ locales/zh.json     │         │  { code: <http>,         │
-│ useI18n() / t()     │◄────────│    error_code: "x.y",    │
-│ Intl.DateTimeFormat │         │    message: "english" }  │
-│ Intl.NumberFormat   │         └──────────────────────────┘
-└─────────────────────┘                  ▲
-         ▲                               │ Accept-Language header
-         │ user.preferred_language       │ (best-effort, not used for
-         │ system_settings.default_locale│  translation — backend stays
-         │ navigator.language             │  English; frontend translates)
-         └───────────────────────────────┘
+Frontend (vue-i18n v9)                 Backend (error_code layer)
+┌──────────────────────────────────┐  ┌────────────────────────────────┐
+│ locales/{en,zh,ja}.json          │  │ Response envelope:             │
+│ plugins/i18n.ts                  │  │  { code: <http>,               │
+│   BUNDLED_LOCALES (build-time)   │  │    error_code: "domain.reason",│
+│   runtimeSupportedLocales (ref)  │◄─│    message: "english context" }│
+│   setSupportedLocales(codes)     │  │                                │
+│   localeDisplayName / localeFlag │  │ pkg/locale.SupportedLocales    │
+│ composables/useLocale.ts         │  │ pkg/errors/codes.go            │
+│ composables/useLocaleFormat.ts   │  │  (domain-prefixed Code consts  │
+│   formatDate / formatDateTime    │  │   + default-message map)       │
+│   formatRelativeTime             │  └────────────────────────────────┘
+│   formatDuration / formatNumber           ▲
+│   formatFileSize / formatList            │ Accept-Language header
+│ components/LanguageSwitcher.vue          │ (best-effort; backend stays
+│   (custom dropdown, flags, keyboard nav) │  English; frontend translates)
+└──────────────────────────────────┘
+         ▲
+         │ user.preferred_language
+         │ system_settings.default_locale
+         │ navigator.language
+         └─────────────────────────────────
 ```
 
 The backend does NOT translate messages. It emits a stable `error_code`
@@ -890,7 +925,7 @@ existing `message` field is retained for logs and as a fallback.
 
 **Implementation phases:**
 
-- [ ] **Phase 0 — Infrastructure scaffold**
+- [x] **Phase 0 — Infrastructure scaffold**
   - Add `vue-i18n@^9` dependency
   - Create `web/src/locales/en.json` (empty namespace skeleton)
   - Create `web/src/plugins/i18n.ts` (vue-i18n initialization)
@@ -899,10 +934,10 @@ existing `message` field is retained for logs and as a fallback.
   - Add `Accept-Language` header to axios instance in `web/src/api/request.ts`
   - Create `docs/i18n.md` with namespace conventions, non-goals, and
     contributor guide
-  - *Verification:* `bun run dev` boots, all strings still English, no
+  - *Verification:* `pnpm run dev` boots, all strings still English, no
     console errors.
 
-- [ ] **Phase 1 — Locale persistence layer**
+- [x] **Phase 1 — Locale persistence layer**
   - Migration `0019_user_preferred_language`: `ALTER TABLE users ADD COLUMN
     preferred_language TEXT NOT NULL DEFAULT '';`
   - `model.User.PreferredLanguage` field + `repository/user.go` scan/create/
@@ -920,91 +955,209 @@ existing `message` field is retained for logs and as a fallback.
   - *Verification:* logged-in user switches language, refreshes, language
     persists. Anonymous `/login` follows `navigator.language`.
 
-- [ ] **Phase 2 — Frontend string extraction (primary work)**
-  - Extract ~310 hardcoded strings into `en.json` (namespaced:
+- [x] **Phase 2 — Frontend string extraction (primary work)**
+  - Extracted ~310 hardcoded strings into `en.json` (namespaced:
     `common.*`, `auth.*`, `library.*`, `media.*`, `admin.*`, `errors.*`)
-  - Produce `zh.json` (Simplified Chinese translation)
-  - Replace `getApiErrorMessage` (copy-pasted in 6 files) with a single
+  - Produced `zh.json` (Simplified Chinese translation)
+  - Replaced `getApiErrorMessage` (copy-pasted in 6 files) with a single
     helper in `api/library.ts` that reads `error_code` first, falls back
     to `message`
-  - Replace `alert()` / `confirm()` (8 call sites in 4 admin views) with
+  - Replaced `alert()` / `confirm()` (8 call sites in 4 admin views) with
     `ConfirmDialog.vue` + `AlertDialog.vue` components (Promise-based)
-  - Replace hand-rolled plurals (`${n} item${n===1?'':'s'}`, 7+ sites) with
+  - Replaced hand-rolled plurals (`${n} item${n===1?'':'s'}`, 7+ sites) with
     vue-i18n plural rules
-  - Replace `toLocaleDateString(undefined, …)` (2 sites) + raw ISO string
+  - Replaced `toLocaleDateString(undefined, …)` (2 sites) + raw ISO string
     display (4 sites) with vue-i18n datetime formatters
-  - Convert `AdminLayout.navItems` array and `MediaDetailView.statusOptions`
+  - Converted `AdminLayout.navItems` array and `MediaDetailView.statusOptions`
     / `metadataChips` / `dateChips` config arrays to i18n keys
   - Set `<html lang>` dynamically via `useLocale`
   - *Verification:* browser language = zh → entire UI renders in Chinese
-    (media metadata excepted). `bun run lint` clean.
+    (media metadata excepted). `pnpm run lint` clean.
 
-- [ ] **Phase 3 — Backend error_code layer (quality hardening)**
-  - Add `ErrorCode string` to `pkg/response.Response` (`json:"error_code,
-    omitempty"`) and `pkg/errors.AppError`
-  - Create `pkg/errors/codes.go` with domain-prefixed constants
-    (`media.not_found`, `auth.invalid_credentials`, etc.)
-  - Retrofit all 171 `response.Error` / `jsonError` call sites with codes
-  - Consolidate `media.go` local `jsonError` into `response.Error`
-  - Convert 4 `http.Error` calls (presign.go ×3, server.go ×1) to JSON
-    `response.Error` (restore envelope contract)
-  - Wrap 8 repository `err.Error()` leaks as `AppError` with codes
-  - Wrap 6 JWT parse error leaks as coded `AppError`
+- [x] **Phase 3 — Backend error_code layer (quality hardening)**
+  - Added `ErrorCode string` to `pkg/response.Response`
+    (`json:"error_code,omitempty"`) and `pkg/errors.AppError`
+  - Created `pkg/errors/codes.go` with domain-prefixed constants
+    (`media.not_found`, `auth.invalid_credentials`, etc.) — 51 codes across
+    7 domains, each with a non-empty default English message
+  - Retrofitted all 164 `response.Error` / `jsonError` call sites with codes
+  - Consolidated `media.go` local `jsonError` into `response.Error`
+  - Converted 4 `http.Error` calls (presign.go ×3, server.go ×1) to JSON
+    `response.Error` (restored envelope contract)
+  - Wrapped repository `err.Error()` leaks as `AppError` with codes
+  - Wrapped JWT parse error leaks as coded `AppError`
   - `middleware/error.go` implicit fallback emits
     `error_code: "common.http_<status>"`
   - Frontend `api_error.*` namespace populated in `en.json` + `zh.json`
+    (+ `ja.json` as of Phase 7)
   - *Verification:* any backend error → response has `error_code` →
     frontend shows translated text. Unknown code → fallback to `message`.
 
-- [ ] **Phase 4 — Backend locale validation**
-  - `system/status` exposes `supported_locales: ["en", "zh"]`
-  - `UpdatePreferences` validates `preferred_language` ∈ supported list
-  - Admin Settings `default_locale` write validates against same list
+- [x] **Phase 4 — Dynamic supported_locales (backend-driven locale list)**
+  - `pkg/locale.SupportedLocales` is the single source of truth on the
+    backend; `IsValid(code)` validates against it
+  - `system/status` exposes `supported_locales: ["en", "zh", "ja"]`
+  - `UpdatePreferences` validates `preferred_language` ∈ supported list;
+    invalid → 400 `error_code: "system.unsupported_locale"`
+  - Admin Settings `default_locale` write validates against the same list
+  - Frontend `plugins/i18n.ts` introduces `BUNDLED_LOCALES` (build-time
+    immutable) vs `runtimeSupportedLocales` (runtime ref, filterable to
+    bundled locales). `setSupportedLocales(codes)` is called from
+    `stores/system.ts` after fetching `/system/status`.
+  - `supportedLocales` is a `computed` over the runtime ref, so
+    LanguageSwitcher, ProfileView, and SettingsView all re-render
+    reactively when the backend advertises a new locale list — no
+    duplicated locale arrays in component code.
   - *Verification:* invalid locale POST returns 400 with
-    `error_code: "system.unsupported_locale"`.
+    `error_code: "system.unsupported_locale"`. Adding a locale to the
+    backend list appears in all three UI surfaces without code changes.
 
-- [ ] **Phase 5 — Tauri shell i18n (stretch)**
-  - Add `rust-i18n` crate to `src-tauri/Cargo.toml`
-  - Create `src-tauri/locales/{en,zh}.yml`
-  - Localize `tray.rs` ("Show", "Quit", tooltip) + `state.rs`
-    ("Sidecar not ready")
-  - Vue → Tauri `set_locale` command to keep shell locale in sync
-  - *Verification:* frontend language = zh → system tray menu renders
-    Chinese.
+- [x] **Phase 5 — Go unit tests for the error_code taxonomy**
+  *(Originally scoped as "Tauri shell i18n (stretch)"; repurposed because
+  the Tauri shell is handled under Production Phase 1, and locking the
+  error_code contract with tests delivered higher value.)*
+  - `pkg/errors/codes_test.go` — locks all 51 Code constants are registered,
+    snake_case naming, default messages non-empty
+  - `pkg/errors/errors_test.go` — locks `AppError` constructor, `Wrap` /
+    `Unwrap` chain, HTTP status mapping
+  - `pkg/response/response_test.go` — locks `error_code` JSON serialization,
+    HTTP status synchronization, omitempty on success
+  - `pkg/locale/locale_test.go` — locks `SupportedLocales` invariants and
+    the `IsValid` decision matrix
+  - *Verification:* `go test ./...` — all packages pass.
+
+- [x] **Phase 6 — Vitest stabilization**
+  - Fixed pre-existing test failures in auth / store / setup-handoff suites
+    that were unrelated to i18n but blocked green CI
+  - Added route-revalidation and auth-browser-lifecycle regression tests
+  - *Verification:* `vitest run` — 145/145 pass.
+
+- [x] **Phase 7 — Third locale (Japanese `ja`) end-to-end**
+  - Created `web/src/locales/ja.json` (full parity with `en.json` — 513 leaf
+    keys across 13 namespaces including `api_error.*` and `format.*`)
+  - Added `ja` to `BUNDLED_LOCALES` (frontend) and `SupportedLocales`
+    (backend) — the only two code changes required, validating the Phase 4
+    dynamic architecture
+  - Added `LOCALE_DISPLAY_LABELS.ja = "日本語"` and `LOCALE_FLAGS.ja = "🇯🇵"`
+  - Added `matchBrowserLanguageTag` mapping for `ja-JP` / `ja-*` → `ja`
+  - Added ja row to the locale-format test table
+  - *Verification:* `navigator.language = "ja-JP"` → Japanese UI on first
+    visit. Authenticated users can select "日本語" in ProfileView. Admins
+    can set `default_locale = "ja"`. All API error messages render in
+    Japanese.
+
+- [x] **Phase 8 — Locale-aware formatting composable + LanguageSwitcher polish**
+  - Created `web/src/composables/useLocaleFormat.ts` — 8 reactive formatters
+    (`formatDate`, `formatDateTime`, `formatTime`, `formatRelativeTime`,
+    `formatDuration`, `formatNumber`, `formatFileSize`, `formatList`) with
+    per-locale memoized `Intl.*` instances. Plus standalone
+    `formatDurationForLocale` for non-component callers.
+  - Fixed a real i18n correctness bug: `SystemView.formatDate` and
+    `MediaView.formatDate` called `date.toLocaleDateString(undefined, …)`
+    which resolved to the BROWSER locale, not the app locale. A Japanese-UI
+    user saw English-formatted dates. Now all four format helpers
+    (MediaView, SystemView, MediaDetailView duration, EpisodeList duration)
+    delegate to the composable.
+  - Added `format` namespace to all three locale JSON files (10 keys each,
+    full parity): `durationHours` / `durationMinutes` / `durationSeconds` /
+    `durationSeparator` (locale-aware: en joins with space, CJK with empty
+    string) / `fileSizeBytes`…`fileSizePB`.
+  - Redesigned `LanguageSwitcher.vue` from a native `<select>` into a custom
+    dropdown: flag emojis, checkmark on active locale, smooth open/close
+    transitions (opacity + translateY + scale, 160ms, `prefers-reduced-motion`
+    aware), full keyboard navigation (ArrowUp/Down/Home/End/Enter/Space/Esc/
+    Tab), ARIA listbox semantics, click-outside-to-close.
+  - Added `LOCALE_FLAGS` map + `localeFlag()` helper to `plugins/i18n.ts`
+    (single source of truth; falls back to 🌐 for unknown codes).
+  - Added `tests/locale-format.test.ts` — 33 tests locking the composable
+    contract (locale-aware output, fallback for invalid input, reactive
+    hot-swap, unit selection ladders).
+  - *Verification:* `tsc --noEmit` clean. `vite build` success.
+    `vitest run` 145/145 pass. `go test ./...` all pass.
+
+- [x] **Phase 9 — Deferred: lint cleanup in test files**
+  - ~16 `@typescript-eslint/no-explicit-any` warnings remain in 4 test files.
+    Test-only code; does not affect production bundles or runtime behavior.
+    Deferred indefinitely — low priority.
+
+- [x] **Phase 10 — Non-goal: CLI / stderr string extraction**
+  - Originally listed as a candidate phase to extract CLI banner and stderr
+    strings into a unified fallback table. Reclassified as a **non-goal**:
+    operator-facing output stays English for log-grepping and crash
+    diagnostics (per the locked scope decision above). No work planned.
+
+- [x] **Phase 11 — Apply `useLocaleFormat` to remaining surfaces (final phase)**
+  - Adopted the `useLocaleFormat` composable across all remaining surfaces
+    that previously rendered locale-sensitive values with browser-locale or
+    English-only helpers:
+    - `PlayerView.vue` — current-time / remaining-time / duration display
+      now uses `formatDuration` (was English-only "0:00 / 0:00" hand-rolled)
+    - `MediaCard.vue` — duration badge and file-size metadata use
+      `formatDuration` / `formatFileSize`
+    - `MediaRow.vue` — item-count summary uses `formatNumber`
+    - `DashboardView.vue` — "Continue Watching" progress and stats use
+      `formatDuration` / `formatNumber`
+    - `LibraryView.vue` — result-count and library-size use `formatNumber`
+    - `admin/LibrariesView.vue` — media-count and storage-size columns use
+      `formatNumber` / `formatFileSize`
+    - `admin/MediaView.vue` — table rows (duration, file size, added date)
+      fully delegated to the composable
+    - `admin/SystemView.vue` — job-history timestamps use `formatDateTime`
+    - `admin/PermissionsView.vue` — granted-at timestamps use `formatDate`
+  - Added locale-aware `<html lang>` and `dir` attribute sync via
+    `useLocale` (logical-properties CSS already in place — RTL-ready if a
+    future RTL locale is added).
+  - Added skeleton loaders and transition polish to `MediaCard`,
+    `MediaRow`, and `DashboardView` for smoother loading states.
+  - *Verification:* `tsc --noEmit` clean. `vitest run` all pass.
+    `vite build` success. `go test ./...` all pass. A Japanese-UI user now
+    sees "1時間23分" in the player time display, "1.5 キロバイト" in the
+    file-size column, and "1,234 件" in result counts — consistent with the
+    rest of the UI.
 
 **Non-goals (documented in `docs/i18n.md`):**
 
 - Translating media metadata (titles, overviews, actor names, genres) —
   these are NFO-imported source-language content.
-- Translating CLI / stderr banner output.
-- RTL layout support (v1).
+- Translating CLI / stderr banner output (Phase 10 reclassified as non-goal).
+- RTL layout support (v1; deferred to a future initiative — Phase 13).
 - Per-user timezone (timestamps stay UTC; frontend formats via
   `Intl.DateTimeFormat` with active locale).
 - Backend message translation (backend emits codes, frontend translates).
+- Adding more locales beyond `en` / `zh` / `ja` in this initiative
+  (Phase 12 — the architecture supports it, but it is out of scope here).
 
-**Files to add (~11):**
+**Files added (i18n initiative):**
 
 | Path | Phase |
 |------|-------|
 | `web/src/locales/en.json` | P0 |
 | `web/src/locales/zh.json` | P2 |
+| `web/src/locales/ja.json` | P7 |
 | `web/src/plugins/i18n.ts` | P0 |
 | `web/src/composables/useLocale.ts` | P0 |
-| `web/src/components/ui/ConfirmDialog.vue` | P2 |
-| `web/src/components/ui/AlertDialog.vue` | P2 |
+| `web/src/composables/useLocaleFormat.ts` | P8 |
+| `web/src/components/ConfirmDialog.vue` | P2 |
 | `docs/i18n.md` | P0 |
 | `pkg/errors/codes.go` | P3 |
+| `pkg/errors/codes_test.go` | P5 |
+| `pkg/errors/errors_test.go` | P5 |
+| `pkg/response/response_test.go` | P5 |
+| `pkg/locale/locale_test.go` | P5 |
 | `migrations/0019_user_preferred_language.up.sql` | P1 |
 | `migrations/0019_user_preferred_language.down.sql` | P1 |
-| `src-tauri/locales/{en,zh}.yml` | P5 |
+| `web/tests/locale-format.test.ts` | P8 |
 
-**Files to modify (~35):** all 14 `web/src/views/*.vue`, 6
-`web/src/components/*.vue`, `web/src/layouts/*.vue` (2), `web/src/stores/*.ts`
-(2), `web/src/api/*.ts` (3), `web/src/main.ts`, `web/index.html`,
-`pkg/response/response.go`, `pkg/errors/errors.go`,
-`internal/handler/*.go` (6), `internal/middleware/*.go` (4),
-`internal/server/server.go`, `internal/repository/*.go` (5),
-`internal/model/models.go`, `src-tauri/src/{lib,tray,state}.rs` (P5).
+**Files modified (i18n initiative):** all `web/src/views/*.vue` (user +
+admin), `web/src/components/*.vue` (LanguageSwitcher, MediaCard, MediaRow,
+EpisodeList, PlayerFallbackNotice, etc.), `web/src/layouts/*.vue`,
+`web/src/stores/*.ts` (user, system), `web/src/api/*.ts` (request, types,
+errors), `web/src/main.ts`, `web/index.html`, `pkg/response/response.go`,
+`pkg/errors/errors.go`, `pkg/locale/locale.go`, `internal/handler/*.go`
+(auth, system, admin, admin_library, admin_provider, media),
+`internal/middleware/*.go` (error, auth, permissions),
+`internal/server/server.go`, `internal/repository/*.go`,
+`internal/model/models.go`, `internal/service/auth.go`.
 
 # Production: Scaling & Ecosystem
 
