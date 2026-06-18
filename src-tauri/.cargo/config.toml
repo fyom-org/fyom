@@ -1,0 +1,14 @@
+# Cargo configuration for fyom's Tauri shell.
+#
+# Points the `libmpv2` crate's build script at the pre-built libmpv dylib + headers
+# installed by `scripts/setup_runtime_libs.*` into `src-tauri/libs/mpv/`. This is the
+# production path (the fork-mpv tarball, not a system pkg-config install).
+#
+# For local dev without the fork tarball, either:
+#   1. run `node scripts/setup_runtime_libs.mjs --platform <p>` to fetch it, OR
+#   2. set `MPV_SOURCE=/path/to/mpv-source` and enable libmpv2's `build_libmpv` feature
+#      to build libmpv from source, OR
+#   3. install libmpv system-wide (e.g. `apt install libmpv-dev`) and remove this override
+#      so libmpv2 falls back to pkg-config.
+[env]
+MPV_LIB_DIR = { value = "libs/mpv", relative = true }
