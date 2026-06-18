@@ -2,6 +2,7 @@
 
 mod commands;
 mod mpv;
+mod platform;
 mod sidecar;
 mod state;
 mod tray;
@@ -140,6 +141,10 @@ pub fn run() {
             commands::playback::set_subtitle_track,
             commands::playback::mpv_keypress,
             commands::playback::mpv_command,
+            // Phase 2.3 render surface commands (transparent overlay + GL context attach).
+            commands::playback::attach_render_surface,
+            commands::playback::set_video_mode,
+            commands::playback::resize_render_surface,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -163,11 +168,15 @@ pub fn run() {
                 }
             }
             tauri::RunEvent::Exit => {
-                // Phase 2.2: shut down the mpv event-pump thread before exit so it
-                // doesn't outlive the libmpv instance (the thread holds an `Arc<Mpv>`;
-                // joining here guarantees a clean teardown).
+                // Phase 2.3: shut down the render thread FIRST (so the RenderContext is
+                // destroyed before the mpv instance — mpv_render_context_free must run
+                // while the mpv instance is alive).
                 if let Some(mpv_state) = app_handle.try_state::<MpvState>() {
                     if let Some(instance) = mpv_state.instance.get() {
+                        instance.shutdown_render_thread();
+                        // Phase 2.2: shut down the mpv event-pump thread before exit so it
+                        // doesn't outlive the libmpv instance (the thread holds an `Arc<Mpv>`;
+                        // joining here guarantees a clean teardown).
                         instance.shutdown_event_loop();
                     }
                 }

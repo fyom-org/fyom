@@ -1,5 +1,5 @@
 <template>
-  <main class="player-view">
+  <main class="player-view" :class="{ 'video-mode': isVideoModeActive }">
     <PlayerFallbackNotice
       v-if="showFallbackBanner"
       :message="$t('player.nativeUnavailable')"
@@ -46,6 +46,10 @@
       </video>
 
       <div v-else-if="isNativeReady" class="native-surface">
+        <!-- Phase 2.3: the mpv GL layer renders behind this transparent webview root.
+             The `.video-mode` class on `.player-view` sets `background: transparent !important`
+             so the native NSOpenGL / WGL / GLX layer (created by `attach_render_surface`)
+             shows through. HTML controls overlay on top with their own opaque backgrounds. -->
         <span class="native-status">{{ $t('player.nativeActive') }}</span>
         <span class="native-subtitle"> {{ $t('player.nativeRunning') }} </span>
       </div>
@@ -64,8 +68,11 @@ import { useI18n } from 'vue-i18n';
 import { getApiErrorMessage, getHttpStatus, getMediaDetail, type MediaItem } from '@/api/library';
 import { authRequest } from '@/api/request';
 import {
+  attachRenderSurface,
   createInitialNativePlayerState,
   isNativePlaybackRuntimeAvailable,
+  resizeRenderSurface,
+  setVideoMode,
   tryInitializeNativePlayer,
   type NativePlayerState,
 } from '@/lib/player/native-player';
@@ -149,7 +156,37 @@ const showBrowserPlayer = computed(() => {
   return false;
 });
 
+/**
+ * Phase 2.3: when the native player is ready + a stream URL is loaded, activate
+ * `.video-mode` (transparent webview root) so the mpv GL layer shows through.
+ *
+ * Deactivates when:
+ * - The native player is not ready (init failed / unavailable / idle).
+ * - An error is showing (the error overlay should be opaque for readability).
+ * - The browser `<video>` fallback is active (no GL layer to show).
+ */
+const isVideoModeActive = computed(() => {
+  if (error.value) return false;
+  if (!isNativeReady.value) return false;
+  if (showBrowserPlayer.value) return false;
+  if (!streamUrl.value) return false;
+  return true;
+});
+
+// Phase 2.3: tracks whether `attach_render_surface` has been called (idempotent guard
+// so we don't re-attach on every `mediaId` watch).
+const renderSurfaceAttached = ref(false);
+
+// Phase 2.3: window resize listener (notifies backend to update the GL drawable).
+const handleWindowResize = (): void => {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const dpr = window.devicePixelRatio || 1;
+  void resizeRenderSurface(w, h, dpr);
+};
+
 onMounted(() => {
+  window.addEventListener('resize', handleWindowResize, { passive: true });
   void reloadCurrentMedia();
 });
 
@@ -163,8 +200,18 @@ watch(
   }
 );
 
+// Phase 2.3: when `.video-mode` toggles, notify the backend (informational — the CSS is
+// the actual mechanism; the backend logs the transition).
+watch(isVideoModeActive, (active) => {
+  void setVideoMode(active);
+});
+
 onBeforeUnmount(() => {
   disposed = true;
+  window.removeEventListener('resize', handleWindowResize);
+  // Phase 2.3: ensure `.video-mode` is disabled when leaving the player view (so the
+  // webview root goes back to opaque for the rest of the app).
+  void setVideoMode(false);
   void flushProgressFromVideo(false);
   void teardownCurrentPlayback();
 });
@@ -284,6 +331,27 @@ async function attemptNativeInit(generation: number): Promise<void> {
       failure: null,
       attempted: true,
     };
+
+    // Phase 2.3: native player init succeeded — attach the GL render surface to the main
+    // window + spawn the mpv render thread. On failure, log + fall back to the `<video>`
+    // path (the 9.7 guardrail: native playback is an enhancement, never a regression).
+    if (!renderSurfaceAttached.value) {
+      renderSurfaceAttached.value = true;
+      const surfaceResult = await attachRenderSurface();
+      if (generation !== loadGeneration || disposed) return;
+
+      if (!surfaceResult.ok) {
+        console.warn(
+          '[fyom] render surface attach failed — keeping native audio + black video:',
+          surfaceResult.failure.stage,
+          surfaceResult.failure.message,
+        );
+        // Note: do NOT mark the native player as failed here — `play_media` succeeded, so
+        // mpv is playing audio (with a black video frame). The `<video>` fallback is NOT
+        // triggered; the user gets audio + a status overlay. Phase 2.4 may revisit this
+        // (e.g. show a "video rendering unavailable, audio playing" notice).
+      }
+    }
     return;
   }
 
@@ -455,6 +523,32 @@ function getTauriInvoke(): TauriInvokeApi['invoke'] | null {
   flex-direction: column;
   color: #e0e0e0;
   background: #000;
+}
+
+/**
+ * Phase 2.3: `.video-mode` — when active, the player-view's background goes transparent
+ * so the native mpv GL layer (rendered behind the webview by `attach_render_surface`)
+ * shows through. This is soia's z-order trick, render-backend-agnostic — it worked for
+ * soia's Vulkan layer underneath, and it works identically for fyom's OpenGL layer.
+ *
+ * PORTED_FROM_SOIA `src/styles/app-shell.css::video-mode` (verbatim):
+ *   .video-mode {
+ *       background-color: transparent !important;
+ *       background-image: none !important;
+ *       box-shadow: none !important;
+ *   }
+ *
+ * HTML controls (`.native-surface`, `.fallback-banner`, `.error-state`, etc.) keep their
+ * own opaque backgrounds so they remain readable on top of the video.
+ */
+.player-view.video-mode {
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.player-view.video-mode .player-surface {
+  background-color: transparent !important;
 }
 
 .fallback-banner {

@@ -362,3 +362,112 @@ export async function subscribeMpvEvents(
     }
   };
 }
+
+/* ── Phase 2.3: GL render surface bridge ─────────────────────────────────── */
+
+/**
+ * Phase 2.3: attach the platform GL surface (NSOpenGLContext / WGL / GLX) to the main
+ * Tauri window + spawn the mpv render thread.
+ *
+ * Called by the frontend after `play_media` succeeds (the main window is ready by then).
+ * The backend creates a child GL surface behind the webview + spawns a render thread
+ * that hosts `mpv_render_context_create(OpenGL)` on the platform GL context.
+ *
+ * Returns `{success: boolean, error?: string}` — on failure, the frontend logs the error
+ * + the `<video>` fallback takes over (mpv plays audio with a black frame; the 9.7
+ * guardrail stays green).
+ *
+ * No-op outside the Tauri runtime — safe to call from code that also runs in a plain
+ * browser; the function returns `{success: false, error: 'Native playback runtime is not available'}`.
+ *
+ * PORTED_FROM_SOIA `attach_render_surface` pattern (the transparent-overlay + GL context
+ * attach direction; the closed-source `libsoia_utils` Metal-layer surface is replaced
+ * with fyom's open NSOpenGL / WGL / GLX path).
+ */
+export async function attachRenderSurface(): Promise<NativePlayerInitResult> {
+  if (!isNativePlaybackRuntimeAvailable()) {
+    return {
+      ok: false,
+      failure: {
+        stage: 'bridge',
+        message: 'Native playback runtime is not available',
+      },
+    };
+  }
+
+  try {
+    // @ts-expect-error — __TAURI_INTERNALS__ exists in Tauri runtime
+    const { invoke } = window.__TAURI_INTERNALS__.tauri;
+
+    const result = await invoke('attach_render_surface');
+
+    if (result && result.success) {
+      return { ok: true };
+    }
+
+    return {
+      ok: false,
+      failure: mapNativePlayerInitError(
+        new Error(result?.error || 'Failed to attach render surface'),
+      ),
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      failure: mapNativePlayerInitError(err),
+    };
+  }
+}
+
+/**
+ * Phase 2.3: notify the backend that the webview entered / exited `.video-mode`
+ * (transparent background so the mpv GL layer shows through).
+ *
+ * The CSS class toggle is the actual mechanism — this invoke is informational (the
+ * backend logs the transition). Future Phase 2.5+ work may pause/resume the render
+ * thread here to save CPU when no video is showing.
+ *
+ * No-op outside the Tauri runtime.
+ */
+export async function setVideoMode(enabled: boolean): Promise<void> {
+  if (!isNativePlaybackRuntimeAvailable()) {
+    return;
+  }
+
+  try {
+    // @ts-expect-error — __TAURI_INTERNALS__ exists in Tauri runtime
+    const { invoke } = window.__TAURI_INTERNALS__.tauri;
+    await invoke('set_video_mode', { enabled });
+  } catch {
+    // Informational command — ignore errors (the CSS is the actual mechanism).
+  }
+}
+
+/**
+ * Phase 2.3: notify the backend of a window resize so it can update the GL surface
+ * drawable (e.g. call `NSOpenGLContext::update` on macOS to avoid GL framebuffer
+ * corruption after a window resize).
+ *
+ * **Note**: fyom's `RenderSurface::drawable_size` is polled on every render frame, so
+ * the render loop picks up the new dimensions automatically. This invoke is a hook for
+ * future platform-specific resize logic (Phase 2.4).
+ *
+ * No-op outside the Tauri runtime.
+ */
+export async function resizeRenderSurface(
+  width: number,
+  height: number,
+  scaleFactor: number,
+): Promise<void> {
+  if (!isNativePlaybackRuntimeAvailable()) {
+    return;
+  }
+
+  try {
+    // @ts-expect-error — __TAURI_INTERNALS__ exists in Tauri runtime
+    const { invoke } = window.__TAURI_INTERNALS__.tauri;
+    await invoke('resize_render_surface', { width, height, scaleFactor });
+  } catch {
+    // Best-effort — ignore errors (the render loop polls dimensions anyway).
+  }
+}

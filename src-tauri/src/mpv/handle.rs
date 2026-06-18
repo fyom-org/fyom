@@ -10,9 +10,14 @@
 //! - The event-pump thread is owned by the instance (tsukimi stores it in `RefCell` —
 //!   fyom uses `Mutex<Option<JoinHandle>>` for interior mutability without `RefCell`'s
 //!   runtime borrow checks, since the instance is shared across Tauri command threads).
-//! - The render context is Phase 2.3 (not present here).
+//! - Phase 2.3: the render thread is owned by the instance (`Mutex<Option<RenderThreadState>>`),
+//!   spawned lazily via `spawn_render_thread` (called from the `attach_render_surface`
+//!   Tauri command after the frontend has a window handle) + joined on app exit via
+//!   `shutdown_render_thread` (called before `shutdown_event_loop` so the render context
+//!   is destroyed before the mpv instance). The render context itself is created on the
+//!   render thread (sole GL consumer) — see `mpv/render.rs`.
 //!
-//! See `docs/libmpv-assessment.md` §3.2 + §3.4 for the rationale.
+//! See `docs/libmpv-assessment.md` §3.2 + §3.3 + §3.4 for the rationale.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -21,9 +26,10 @@ use std::thread::JoinHandle;
 
 use libmpv2::{GetData, Mpv, SetData};
 use tauri::AppHandle;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::mpv::event_loop::{self, ACTIVE, SHUTDOWN};
+use crate::mpv::render::{self, RenderSurface, RenderThreadState};
 
 /// Default max volume (matches tsukimi's `MAX_VOLUME`).
 const MAX_VOLUME: i64 = 100;
@@ -51,6 +57,10 @@ pub struct MpvInstance {
     /// The event-pump thread handle (`Some` after `spawn_event_loop`, cleared on
     /// `shutdown_event_loop`).
     event_handle: Mutex<Option<JoinHandle<()>>>,
+    /// Phase 2.3: render-thread state (handle + shutdown signal). `None` if the render
+    /// thread hasn't been spawned (e.g. `attach_render_surface` not yet called by the
+    /// frontend, or platform-surface creation failed).
+    render_state: Mutex<Option<RenderThreadState>>,
 }
 
 impl std::fmt::Debug for MpvInstance {
@@ -119,6 +129,7 @@ impl MpvInstance {
             mpv: Arc::new(mpv),
             event_thread_alive: Arc::new(AtomicU32::new(ACTIVE)),
             event_handle: Mutex::new(None),
+            render_state: Mutex::new(None),
         })
     }
 
@@ -162,6 +173,79 @@ impl MpvInstance {
         if let Some(handle) = guard.take() {
             let _ = handle.join();
             info!("[mpv] event loop thread joined");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2.3: render-thread lifecycle.
+    // -----------------------------------------------------------------------
+
+    /// Spawn the mpv render thread (ports tsukimi's `mpvglarea.rs` pattern, drop the GTK
+    /// `GLArea` shell — fyom owns its own per-platform GL surface).
+    ///
+    /// Takes a `Box<dyn RenderSurface>` (the platform GL surface created by
+    /// `crate::platform::create_platform_surface`). The surface is moved into the render
+    /// thread, which is the sole consumer of the GL context.
+    ///
+    /// Idempotent: a second call is a no-op (the render thread is already running).
+    ///
+    /// # Errors
+    /// Returns `Err` if the OS fails to spawn the thread. `RenderContext::new` failures
+    /// are logged inside the thread + the thread exits cleanly (the 9.7 `<video>` fallback
+    /// stays green; mpv plays audio with a black frame).
+    ///
+    /// Called from the `attach_render_surface` Tauri command (invoked by the frontend
+    /// after `play_media` succeeds).
+    pub fn spawn_render_thread(&self, surface: Box<dyn RenderSurface>) -> Result<(), String> {
+        let mut guard = self
+            .render_state
+            .lock()
+            .map_err(|e| format!("render_state mutex poisoned: {}", e))?;
+        if guard.is_some() {
+            // Already spawned.
+            warn!("[mpv] spawn_render_thread called twice — ignoring (render thread already running)");
+            return Ok(());
+        }
+        let state = RenderThreadState::new();
+        let handle = render::spawn_render_thread(
+            Arc::clone(&self.mpv),
+            surface,
+            state.shutdown.clone(),
+        )?;
+        *state.handle.lock().map_err(|e| format!("render handle mutex poisoned: {}", e))? = Some(handle);
+        *guard = Some(state);
+        info!("[mpv] render thread spawned");
+        Ok(())
+    }
+
+    /// Signal the render thread to shut down + join it. Called on app exit (after
+    /// `shutdown_event_loop` — the render thread must be joined before the event thread
+    /// so mpv's render context is destroyed before the mpv instance).
+    ///
+    /// Idempotent: a second call is a no-op.
+    pub fn shutdown_render_thread(&self) {
+        let mut guard = match self.render_state.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                warn!("[mpv] render_state mutex poisoned during shutdown — skipping render thread join");
+                return;
+            }
+        };
+        let Some(state) = guard.take() else {
+            return;
+        };
+        state.shutdown.store(SHUTDOWN, Ordering::SeqCst);
+        // Wake the render thread so it observes the shutdown signal (otherwise it would
+        // block on `RENDER_UPDATE.rx.recv()` until the next mpv frame, which never comes
+        // after mpv stops).
+        render::wake_render_thread();
+        let mut handle_guard = match state.handle.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        if let Some(handle) = handle_guard.take() {
+            let _ = handle.join();
+            info!("[mpv] render thread joined");
         }
     }
 
@@ -262,8 +346,10 @@ impl Default for MpvInstance {
 // SAFETY: `libmpv2::Mpv` holds a raw `mpv_handle`. mpv's core command/property API is
 // thread-safe (documented in mpv/client.h). `Arc<Mpv>` sharing across threads is the
 // established pattern (tsukimi ships this in production). `Arc<AtomicU32>` + the
-// `Mutex<Option<JoinHandle>>` are `Send + Sync` by construction. The render context +
-// event context have their own thread-affinity rules handled separately (the event
-// thread owns the `EventContext`; the render thread will own the `RenderContext` in 2.3).
+// `Mutex<Option<JoinHandle>>` + `Mutex<Option<RenderThreadState>>` are `Send + Sync` by
+// construction. The render context + event context have their own thread-affinity rules
+// handled separately (the event thread owns the `EventContext`; the render thread owns
+// the `RenderContext` + the platform GL surface — created on the render thread + never
+// shared).
 unsafe impl Send for MpvInstance {}
 unsafe impl Sync for MpvInstance {}

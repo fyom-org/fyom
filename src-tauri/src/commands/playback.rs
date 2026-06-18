@@ -387,6 +387,105 @@ pub async fn play_test_media(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 2.3: render surface commands (attach the platform GL surface to the
+// render thread, toggle the `.video-mode` CSS z-order, resize the surface)
+// ---------------------------------------------------------------------------
+
+/// Attach the platform GL surface to the main Tauri window + spawn the mpv render thread.
+///
+/// Called by the frontend after `play_media` succeeds (the frontend knows the main window
+/// is ready by then). The command:
+/// 1. Gets the main Tauri window.
+/// 2. Creates the platform GL surface (`crate::platform::create_platform_surface`) —
+///    macOS: NSOpenGLContext + NSOpenGLView behind WKWebView; Windows: child HWND + WGL;
+///    Linux: child X11 window + GLX (XWayland fallback for Wayland).
+/// 3. Spawns the mpv render thread (`MpvInstance::spawn_render_thread`) — the thread
+///    creates `libmpv2::render::RenderContext` on the platform GL context + loops
+///    `RENDER_UPDATE.rx.recv()` → `render_ctx.render(fbo, w, h, true)`.
+///
+/// On any failure, returns `{success: false, error}` — the frontend logs the error + the
+/// 9.7 `<video>` fallback takes over (mpv plays audio with a black frame).
+///
+/// Idempotent: a second call is a no-op (the render thread is already running).
+#[tauri::command]
+pub async fn attach_render_surface(
+    mpv_state: State<'_, MpvState>,
+    app_handle: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    use tauri::Manager;
+    let Some(instance) = mpv_state.instance.get() else {
+        return Ok(no_instance_error(&mpv_state));
+    };
+    let instance: &MpvInstance = instance;
+
+    // Get the main Tauri window.
+    let Some(window) = app_handle.get_webview_window(crate::MAIN_WINDOW_LABEL) else {
+        return Ok(err("main window not found"));
+    };
+
+    // Create the platform GL surface. On failure, log + return error (the 9.7 fallback
+    // stays green).
+    let surface = match crate::platform::create_platform_surface(&window) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(
+                "[mpv] platform GL surface creation failed (GL rendering disabled, \
+                 <video> fallback stays green): {}",
+                e
+            );
+            return Ok(err(format!("platform surface creation failed: {}", e)));
+        }
+    };
+
+    // Spawn the render thread. On failure, return error.
+    if let Err(e) = instance.spawn_render_thread(surface) {
+        tracing::warn!("[mpv] spawn_render_thread failed: {}", e);
+        return Ok(err(format!("spawn_render_thread failed: {}", e)));
+    }
+
+    Ok(ok())
+}
+
+/// Notify the backend that the webview entered / exited `.video-mode` (transparent
+/// background so the mpv GL layer shows through).
+///
+/// The frontend toggles the `.video-mode` CSS class on the webview root when a file
+/// loads / unloads. This command is **informational** — the CSS is the actual mechanism
+/// (the backend doesn't need to do anything for the transparency to work, since
+/// `tauri.conf.json` already has `transparent: true`). The command exists so the backend
+/// can log the transition + (Phase 2.5+) pause/resume the render thread to save CPU when
+/// no video is showing.
+#[tauri::command]
+pub async fn set_video_mode(
+    _mpv_state: State<'_, MpvState>,
+    enabled: bool,
+) -> Result<serde_json::Value, String> {
+    tracing::info!("[mpv] video-mode {} (webview root background {})",
+        if enabled { "enabled" } else { "disabled" },
+        if enabled { "transparent — mpv GL layer visible" } else { "opaque — webview covers mpv" });
+    Ok(ok())
+}
+
+/// Resize the render surface's drawable. Called by the frontend on window resize.
+///
+/// **Note**: fyom's `RenderSurface::drawable_size` is polled on every render frame, so
+/// this command is technically a no-op for the render loop (the render thread picks up the
+/// new dimensions on the next frame). It exists as a hook for future platform-specific
+/// resize logic (e.g. calling `NSOpenGLContext::update` on macOS after a window resize
+/// to avoid GL framebuffer corruption — Phase 2.4 will wire this).
+#[tauri::command]
+pub async fn resize_render_surface(
+    _mpv_state: State<'_, MpvState>,
+    _width: u32,
+    _height: u32,
+    _scale_factor: f64,
+) -> Result<serde_json::Value, String> {
+    // Phase 2.4 TODO: call `instance.update_render_surface(w, h, scale)` to trigger
+    // NSOpenGLContext::update / XResizeWindow / SetWindowPos.
+    Ok(ok())
+}
+
 /// Get the sidecar API base URL for the frontend to use.
 /// This allows the frontend to make direct REST calls to the Go backend.
 #[tauri::command]
