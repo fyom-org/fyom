@@ -220,6 +220,7 @@ func registerUserRoutes(
 		r.Get("/api/v1/library/{id}", mediaHandler.Get)
 
 		r.Put("/api/v1/media/{id}/progress", mediaHandler.UpdateProgress)
+		r.Get("/api/v1/media/{id}/progress", mediaHandler.GetProgress)
 		r.Put("/api/v1/media/{id}/status", mediaHandler.SetStatus)
 		r.Get("/api/v1/media/{id}/status", mediaHandler.GetStatus)
 

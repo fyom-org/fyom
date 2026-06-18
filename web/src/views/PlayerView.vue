@@ -40,6 +40,7 @@
         @timeupdate="onTimeUpdate"
         @pause="onPause"
         @ended="onEnded"
+        @loaded-metadata="onLoadedMetadata"
         @error="onVideoError"
       >
         {{ $t('player.browserNotSupported') }}
@@ -88,7 +89,6 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch 
 import { useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { getApiErrorMessage, getHttpStatus, getMediaDetail, type MediaItem } from '@/api/library';
-import { authRequest } from '@/api/request';
 import {
   attachRenderSurface,
   createInitialNativePlayerState,
@@ -113,6 +113,7 @@ import {
 import { useMediaTracks } from '@/composables/useMediaTracks';
 import { usePlaybackAdjustments } from '@/composables/usePlaybackAdjustments';
 import { usePlaybackSpeed } from '@/composables/usePlaybackSpeed';
+import { usePlaybackHistory } from '@/composables/usePlaybackHistory';
 import PlayerControls, { type PlayerControlsState } from '@/components/PlayerControls.vue';
 import PlayerFallbackNotice from '@/components/PlayerFallbackNotice.vue';
 
@@ -150,6 +151,11 @@ const nativeInitAttempted = ref(false);
 const lastReportedPosition = ref(0);
 const progressRequestInFlight = ref(false);
 const pendingProgressPayload = ref<ProgressPayload | null>(null);
+
+// Phase 2.5: resume position fetched from the Go backend before playback starts.
+// Consumed (reset to 0) once the seek lands — in `onFileLoaded` for native mpv,
+// or `onLoadedMetadata` for the HTML5 `<video>` fallback.
+const resumePosition = ref(0);
 
 let loadGeneration = 0;
 let disposed = false;
@@ -238,10 +244,11 @@ const currentChapter = ref(-1);
 const hwdec = ref('');
 const isBuffering = ref(false);
 
-// Composable instances (track management + adjustments + speed).
+// Composable instances (track management + adjustments + speed + history).
 const tracksComposable = useMediaTracks(() => streamUrl.value);
 const adjustmentsComposable = usePlaybackAdjustments();
 const speedComposable = usePlaybackSpeed();
+const historyComposable = usePlaybackHistory();
 
 /**
  * The full playback state rendered by PlayerControls. Computed from the reactive refs
@@ -284,12 +291,21 @@ async function setupMpvEventSubscription(): Promise<void> {
     onTimePos: ({ position, duration: dur }) => {
       currentTime.value = position;
       if (dur > 0) duration.value = dur;
+      // Phase 2.5: 10s-throttled progress report for native playback, replacing
+      // the HTML5 `onTimeUpdate` path when native is active. The finish
+      // threshold (90%) forces an immediate report so the watched status lands.
+      void maybeReportNativeProgress();
     },
     onDuration: ({ duration: dur }) => {
       duration.value = dur;
     },
     onPause: ({ paused }) => {
       isPaused.value = paused;
+      // Phase 2.5: flush progress on pause so the latest position survives a
+      // reload / app quit (the 10s throttle would otherwise drop the tail).
+      if (paused) {
+        void flushProgressFromMpv(false);
+      }
     },
     onVolume: ({ volume: vol }) => {
       volume.value = vol;
@@ -357,12 +373,31 @@ async function setupMpvEventSubscription(): Promise<void> {
       if (path) {
         void tracksComposable.applyExternalSubtitlesForUrl(path);
       }
+      // Phase 2.5: resume from saved position. `resumePosition` is fetched in
+      // `loadMedia` before `play_media` is invoked, so it's available here. The
+      // seek is absolute (mpv `seek <pos> absolute`); mpv accepts it post-
+      // file-loaded. Consumed once so a later re-load of the same file (without
+      // a fresh `loadMedia`) starts from 0.
+      if (resumePosition.value > 0) {
+        const pos = resumePosition.value;
+        resumePosition.value = 0;
+        void bridgeSeek(pos).then((ok) => {
+          if (!ok) return;
+          currentTime.value = pos;
+          lastReportedPosition.value = pos;
+        });
+      }
     },
     onEndFile: ({ reason }) => {
-      // Phase 2.5 will wire EOF → watched-status. For now, just reset state + report
-      // progress as finished if reason=0 (eof).
+      // Phase 2.5: on EOF (reason=0), flush progress with `finished:true`. The
+      // Go backend's `UpdateProgress` auto-transitions the user status to
+      // `watched` when `Finished && Position > 0`, so no separate status write
+      // is needed. Other reasons (stop/quit/error/redirect) flush the current
+      // position without marking finished.
       if (reason === 0) {
-        void flushProgressFromVideo(true);
+        void flushProgressFromMpv(true);
+      } else {
+        void flushProgressFromMpv(false);
       }
       tracksComposable.resetTracks();
       currentTime.value = 0;
@@ -582,7 +617,14 @@ onBeforeUnmount(() => {
     mpvEventsUnlisten();
     mpvEventsUnlisten = null;
   }
-  void flushProgressFromVideo(false);
+  // Phase 2.5: flush the latest progress on exit so it survives a reload / app
+  // quit. Mode-aware: native mpv reads the reactive refs, HTML5 reads the
+  // `<video>` element. Both honor the 90% finish threshold.
+  if (isNativeReady.value) {
+    void flushProgressFromMpv(false);
+  } else {
+    void flushProgressFromVideo(false);
+  }
   void teardownCurrentPlayback();
 });
 
@@ -604,6 +646,8 @@ function resetViewState(): void {
   lastReportedPosition.value = 0;
   progressRequestInFlight.value = false;
   pendingProgressPayload.value = null;
+  // Phase 2.5: reset resume position (a stale value would seek the next media).
+  resumePosition.value = 0;
   // Phase 2.4: reset playback state + tracks + chapters.
   isPaused.value = true;
   currentTime.value = 0;
@@ -642,6 +686,19 @@ async function loadMedia(id: string): Promise<void> {
     }
 
     streamUrl.value = resolvedStreamUrl;
+
+    // Phase 2.5: fetch the saved resume position before native init / `<video>`
+    // load. `fetchResumePosition` applies soia's 0.99 skip-resume rule (restart
+    // from 0 if the user already finished). Best-effort: a network failure
+    // leaves `resumePosition` at 0 (play from start). Awaited so the value is
+    // available when `onFileLoaded` (native) / `onLoadedMetadata` (HTML5) fires.
+    try {
+      const resume = await historyComposable.fetchResumePosition(id);
+      if (generation !== loadGeneration || disposed) return;
+      resumePosition.value = resume?.position ?? 0;
+    } catch {
+      // Resume is best-effort — ignore failures + play from the start.
+    }
 
     await nextTick();
 
@@ -750,14 +807,18 @@ async function attemptNativeInit(generation: number): Promise<void> {
   );
 }
 
-function buildProgressPayload(video: HTMLVideoElement, finished: boolean): ProgressPayload | null {
-  const duration = Math.floor(video.duration || 0);
+function buildProgressPayload(
+  currentTimeSeconds: number,
+  durationSeconds: number,
+  finished: boolean
+): ProgressPayload | null {
+  const duration = Math.floor(durationSeconds || 0);
 
   if (!Number.isFinite(duration) || duration <= 0) {
     return null;
   }
 
-  const currentTime = Math.floor(video.currentTime || 0);
+  const currentTime = Math.floor(currentTimeSeconds || 0);
   const position = finished ? duration : Math.min(duration, Math.max(0, currentTime));
 
   return {
@@ -778,16 +839,12 @@ async function reportProgress(payload: ProgressPayload): Promise<void> {
   progressRequestInFlight.value = true;
 
   try {
-    await authRequest.put(`/media/${encodeURIComponent(mediaId.value)}/progress`, payload, {
-      authFailureMode: 'silent',
-    });
+    // Phase 2.5: delegate to the history composable (which wraps
+    // `setMediaProgress` — 401/403/404 are swallowed there since progress is
+    // best-effort). The in-flight queue + pending-payload retry stays here so
+    // it remains coupled to this component's `disposed` lifecycle flag.
+    await historyComposable.persistProgress(mediaId.value, payload);
   } catch (unknownError) {
-    const status = getHttpStatus(unknownError);
-
-    if (status === 401 || status === 403 || status === 404) {
-      return;
-    }
-
     console.warn(
       '[fyom] player progress update failed:',
       getApiErrorMessage(unknownError, t('player.progressUpdateFailed'))
@@ -810,12 +867,15 @@ function onTimeUpdate(): void {
 
   const currentTime = Math.floor(video.currentTime || 0);
   const delta = Math.abs(currentTime - lastReportedPosition.value);
+  const finished = historyComposable.isFinished(video.currentTime, video.duration || 0);
 
-  if (delta < PROGRESS_REPORT_INTERVAL_SECONDS) {
+  // Phase 2.5: force a report when the finish threshold is crossed (so the
+  // watched status lands promptly), otherwise throttle to the 10s interval.
+  if (delta < PROGRESS_REPORT_INTERVAL_SECONDS && !finished) {
     return;
   }
 
-  const payload = buildProgressPayload(video, false);
+  const payload = buildProgressPayload(video.currentTime, video.duration || 0, finished);
 
   if (!payload) return;
 
@@ -831,16 +891,89 @@ function onEnded(): void {
   void flushProgressFromVideo(true);
 }
 
+/**
+ * Phase 2.5: HTML5 `<video>` metadata loaded — seek to the saved resume
+ * position (if any) before the user sees playback start from 0. Mirrors the
+ * native `onFileLoaded` resume path so the fallback UX matches native.
+ */
+function onLoadedMetadata(): void {
+  if (resumePosition.value <= 0) return;
+
+  const video = videoRef.value;
+  if (!video) return;
+
+  const pos = resumePosition.value;
+  resumePosition.value = 0;
+
+  try {
+    video.currentTime = pos;
+    lastReportedPosition.value = Math.floor(pos);
+  } catch {
+    // Some streams reject seeking before playback starts — ignore + play from 0.
+  }
+}
+
 async function flushProgressFromVideo(finished: boolean): Promise<void> {
   const video = videoRef.value;
   if (!video) return;
 
-  const payload = buildProgressPayload(video, finished);
+  // Phase 2.5: a `false` flush (pause / unmount) still marks the item finished
+  // when the position has crossed the 90% threshold, so pausing near the end
+  // credits counts as watched.
+  const effectiveFinished =
+    finished || historyComposable.isFinished(video.currentTime, video.duration || 0);
+
+  const payload = buildProgressPayload(video.currentTime, video.duration || 0, effectiveFinished);
 
   if (!payload) return;
 
   lastReportedPosition.value = payload.position;
   await reportProgress(payload);
+}
+
+/**
+ * Phase 2.5: native mpv progress flush. Reads the `currentTime` / `duration`
+ * reactive refs (driven by `fyom://mpv/time-pos` + `fyom://mpv/duration`) —
+ * these are the source of truth in native mode (`videoRef` is null there).
+ */
+async function flushProgressFromMpv(finished: boolean): Promise<void> {
+  if (!isNativeReady.value) return;
+
+  const effectiveFinished =
+    finished || historyComposable.isFinished(currentTime.value, duration.value);
+
+  const payload = buildProgressPayload(currentTime.value, duration.value, effectiveFinished);
+
+  if (!payload) return;
+
+  lastReportedPosition.value = payload.position;
+  await reportProgress(payload);
+}
+
+/**
+ * Phase 2.5: 10s-throttled progress report for native playback, invoked from
+ * the `onTimePos` mpv event handler. Mirrors the HTML5 `onTimeUpdate` path:
+ * throttle by `PROGRESS_REPORT_INTERVAL_SECONDS`, but force a report when the
+ * finish threshold is crossed so the watched status lands promptly.
+ */
+function maybeReportNativeProgress(): void {
+  if (!mediaId.value || !isNativeReady.value) return;
+
+  const pos = currentTime.value;
+  const dur = duration.value;
+  const finished = historyComposable.isFinished(pos, dur);
+  const delta = Math.abs(pos - lastReportedPosition.value);
+
+  if (delta < PROGRESS_REPORT_INTERVAL_SECONDS && !finished) {
+    return;
+  }
+
+  const payload = buildProgressPayload(pos, dur, finished);
+
+  if (!payload) return;
+
+  lastReportedPosition.value = payload.position;
+  void reportProgress(payload);
 }
 
 function onVideoError(): void {

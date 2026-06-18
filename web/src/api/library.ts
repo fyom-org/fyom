@@ -730,6 +730,44 @@ export async function getMediaProgressSilent(id: string): Promise<MediaProgress 
   }
 }
 
+/**
+ * Progress payload sent to `PUT /media/{id}/progress`.
+ *
+ * Phase 2.5: the native player (PlayerView.vue) and the HTML5 `<video>` path
+ * both report progress through this shape. The Go backend clamps `position`
+ * to `duration` and auto-transitions the user's media status to `watching`
+ * (on first progress) or `watched` (when `finished` is true).
+ */
+export interface MediaProgressInput {
+  position: number;
+  duration: number;
+  finished: boolean;
+}
+
+/**
+ * Best-effort progress write. 401/403/404 are swallowed (progress is
+ * optional — authorization gaps or missing media must not crash playback).
+ * Other errors propagate so the caller can log them.
+ */
+export async function setMediaProgress(
+  id: string,
+  payload: MediaProgressInput
+): Promise<void> {
+  try {
+    await authRequest.put(`/media/${encodeURIComponent(id)}/progress`, payload, {
+      authFailureMode: 'silent',
+    });
+  } catch (error: unknown) {
+    const status = getHttpStatus(error);
+
+    if (status === 401 || status === 403 || status === 404) {
+      return;
+    }
+
+    throw error;
+  }
+}
+
 /* =========================
    Library CRUD APIs
    ========================= */

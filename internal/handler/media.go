@@ -800,6 +800,45 @@ func (h *MediaHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetProgress returns the user's watch progress for an item.
+//
+// Phase 2.5: this backs the resume-from-position flow on the native player
+// (PlayerView fetches progress before `play_media`, then seeks after
+// `MPV_EVENT_FILE_LOADED`). Returns 200 with the progress object when a row
+// exists, 200 with `null` data when no progress has been recorded yet (so the
+// caller can distinguish "no progress" from "error" without a 404 round-trip).
+func (h *MediaHandler) GetProgress(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	if _, ok := h.getAccessibleMediaItem(w, r, id); !ok {
+		return
+	}
+
+	userIDStr, ok := getAuthenticatedUserID(w, r)
+	if !ok {
+		return
+	}
+
+	progress, err := h.repo.GetProgress(r.Context(), userIDStr, id)
+	if err != nil {
+		h.logger.Error("failed to get progress", "media_id", id, "user_id", userIDStr, "err", err)
+		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
+		return
+	}
+
+	if progress == nil {
+		response.Success(w, nil)
+		return
+	}
+
+	response.Success(w, map[string]interface{}{
+		"position":   progress.Position,
+		"duration":   progress.Duration,
+		"finished":   progress.Finished,
+		"updated_at": progress.UpdatedAt,
+	})
+}
+
 // GetByStatus returns media items filtered by user status.
 func (h *MediaHandler) GetByStatus(w http.ResponseWriter, r *http.Request) {
 	userIDStr, ok := getAuthenticatedUserID(w, r)
