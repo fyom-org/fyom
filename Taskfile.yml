@@ -120,13 +120,20 @@ tasks:
 
   dev:desktop:
     desc: "Run Tauri desktop dev mode (requires sidecar binary + setup:runtime-libs)"
-    deps: [sidecar, setup:runtime-libs]
+    deps: [sidecar]
+    env:
+      FYOM_BIN: "{{.ROOT_DIR}}/build/fyom"
+      FYOM_DESKTOP_MODE: dev
+      FYOM_USE_BUNDLED_RUNTIME: "0"
     cmds:
       - node scripts/run_tauri.mjs dev
 
   build:desktop:
     desc: "Build Tauri desktop app bundle (setup:runtime-libs → build → bundle:runtime-libs)"
     deps: [sidecar, setup:runtime-libs]
+    env:
+      FYOM_DESKTOP_MODE: build
+      FYOM_USE_BUNDLED_RUNTIME: "1"
     cmds:
       - node scripts/run_tauri.mjs build
       - '{{if eq OS "darwin"}}task bundle:runtime-libs:macos{{else if eq OS "linux"}}task bundle:runtime-libs:linux{{else if eq OS "windows"}}task bundle:runtime-libs:windows{{end}}'
