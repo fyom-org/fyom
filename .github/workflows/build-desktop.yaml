@@ -1,4 +1,4 @@
-name: desktop-build
+name: build-desktop
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ env:
   # downloaded runtime libs is keyed on this value so a tag bump invalidates
   # the cache. Override via the workflow_dispatch UI to test a new tag.
   MPV_RELEASE_REPO: fyom-org/fork-mpv
-  MPV_RELEASE_TAG: fyom-v0.41.0-r1
+  MPV_RELEASE_TAG: v0.41.0-r1-fyom
 
 jobs:
   build-linux:
