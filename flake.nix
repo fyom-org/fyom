@@ -184,35 +184,48 @@
           + lib.makeSearchPathOutput "out" "share/pkgconfig" linuxRuntimeLibs;
 
         linuxShellHook = lib.optionalString isLinux ''
-          export FYOM_BIN="build/fyom"
-          export RUST_BACKTRACE="1"
+            export FYOM_BIN="build/fyom"
+            export RUST_BACKTRACE="1"
 
-          export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
+            export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
 
-          export LD_LIBRARY_PATH="${linuxLibraryPath}:''${LD_LIBRARY_PATH:-}"
-          export PKG_CONFIG_PATH="${linuxPkgConfigPath}:''${PKG_CONFIG_PATH:-}"
+            export LD_LIBRARY_PATH="${linuxLibraryPath}:''${LD_LIBRARY_PATH:-}"
+            export PKG_CONFIG_PATH="${linuxPkgConfigPath}:''${PKG_CONFIG_PATH:-}"
 
-          export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.adwaita-icon-theme}/share:${pkgs.hicolor-icon-theme}/share:''${XDG_DATA_DIRS:-}"
-          export GIO_EXTRA_MODULES="${pkgs.dconf.lib}/lib/gio/modules"
+            # Rust/Tauri dev link fix:
+            # pangocairo.pc from nixpkgs does not necessarily propagate fontconfig/freetype
+            # through `pkg-config --libs pangocairo`, but ld.bfd still requires these DSOs
+            # to be present explicitly during the final Rust binary link.
+            export RUSTFLAGS="-C link-arg=-L${pkgs.fontconfig.lib}/lib \
+          -C link-arg=-L${pkgs.freetype}/lib \
+          -C link-arg=-lfontconfig \
+          -C link-arg=-lfreetype \
+          ''${RUSTFLAGS:-}"
 
-          export PLAYWRIGHT_BROWSERS_PATH="${pkgs.playwright-driver.browsers}"
-          export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
-          export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-          export NIX_PLAYWRIGHT_VERSION="${pkgs.playwright-driver.version}"
+            export NIX_LDFLAGS="-L${pkgs.fontconfig.lib}/lib \
+          -L${pkgs.freetype}/lib \
+          -lfontconfig \
+          -lfreetype \
+          ''${NIX_LDFLAGS:-}"
 
-          # Phase 2 native playback:
-          # In NixOS/Linux dev shells, prefer the Nix-provided libmpv.
-          # Release bundles must still use fyom-org/fork-mpv artifacts.
-          if pkg-config --exists mpv 2>/dev/null; then
-            export MPV_LIB_DIR="$(pkg-config --variable=libdir mpv)"
-          fi
+            export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.adwaita-icon-theme}/share:${pkgs.hicolor-icon-theme}/share:''${XDG_DATA_DIRS:-}"
+            export GIO_EXTRA_MODULES="${pkgs.dconf.lib}/lib/gio/modules"
 
-          echo "fyom Nix dev shell"
-          echo "  platform: linux"
-          echo "  node: $(node --version 2>/dev/null || true)"
-          echo "  go: $(go version 2>/dev/null || true)"
-          echo "  rustc: $(rustc --version 2>/dev/null || true)"
-          echo "  MPV_LIB_DIR: ''${MPV_LIB_DIR:-not set}"
+            export PLAYWRIGHT_BROWSERS_PATH="${pkgs.playwright-driver.browsers}"
+            export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
+            export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+            export NIX_PLAYWRIGHT_VERSION="${pkgs.playwright-driver.version}"
+
+            if pkg-config --exists mpv 2>/dev/null; then
+              export MPV_LIB_DIR="$(pkg-config --variable=libdir mpv)"
+            fi
+
+            echo "fyom Nix dev shell"
+            echo "  platform: linux"
+            echo "  node: $(node --version 2>/dev/null || true)"
+            echo "  go: $(go version 2>/dev/null || true)"
+            echo "  rustc: $(rustc --version 2>/dev/null || true)"
+            echo "  MPV_LIB_DIR: ''${MPV_LIB_DIR:-not set}"
         '';
 
         darwinShellHook = lib.optionalString isDarwin ''
