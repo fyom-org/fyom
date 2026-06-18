@@ -88,17 +88,48 @@ tasks:
   # Desktop
   # ================================================
 
-  dev:desktop:
-    desc: "Run Tauri desktop dev mode (requires sidecar binary)"
-    deps: [sidecar]
+  setup:runtime-libs:
+    desc: "Fetch libmpv runtime libs from fyom-org/fork-mpv into src-tauri/libs/mpv/"
     cmds:
-      - cd src-tauri && FYOM_BIN=../build/fyom RUST_LOG=debug cargo-tauri dev
+      - node scripts/setup_runtime_libs.mjs
+
+  sync:runtime-libs:
+    desc: "Regenerate src-tauri/libs/runtime-libs.{platform}.json manifests from libs/mpv/"
+    cmds:
+      - node scripts/sync_runtime_libs.mjs
+
+  bundle:runtime-libs:macos:
+    desc: "Bundle libmpv + deps into the macOS .app Frameworks dir (sign-identity stub for Phase 3)"
+    cmds:
+      - bash scripts/bundle_runtime_libs_macos.sh src-tauri/target/release/bundle/macos/fyom.app {{.CLI_ARGS}}
+
+  bundle:runtime-libs:linux:
+    desc: "Bundle libmpv into Linux deb/AppImage bundle dirs"
+    cmds:
+      - node scripts/bundle_runtime_libs_linux.mjs --profile release
+
+  bundle:runtime-libs:windows:
+    desc: "Bundle libmpv DLLs next to the Windows .exe payload"
+    cmds:
+      - node scripts/bundle_runtime_libs_windows.mjs --profile release
+
+  bundle:runtime-libs:
+    desc: "Bundle libmpv runtime libs into the just-built desktop bundle (platform-aware)"
+    cmds:
+      - '{{if eq OS "darwin"}}task bundle:runtime-libs:macos{{else if eq OS "linux"}}task bundle:runtime-libs:linux{{else if eq OS "windows"}}task bundle:runtime-libs:windows{{end}}'
+
+  dev:desktop:
+    desc: "Run Tauri desktop dev mode (requires sidecar binary + setup:runtime-libs)"
+    deps: [sidecar, setup:runtime-libs]
+    cmds:
+      - node scripts/run_tauri.mjs dev
 
   build:desktop:
-    desc: "Build Tauri desktop app bundle"
-    deps: [sidecar]
+    desc: "Build Tauri desktop app bundle (setup:runtime-libs → build → bundle:runtime-libs)"
+    deps: [sidecar, setup:runtime-libs]
     cmds:
-      - cd src-tauri && cargo-tauri build
+      - node scripts/run_tauri.mjs build
+      - '{{if eq OS "darwin"}}task bundle:runtime-libs:macos{{else if eq OS "linux"}}task bundle:runtime-libs:linux{{else if eq OS "windows"}}task bundle:runtime-libs:windows{{end}}'
 
   build:tarball:
     desc: "Build Linux tar.gz artifact"

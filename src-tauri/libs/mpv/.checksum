@@ -1,0 +1,22 @@
+# Defense-in-depth checksum pin for fyom-org/fork-mpv tarballs.
+#
+# Format (one entry per line):
+#   <sha256-hex-lowercase>  <basename-of-asset>
+# Lines starting with '#' are comments. Blank lines are ignored.
+#
+# The setup_runtime_libs_* scripts verify downloaded assets against entries in
+# this file. If an asset is not listed here, verification is SKIPPED (with a
+# console warning) — so omitting an entry is safe; adding a wrong hash fails
+# the download.
+#
+# Populate this file AFTER the first successful fyom-org/fork-mpv tarball
+# download (Phase 2.0 deferred item #2). Until then, the file is intentionally
+# empty (no entries = verification skipped = bootstrap-friendly).
+#
+# Example (fill in real hashes once fyom-v0.41.0-r1 ships):
+# 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  libmpv-fyom-v0.41.0-r1-aarch64-apple-darwin.tar.xz
+# 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  libmpv-fyom-v0.41.0-r1-x86_64-apple-darwin.tar.xz
+# 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  libmpv-fyom-v0.41.0-r1-x86_64-unknown-linux-gnu.tar.xz
+# 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  libmpv-fyom-v0.41.0-r1-aarch64-unknown-linux-gnu.tar.xz
+# 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  libmpv-fyom-v0.41.0-r1-x86_64-pc-windows-msvc.zip
+# 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  libmpv-fyom-v0.41.0-r1-aarch64-pc-windows-msvc.zip

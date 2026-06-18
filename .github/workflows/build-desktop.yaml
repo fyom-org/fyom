@@ -13,6 +13,11 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
+  # Pinned fyom-org/fork-mpv release (libmpv tarball). Caching for the
+  # downloaded runtime libs is keyed on this value so a tag bump invalidates
+  # the cache. Override via the workflow_dispatch UI to test a new tag.
+  MPV_RELEASE_REPO: fyom-org/fork-mpv
+  MPV_RELEASE_TAG: fyom-v0.41.0-r1
 
 jobs:
   build-linux:
@@ -29,12 +34,22 @@ jobs:
       - name: Show Nix version
         run: nix --version
 
+      - name: Cache libmpv runtime libs
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/libs/mpv
+          key: libmpv-linux-${{ env.MPV_RELEASE_TAG }}-${{ runner.arch }}
+
+      - name: Download libmpv runtime bundle
+        run: nix develop --command node scripts/setup_runtime_libs.mjs --platform linux
+
       - name: Build desktop app in Nix dev shell
         run: nix develop --command task build:desktop
         env:
           VERSION: ${{ github.ref_name }}
           COMMIT: ${{ github.sha }}
           BUILD_TIME: ${{ github.run_id }}
+          FYOM_SKIP_APPLY_RUNTIME_LIBS: "1"
 
       - name: Collect Linux assets
         shell: bash
@@ -117,6 +132,24 @@ jobs:
       - name: Install frontend dependencies
         working-directory: web
         run: pnpm install --frozen-lockfile
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cargo-macos-${{ runner.arch }}-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml') }}-${{ env.MPV_RELEASE_TAG }}
+
+      - name: Cache libmpv runtime libs
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/libs/mpv
+          key: libmpv-macos-${{ env.MPV_RELEASE_TAG }}-${{ runner.arch }}
+
+      - name: Download libmpv runtime bundle
+        run: node scripts/setup_runtime_libs.mjs --platform darwin
 
       - name: Build desktop app on macOS runner
         run: task build:desktop
@@ -205,6 +238,25 @@ jobs:
         shell: pwsh
         working-directory: web
         run: pnpm install --frozen-lockfile
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+            src-tauri\target
+          key: cargo-windows-${{ runner.arch }}-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml') }}-${{ env.MPV_RELEASE_TAG }}
+
+      - name: Cache libmpv runtime libs
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/libs/mpv
+          key: libmpv-windows-${{ env.MPV_RELEASE_TAG }}-${{ runner.arch }}
+
+      - name: Download libmpv runtime bundle
+        shell: pwsh
+        run: node scripts/setup_runtime_libs.mjs --platform win32
 
       - name: Build desktop app on Windows runner
         shell: pwsh

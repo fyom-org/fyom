@@ -37,6 +37,20 @@ cookie = { version = "0.18.1", features = ["secure"] }
 time = "0.3.47"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
+# --- Phase 2: libmpv native playback ---
+# libmpv2 = the safe Rust binding (same crate tsukimi uses). Resolves libmpv via
+# MPV_LIB_DIR (set in .cargo/config.toml) or pkg-config. Provides Mpv, EventContext,
+# RenderContext, MpvNode — the full surface fyom needs.
+# Default features include `render` + `protocols` (matches tsukimi).
+libmpv2 = "4.1"
+# Concurrency primitives ported from tsukimi's event-pump architecture (Phase 2.2).
+# atomic-wait powers the PAUSED/ACTIVE/SHUTDOWN state machine; flume is the event channel.
+atomic-wait = "1.1"
+flume = "0.11"
+arc-swap = "1.9"
+libc = "0.2"
+# NOTE: glow, raw-window-handle, glutin/surfman are added in Phase 2.3 (render context).
+
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-updater = "2"
 

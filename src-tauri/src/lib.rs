@@ -1,6 +1,7 @@
 //! fyom Tauri desktop application
 
 mod commands;
+mod mpv;
 mod sidecar;
 mod state;
 mod tray;
@@ -9,7 +10,7 @@ mod window;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::state::SidecarState;
+use crate::state::{MpvState, SidecarState};
 use tauri::Emitter;
 use tauri::Manager;
 
@@ -97,6 +98,18 @@ pub fn run() {
             // Setup window
             window::setup_main_window(app)?;
 
+            // Phase 2: initialize the libmpv native-playback state. On failure the
+            // instance stays unset and the frontend's browser `<video>` fallback is
+            // used (the 9.7 guardrail). The MpvState is managed so playback commands
+            // can access it via `State<'_, MpvState>`.
+            let mpv_state = MpvState::new();
+            if mpv_state.instance.get().is_some() {
+                tracing::info!("[mpv] native playback ready (libmpv)");
+            } else if let Some(e) = &mpv_state.init_error {
+                tracing::warn!("[mpv] native playback disabled: {}", e);
+            }
+            app.manage(mpv_state);
+
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
@@ -108,6 +121,9 @@ pub fn run() {
             commands::get_sidecar_status,
             commands::playback::get_api_base_url,
             commands::playback::get_playback_backend_info,
+            commands::playback::play_media,
+            commands::playback::stop_media,
+            commands::playback::play_test_media,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

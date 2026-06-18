@@ -1,0 +1,9 @@
+# src-tauri/libs/mpv/ — runtime libmpv artifacts (downloaded, never committed).
+#
+# The setup_runtime_libs_* scripts populate this directory with the pre-built
+# libmpv dylib/so/dll + headers from fyom-org/fork-mpv. The .checksum file is
+# the only tracked artifact; everything else is gitignored.
+# Keep the .checksum pin + the .gitkeep-style directory entry; ignore binaries.
+*
+!/.gitignore
+!/.checksum
