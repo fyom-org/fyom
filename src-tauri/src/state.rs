@@ -37,15 +37,12 @@ impl Default for SidecarState {
 }
 
 impl SidecarState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn get_status(&self) -> SidecarStatus {
         match self.status.lock() {
             Ok(status) => status.clone(),
             Err(error) => {
                 tracing::error!("[sidecar/state] status mutex poisoned: {error}");
+
                 SidecarStatus::Error {
                     message: "sidecar status unavailable".to_string(),
                 }
@@ -66,133 +63,39 @@ impl SidecarState {
     pub fn set_starting(&self) {
         let deadline = Instant::now() + Duration::from_secs(SIDECAR_STARTUP_TIMEOUT_SECS);
 
-        if let Ok(mut status) = self.status.lock() {
-            *status = SidecarStatus::Starting;
-        } else {
-            tracing::error!("[sidecar/state] failed to set status=Starting");
-        }
-
-        if let Ok(mut url) = self.api_base_url.lock() {
-            *url = None;
-        } else {
-            tracing::error!("[sidecar/state] failed to clear api_base_url");
-        }
-
-        if let Ok(mut startup_deadline) = self.startup_deadline.lock() {
-            *startup_deadline = Some(deadline);
-        } else {
-            tracing::error!("[sidecar/state] failed to set startup deadline");
-        }
-
+        self.set_status(SidecarStatus::Starting);
+        self.set_api_base_url(None);
+        self.set_startup_deadline(Some(deadline));
         self.ready_received.store(false, Ordering::SeqCst);
     }
 
     pub fn set_ready(&self, api_base_url: String) {
-        if let Ok(mut status) = self.status.lock() {
-            *status = SidecarStatus::Ready {
-                api_base_url: api_base_url.clone(),
-            };
-        } else {
-            tracing::error!("[sidecar/state] failed to set status=Ready");
-        }
+        self.set_status(SidecarStatus::Ready {
+            api_base_url: api_base_url.clone(),
+        });
 
-        if let Ok(mut url) = self.api_base_url.lock() {
-            *url = Some(api_base_url);
-        } else {
-            tracing::error!("[sidecar/state] failed to set api_base_url");
-        }
-
-        if let Ok(mut startup_deadline) = self.startup_deadline.lock() {
-            *startup_deadline = None;
-        } else {
-            tracing::error!("[sidecar/state] failed to clear startup deadline");
-        }
-
+        self.set_api_base_url(Some(api_base_url));
+        self.set_startup_deadline(None);
         self.ready_received.store(true, Ordering::SeqCst);
     }
 
     pub fn set_error(&self, message: String) {
-        if let Ok(mut status) = self.status.lock() {
-            *status = SidecarStatus::Error { message };
-        } else {
-            tracing::error!("[sidecar/state] failed to set status=Error");
-        }
-
-        if let Ok(mut url) = self.api_base_url.lock() {
-            *url = None;
-        } else {
-            tracing::error!("[sidecar/state] failed to clear api_base_url after error");
-        }
-
-        if let Ok(mut startup_deadline) = self.startup_deadline.lock() {
-            *startup_deadline = None;
-        } else {
-            tracing::error!("[sidecar/state] failed to clear startup deadline after error");
-        }
-
+        self.set_status(SidecarStatus::Error { message });
+        self.set_api_base_url(None);
+        self.set_startup_deadline(None);
         self.ready_received.store(false, Ordering::SeqCst);
     }
 
     pub fn set_stopped(&self) {
-        if let Ok(mut status) = self.status.lock() {
-            *status = SidecarStatus::Stopped;
-        } else {
-            tracing::error!("[sidecar/state] failed to set status=Stopped");
-        }
-
-        if let Ok(mut url) = self.api_base_url.lock() {
-            *url = None;
-        } else {
-            tracing::error!("[sidecar/state] failed to clear api_base_url after stop");
-        }
-
-        if let Ok(mut pid) = self.child_pid.lock() {
-            *pid = None;
-        } else {
-            tracing::error!("[sidecar/state] failed to clear child pid after stop");
-        }
-
-        if let Ok(mut startup_deadline) = self.startup_deadline.lock() {
-            *startup_deadline = None;
-        } else {
-            tracing::error!("[sidecar/state] failed to clear startup deadline after stop");
-        }
-
+        self.set_status(SidecarStatus::Stopped);
+        self.set_api_base_url(None);
+        self.set_child_pid_inner(None);
+        self.set_startup_deadline(None);
         self.ready_received.store(false, Ordering::SeqCst);
     }
 
     pub fn set_child_pid(&self, pid: u32) {
-        if let Ok(mut child_pid) = self.child_pid.lock() {
-            *child_pid = Some(pid);
-        } else {
-            tracing::error!("[sidecar/state] failed to set child pid");
-        }
-    }
-
-    pub fn clear_child_pid(&self) {
-        if let Ok(mut child_pid) = self.child_pid.lock() {
-            *child_pid = None;
-        } else {
-            tracing::error!("[sidecar/state] failed to clear child pid");
-        }
-    }
-
-    pub fn get_child_pid(&self) -> Option<u32> {
-        match self.child_pid.lock() {
-            Ok(child_pid) => *child_pid,
-            Err(error) => {
-                tracing::error!("[sidecar/state] child_pid mutex poisoned: {error}");
-                None
-            }
-        }
-    }
-
-    pub fn is_ready(&self) -> bool {
-        self.ready_received.load(Ordering::SeqCst)
-    }
-
-    pub fn is_starting(&self) -> bool {
-        matches!(self.get_status(), SidecarStatus::Starting)
+        self.set_child_pid_inner(Some(pid));
     }
 
     pub fn is_startup_timeout(&self) -> bool {
@@ -205,13 +108,55 @@ impl SidecarState {
         };
 
         match deadline {
-            Some(deadline) => !self.is_ready() && Instant::now() >= deadline,
+            Some(deadline) => {
+                !self.ready_received.load(Ordering::SeqCst) && Instant::now() >= deadline
+            }
             None => false,
         }
     }
 
-    pub fn reset(&self) {
-        self.set_stopped();
+    fn set_status(&self, next: SidecarStatus) {
+        match self.status.lock() {
+            Ok(mut status) => {
+                *status = next;
+            }
+            Err(error) => {
+                tracing::error!("[sidecar/state] failed to update status: {error}");
+            }
+        }
+    }
+
+    fn set_api_base_url(&self, next: Option<String>) {
+        match self.api_base_url.lock() {
+            Ok(mut api_base_url) => {
+                *api_base_url = next;
+            }
+            Err(error) => {
+                tracing::error!("[sidecar/state] failed to update api_base_url: {error}");
+            }
+        }
+    }
+
+    fn set_child_pid_inner(&self, next: Option<u32>) {
+        match self.child_pid.lock() {
+            Ok(mut child_pid) => {
+                *child_pid = next;
+            }
+            Err(error) => {
+                tracing::error!("[sidecar/state] failed to update child pid: {error}");
+            }
+        }
+    }
+
+    fn set_startup_deadline(&self, next: Option<Instant>) {
+        match self.startup_deadline.lock() {
+            Ok(mut startup_deadline) => {
+                *startup_deadline = next;
+            }
+            Err(error) => {
+                tracing::error!("[sidecar/state] failed to update startup deadline: {error}");
+            }
+        }
     }
 }
 
@@ -248,6 +193,7 @@ impl MpvState {
                     init_error: None,
                 }
             }
+
             Err(error) => {
                 tracing::error!(
                     "[mpv/state] native playback disabled; mpv init failed: {}",
@@ -260,20 +206,6 @@ impl MpvState {
                 }
             }
         }
-    }
-
-    pub fn is_ready(&self) -> bool {
-        self.instance.get().is_some()
-    }
-
-    pub fn get_instance(&self) -> Result<&MpvInstance, String> {
-        self.instance
-            .get()
-            .ok_or_else(|| {
-                self.init_error
-                    .clone()
-                    .unwrap_or_else(|| "libmpv not initialized".to_string())
-            })
     }
 }
 
