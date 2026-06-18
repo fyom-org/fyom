@@ -17,12 +17,7 @@ import { isTauriEnvironment } from '@/lib/runtime/tauri';
 
 /* ── State model ──────────────────────────────────────────────────────── */
 
-export type NativePlayerStatus =
-  | 'idle'
-  | 'initializing'
-  | 'ready'
-  | 'failed'
-  | 'unavailable';
+export type NativePlayerStatus = 'idle' | 'initializing' | 'ready' | 'failed' | 'unavailable';
 
 export type NativePlayerFailureStage =
   | 'raw-window-handle'
@@ -50,9 +45,24 @@ export interface NativePlayerInitParams {
   posterUrl?: string;
 }
 
-export type NativePlayerInitResult =
-  | { ok: true }
-  | { ok: false; failure: NativePlayerFailure };
+export type NativePlayerInitResult = { ok: true } | { ok: false; failure: NativePlayerFailure };
+
+/* ── Common command response shapes ───────────────────────────────────── */
+
+interface NativeCommandResponse {
+  success: boolean;
+  error?: string;
+}
+
+type TauriInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
+
+interface TauriInternalsWindow extends Window {
+  __TAURI_INTERNALS__?: {
+    tauri?: {
+      invoke?: TauriInvoke;
+    };
+  };
+}
 
 /* ── Factory ───────────────────────────────────────────────────────────── */
 
@@ -126,6 +136,63 @@ export function mapNativePlayerInitError(err: unknown): NativePlayerFailure {
   return { stage, message };
 }
 
+/* ── Tauri invoke bridge helpers ───────────────────────────────────────── */
+
+/**
+ * Get the Tauri invoke function, or null outside the Tauri runtime.
+ *
+ * This project intentionally goes through `window.__TAURI_INTERNALS__.tauri.invoke`
+ * instead of importing `invoke` directly, so the plain-browser fallback bundle can
+ * keep calling these helpers safely.
+ */
+function getTauriInvoke(): TauriInvoke | null {
+  if (!isNativePlaybackRuntimeAvailable()) {
+    return null;
+  }
+
+  const tauriWindow = window as TauriInternalsWindow;
+  const tauriApi = tauriWindow.__TAURI_INTERNALS__?.tauri;
+  const invoke = tauriApi?.invoke;
+
+  return typeof invoke === 'function' ? invoke.bind(tauriApi) : null;
+}
+
+/**
+ * Typed wrapper around Tauri invoke.
+ *
+ * The raw Tauri invoke function obtained from `window.__TAURI_INTERNALS__` is not
+ * typed as a generic function. Do not call `invoke<T>()` directly; call this helper
+ * instead so TypeScript sees one safe cast boundary in this file.
+ */
+async function invokeTauri<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  const invoke = getTauriInvoke();
+
+  if (!invoke) {
+    throw new Error('Native playback runtime is not available');
+  }
+
+  return (await invoke(command, args)) as T;
+}
+
+/**
+ * Invoke a command that follows the `{ success: boolean; error?: string }` contract.
+ */
+async function invokeBooleanCommand(
+  command: string,
+  args?: Record<string, unknown>
+): Promise<boolean> {
+  if (!isNativePlaybackRuntimeAvailable()) {
+    return false;
+  }
+
+  try {
+    const result = await invokeTauri<NativeCommandResponse>(command, args);
+    return Boolean(result?.success);
+  } catch {
+    return false;
+  }
+}
+
 /* ── Bridge function ───────────────────────────────────────────────────── */
 
 /**
@@ -140,7 +207,7 @@ export function mapNativePlayerInitError(err: unknown): NativePlayerFailure {
  * this command, the frontend bridge will work without changes.
  */
 export async function tryInitializeNativePlayer(
-  params: NativePlayerInitParams,
+  params: NativePlayerInitParams
 ): Promise<NativePlayerInitResult> {
   if (!isNativePlaybackRuntimeAvailable()) {
     return {
@@ -153,26 +220,18 @@ export async function tryInitializeNativePlayer(
   }
 
   try {
-    // @ts-expect-error — __TAURI_INTERNALS__ exists in Tauri runtime
-    const { invoke } = window.__TAURI_INTERNALS__.tauri;
-
-    // TODO(phase2): Replace 'play_media' with the actual Tauri command name
-    // once the libmpv backend implements it. The command should accept
-    // { mediaUrl: string, posterUrl?: string } and return { success: boolean, error?: string }.
-    const result = await invoke('play_media', {
+    const result = await invokeTauri<NativeCommandResponse>('play_media', {
       mediaUrl: params.mediaUrl,
       posterUrl: params.posterUrl ?? '',
     });
 
-    if (result && result.success) {
+    if (result?.success) {
       return { ok: true };
     }
 
     return {
       ok: false,
-      failure: mapNativePlayerInitError(
-        new Error(result?.error || 'Unknown native player error'),
-      ),
+      failure: mapNativePlayerInitError(new Error(result?.error || 'Unknown native player error')),
     };
   } catch (err) {
     return {
@@ -182,7 +241,7 @@ export async function tryInitializeNativePlayer(
   }
 }
 
-/* ── Phase 2.2: `fyom://mpv/*` event subscription (additive — no 9.7 change) ──── */
+/* ── Phase 2.2: `fyom://mpv/*` event subscription ──────────────────────── */
 
 /**
  * The mpv event channel payload shapes (emitted by `src-tauri/src/mpv/event_loop.rs`).
@@ -217,43 +276,55 @@ export interface MpvTimePosEvent {
   position: number;
   duration: number;
 }
+
 export interface MpvPauseEvent {
   paused: boolean;
 }
+
 export interface MpvEndFileEvent {
   /** mpv EndFileReason code: 0=eof, 1=stop, 2=quit, 3=error, 4=redirect. */
   reason: number;
   reason_name: string;
 }
+
 export interface MpvFileLoadedEvent {
   /** The path/URL mpv loaded (correlate with the pending play request). */
   path: string | null;
 }
+
 export interface MpvTrackListEvent {
   audio_tracks: MpvTrack[];
   sub_tracks: MpvTrack[];
 }
+
 export interface MpvVolumeEvent {
   volume: number;
 }
+
 export interface MpvDurationEvent {
   duration: number;
 }
+
 export interface MpvSpeedEvent {
   speed: number;
 }
+
 export interface MpvCacheSpeedEvent {
   speed: number;
 }
+
 export interface MpvDemuxerCacheTimeEvent {
   time: number;
 }
+
 export interface MpvPausedForCacheEvent {
   paused: boolean;
 }
+
 export interface MpvChapterListEvent {
   chapters: MpvChapter[];
 }
+
 export interface MpvErrorEvent {
   message: string;
 }
@@ -265,30 +336,37 @@ export interface MpvHwdecCurrentEvent {
   /** Active hwdec backend (e.g. "auto-safe", "vt", "vaapi", "d3d11va", "nv"). */
   hwdec: string;
 }
+
 export interface MpvAidEvent {
   /** Current audio track id (0 = none / disabled). */
   id: number;
 }
+
 export interface MpvSidEvent {
   /** Current subtitle track id (0 = none / disabled). */
   id: number;
 }
+
 export interface MpvSubDelayEvent {
   /** Subtitle delay in seconds (negative = earlier, positive = later). */
   delay: number;
 }
+
 export interface MpvAudioDelayEvent {
   /** Audio delay in seconds (negative = earlier, positive = later). */
   delay: number;
 }
+
 export interface MpvColorAdjustmentEvent {
   /** Adjustment value in -100..=100 (0 = default). */
   value: number;
 }
+
 export interface MpvChapterEvent {
   /** Current chapter index (-1 = no chapter). */
   index: number;
 }
+
 export interface MpvEofReachedEvent {
   /** Whether playback has reached end of file. */
   eof: boolean;
@@ -302,17 +380,13 @@ export interface MpvEofReachedEvent {
 export type MpvTrackFull = MpvTrack;
 
 /** Response shape from `get_track_list` invoke. */
-export interface MpvTrackListResponse {
-  success: boolean;
-  error?: string;
+export interface MpvTrackListResponse extends NativeCommandResponse {
   audio_tracks: MpvTrackFull[];
   sub_tracks: MpvTrackFull[];
 }
 
 /** Response shape from `get_chapter_list` invoke. */
-export interface MpvChapterListResponse {
-  success: boolean;
-  error?: string;
+export interface MpvChapterListResponse extends NativeCommandResponse {
   chapters: MpvChapter[];
 }
 
@@ -326,9 +400,7 @@ export interface ExternalSubtitleMatch {
   label: string;
 }
 
-export interface FindExternalSubtitlesResponse {
-  success: boolean;
-  error?: string;
+export interface FindExternalSubtitlesResponse extends NativeCommandResponse {
   matches: ExternalSubtitleMatch[];
 }
 
@@ -353,6 +425,7 @@ export interface MpvEventHandlers {
   onPlaybackRestart?: () => void;
   onShutdown?: () => void;
   onError?: (e: MpvErrorEvent) => void;
+
   // Phase 2.4 additions
   onHwdecCurrent?: (e: MpvHwdecCurrentEvent) => void;
   onAid?: (e: MpvAidEvent) => void;
@@ -374,146 +447,100 @@ export interface MpvEventHandlers {
  *
  * No-op (returns a no-op unlisten) outside the Tauri runtime — safe to call from code
  * that also runs in a plain browser; the `<video>` fallback path is unaffected.
- *
- * @example
- * const unlisten = await subscribeMpvEvents({
- *   onTimePos: ({ position, duration }) => updateScrubber(position, duration),
- *   onPause:   ({ paused }) => isPaused.value = paused,
- * });
- * // later:
- * unlisten();
  */
-export async function subscribeMpvEvents(
-  handlers: MpvEventHandlers,
-): Promise<() => void> {
+export async function subscribeMpvEvents(handlers: MpvEventHandlers): Promise<() => void> {
   if (!isNativePlaybackRuntimeAvailable()) {
-    // Not in Tauri — nothing to subscribe to (the `<video>` fallback owns playback).
     return () => {};
   }
 
   const unlistens: Array<() => void> = [];
 
-  // Property-change events (payloads with a typed shape).
-  if (handlers.onTimePos) {
-    unlistens.push(await listen<MpvTimePosEvent>('fyom://mpv/time-pos', (e) => handlers.onTimePos?.(e.payload)));
-  }
-  if (handlers.onPause) {
-    unlistens.push(await listen<MpvPauseEvent>('fyom://mpv/pause', (e) => handlers.onPause?.(e.payload)));
-  }
-  if (handlers.onEndFile) {
-    unlistens.push(await listen<MpvEndFileEvent>('fyom://mpv/end-file', (e) => handlers.onEndFile?.(e.payload)));
-  }
-  if (handlers.onFileLoaded) {
-    unlistens.push(await listen<MpvFileLoadedEvent>('fyom://mpv/file-loaded', (e) => handlers.onFileLoaded?.(e.payload)));
-  }
-  if (handlers.onTrackList) {
-    unlistens.push(await listen<MpvTrackListEvent>('fyom://mpv/track-list', (e) => handlers.onTrackList?.(e.payload)));
-  }
-  if (handlers.onVolume) {
-    unlistens.push(await listen<MpvVolumeEvent>('fyom://mpv/volume', (e) => handlers.onVolume?.(e.payload)));
-  }
-  if (handlers.onDuration) {
-    unlistens.push(await listen<MpvDurationEvent>('fyom://mpv/duration', (e) => handlers.onDuration?.(e.payload)));
-  }
-  if (handlers.onSpeed) {
-    unlistens.push(await listen<MpvSpeedEvent>('fyom://mpv/speed', (e) => handlers.onSpeed?.(e.payload)));
-  }
-  if (handlers.onCacheSpeed) {
-    unlistens.push(await listen<MpvCacheSpeedEvent>('fyom://mpv/cache-speed', (e) => handlers.onCacheSpeed?.(e.payload)));
-  }
-  if (handlers.onDemuxerCacheTime) {
-    unlistens.push(await listen<MpvDemuxerCacheTimeEvent>('fyom://mpv/demuxer-cache-time', (e) => handlers.onDemuxerCacheTime?.(e.payload)));
-  }
-  if (handlers.onPausedForCache) {
-    unlistens.push(await listen<MpvPausedForCacheEvent>('fyom://mpv/paused-for-cache', (e) => handlers.onPausedForCache?.(e.payload)));
-  }
-  if (handlers.onChapterList) {
-    unlistens.push(await listen<MpvChapterListEvent>('fyom://mpv/chapter-list', (e) => handlers.onChapterList?.(e.payload)));
-  }
-  if (handlers.onError) {
-    unlistens.push(await listen<MpvErrorEvent>('fyom://mpv/error', (e) => handlers.onError?.(e.payload)));
-  }
+  const addPayloadListener = async <T>(
+    eventName: string,
+    handler: ((payload: T) => void) | undefined
+  ): Promise<void> => {
+    if (!handler) {
+      return;
+    }
 
-  // Phase 2.4 property-change events.
-  if (handlers.onHwdecCurrent) {
-    unlistens.push(await listen<MpvHwdecCurrentEvent>('fyom://mpv/hwdec-current', (e) => handlers.onHwdecCurrent?.(e.payload)));
-  }
-  if (handlers.onAid) {
-    unlistens.push(await listen<MpvAidEvent>('fyom://mpv/aid', (e) => handlers.onAid?.(e.payload)));
-  }
-  if (handlers.onSid) {
-    unlistens.push(await listen<MpvSidEvent>('fyom://mpv/sid', (e) => handlers.onSid?.(e.payload)));
-  }
-  if (handlers.onSubDelay) {
-    unlistens.push(await listen<MpvSubDelayEvent>('fyom://mpv/sub-delay', (e) => handlers.onSubDelay?.(e.payload)));
-  }
-  if (handlers.onAudioDelay) {
-    unlistens.push(await listen<MpvAudioDelayEvent>('fyom://mpv/audio-delay', (e) => handlers.onAudioDelay?.(e.payload)));
-  }
-  if (handlers.onBrightness) {
-    unlistens.push(await listen<MpvColorAdjustmentEvent>('fyom://mpv/brightness', (e) => handlers.onBrightness?.(e.payload)));
-  }
-  if (handlers.onContrast) {
-    unlistens.push(await listen<MpvColorAdjustmentEvent>('fyom://mpv/contrast', (e) => handlers.onContrast?.(e.payload)));
-  }
-  if (handlers.onSaturation) {
-    unlistens.push(await listen<MpvColorAdjustmentEvent>('fyom://mpv/saturation', (e) => handlers.onSaturation?.(e.payload)));
-  }
-  if (handlers.onGamma) {
-    unlistens.push(await listen<MpvColorAdjustmentEvent>('fyom://mpv/gamma', (e) => handlers.onGamma?.(e.payload)));
-  }
-  if (handlers.onHue) {
-    unlistens.push(await listen<MpvColorAdjustmentEvent>('fyom://mpv/hue', (e) => handlers.onHue?.(e.payload)));
-  }
-  if (handlers.onChapter) {
-    unlistens.push(await listen<MpvChapterEvent>('fyom://mpv/chapter', (e) => handlers.onChapter?.(e.payload)));
-  }
-  if (handlers.onEofReached) {
-    unlistens.push(await listen<MpvEofReachedEvent>('fyom://mpv/eof-reached', (e) => handlers.onEofReached?.(e.payload)));
-  }
+    unlistens.push(
+      await listen<T>(eventName, (event) => {
+        handler(event.payload);
+      })
+    );
+  };
 
-  // Void events (no payload).
-  if (handlers.onSeek) {
-    unlistens.push(await listen('fyom://mpv/seek', () => handlers.onSeek?.()));
-  }
-  if (handlers.onPlaybackRestart) {
-    unlistens.push(await listen('fyom://mpv/playback-restart', () => handlers.onPlaybackRestart?.()));
-  }
-  if (handlers.onShutdown) {
-    unlistens.push(await listen('fyom://mpv/shutdown', () => handlers.onShutdown?.()));
-  }
+  const addVoidListener = async (
+    eventName: string,
+    handler: (() => void) | undefined
+  ): Promise<void> => {
+    if (!handler) {
+      return;
+    }
+
+    unlistens.push(
+      await listen(eventName, () => {
+        handler();
+      })
+    );
+  };
+
+  await addPayloadListener<MpvTimePosEvent>('fyom://mpv/time-pos', handlers.onTimePos);
+  await addPayloadListener<MpvPauseEvent>('fyom://mpv/pause', handlers.onPause);
+  await addPayloadListener<MpvEndFileEvent>('fyom://mpv/end-file', handlers.onEndFile);
+  await addPayloadListener<MpvFileLoadedEvent>('fyom://mpv/file-loaded', handlers.onFileLoaded);
+  await addPayloadListener<MpvTrackListEvent>('fyom://mpv/track-list', handlers.onTrackList);
+  await addPayloadListener<MpvVolumeEvent>('fyom://mpv/volume', handlers.onVolume);
+  await addPayloadListener<MpvDurationEvent>('fyom://mpv/duration', handlers.onDuration);
+  await addPayloadListener<MpvSpeedEvent>('fyom://mpv/speed', handlers.onSpeed);
+  await addPayloadListener<MpvCacheSpeedEvent>('fyom://mpv/cache-speed', handlers.onCacheSpeed);
+  await addPayloadListener<MpvDemuxerCacheTimeEvent>(
+    'fyom://mpv/demuxer-cache-time',
+    handlers.onDemuxerCacheTime
+  );
+  await addPayloadListener<MpvPausedForCacheEvent>(
+    'fyom://mpv/paused-for-cache',
+    handlers.onPausedForCache
+  );
+  await addPayloadListener<MpvChapterListEvent>('fyom://mpv/chapter-list', handlers.onChapterList);
+  await addPayloadListener<MpvErrorEvent>('fyom://mpv/error', handlers.onError);
+
+  await addPayloadListener<MpvHwdecCurrentEvent>(
+    'fyom://mpv/hwdec-current',
+    handlers.onHwdecCurrent
+  );
+  await addPayloadListener<MpvAidEvent>('fyom://mpv/aid', handlers.onAid);
+  await addPayloadListener<MpvSidEvent>('fyom://mpv/sid', handlers.onSid);
+  await addPayloadListener<MpvSubDelayEvent>('fyom://mpv/sub-delay', handlers.onSubDelay);
+  await addPayloadListener<MpvAudioDelayEvent>('fyom://mpv/audio-delay', handlers.onAudioDelay);
+  await addPayloadListener<MpvColorAdjustmentEvent>('fyom://mpv/brightness', handlers.onBrightness);
+  await addPayloadListener<MpvColorAdjustmentEvent>('fyom://mpv/contrast', handlers.onContrast);
+  await addPayloadListener<MpvColorAdjustmentEvent>('fyom://mpv/saturation', handlers.onSaturation);
+  await addPayloadListener<MpvColorAdjustmentEvent>('fyom://mpv/gamma', handlers.onGamma);
+  await addPayloadListener<MpvColorAdjustmentEvent>('fyom://mpv/hue', handlers.onHue);
+  await addPayloadListener<MpvChapterEvent>('fyom://mpv/chapter', handlers.onChapter);
+  await addPayloadListener<MpvEofReachedEvent>('fyom://mpv/eof-reached', handlers.onEofReached);
+
+  await addVoidListener('fyom://mpv/seek', handlers.onSeek);
+  await addVoidListener('fyom://mpv/playback-restart', handlers.onPlaybackRestart);
+  await addVoidListener('fyom://mpv/shutdown', handlers.onShutdown);
 
   return () => {
     for (const unlisten of unlistens) {
       try {
         unlisten();
       } catch {
-        // ignore — best-effort teardown during component unmount
+        // Best-effort teardown during component unmount.
       }
     }
   };
 }
 
-/* ── Phase 2.3: GL render surface bridge ─────────────────────────────────── */
+/* ── Phase 2.3: GL render surface bridge ───────────────────────────────── */
 
 /**
  * Phase 2.3: attach the platform GL surface (NSOpenGLContext / WGL / GLX) to the main
  * Tauri window + spawn the mpv render thread.
- *
- * Called by the frontend after `play_media` succeeds (the main window is ready by then).
- * The backend creates a child GL surface behind the webview + spawns a render thread
- * that hosts `mpv_render_context_create(OpenGL)` on the platform GL context.
- *
- * Returns `{success: boolean, error?: string}` — on failure, the frontend logs the error
- * + the `<video>` fallback takes over (mpv plays audio with a black frame; the 9.7
- * guardrail stays green).
- *
- * No-op outside the Tauri runtime — safe to call from code that also runs in a plain
- * browser; the function returns `{success: false, error: 'Native playback runtime is not available'}`.
- *
- * PORTED_FROM_SOIA `attach_render_surface` pattern (the transparent-overlay + GL context
- * attach direction; the closed-source `libsoia_utils` Metal-layer surface is replaced
- * with fyom's open NSOpenGL / WGL / GLX path).
  */
 export async function attachRenderSurface(): Promise<NativePlayerInitResult> {
   if (!isNativePlaybackRuntimeAvailable()) {
@@ -527,19 +554,16 @@ export async function attachRenderSurface(): Promise<NativePlayerInitResult> {
   }
 
   try {
-    // @ts-expect-error — __TAURI_INTERNALS__ exists in Tauri runtime
-    const { invoke } = window.__TAURI_INTERNALS__.tauri;
+    const result = await invokeTauri<NativeCommandResponse>('attach_render_surface');
 
-    const result = await invoke('attach_render_surface');
-
-    if (result && result.success) {
+    if (result?.success) {
       return { ok: true };
     }
 
     return {
       ok: false,
       failure: mapNativePlayerInitError(
-        new Error(result?.error || 'Failed to attach render surface'),
+        new Error(result?.error || 'Failed to attach render surface')
       ),
     };
   } catch (err) {
@@ -553,12 +577,6 @@ export async function attachRenderSurface(): Promise<NativePlayerInitResult> {
 /**
  * Phase 2.3: notify the backend that the webview entered / exited `.video-mode`
  * (transparent background so the mpv GL layer shows through).
- *
- * The CSS class toggle is the actual mechanism — this invoke is informational (the
- * backend logs the transition). Future Phase 2.5+ work may pause/resume the render
- * thread here to save CPU when no video is showing.
- *
- * No-op outside the Tauri runtime.
  */
 export async function setVideoMode(enabled: boolean): Promise<void> {
   if (!isNativePlaybackRuntimeAvailable()) {
@@ -566,90 +584,60 @@ export async function setVideoMode(enabled: boolean): Promise<void> {
   }
 
   try {
-    // @ts-expect-error — __TAURI_INTERNALS__ exists in Tauri runtime
-    const { invoke } = window.__TAURI_INTERNALS__.tauri;
-    await invoke('set_video_mode', { enabled });
+    await invokeTauri<void>('set_video_mode', { enabled });
   } catch {
-    // Informational command — ignore errors (the CSS is the actual mechanism).
+    // Informational command — ignore errors because CSS is the actual mechanism.
   }
 }
 
 /**
- * Phase 2.3: notify the backend of a window resize so it can update the GL surface
- * drawable (e.g. call `NSOpenGLContext::update` on macOS to avoid GL framebuffer
- * corruption after a window resize).
- *
- * **Note**: fyom's `RenderSurface::drawable_size` is polled on every render frame, so
- * the render loop picks up the new dimensions automatically. This invoke is a hook for
- * future platform-specific resize logic (Phase 2.4).
- *
- * No-op outside the Tauri runtime.
+ * Phase 2.3: notify the backend of a window resize so it can update the GL surface.
  */
 export async function resizeRenderSurface(
   width: number,
   height: number,
-  scaleFactor: number,
+  scaleFactor: number
 ): Promise<void> {
   if (!isNativePlaybackRuntimeAvailable()) {
     return;
   }
 
   try {
-    // @ts-expect-error — __TAURI_INTERNALS__ exists in Tauri runtime
-    const { invoke } = window.__TAURI_INTERNALS__.tauri;
-    await invoke('resize_render_surface', { width, height, scaleFactor });
+    await invokeTauri<void>('resize_render_surface', {
+      width,
+      height,
+      scaleFactor,
+    });
   } catch {
-    // Best-effort — ignore errors (the render loop polls dimensions anyway).
+    // Best-effort — ignore errors because the render loop polls dimensions anyway.
   }
 }
 
-/* ── Phase 2.4: playback feature bridge (subtitles, audio tracks, color
- *    adjustments, chapter nav, generic property get/set). PORTED_FROM_SOIA
- *    `commands/playback.rs` + `useMediaTracks.ts` + `usePlaybackAdjustments.ts`
- *    invoke surface, reimplemented on fyom's `MpvInstance` (soia's
- *    `mpv_run_command`/`mpv_set_option_string` map to fyom's typed commands). ──── */
+/* ── Phase 2.4: playback feature bridge ────────────────────────────────── */
 
 /**
- * Get the Tauri invoke function, or null outside the Tauri runtime.
- *
- * Internal helper — the Phase 2.4 bridge functions use this to avoid repeating the
- * `__TAURI_INTERNALS__` dance. Returns null in a plain browser (the `<video>` fallback
- * owns playback; the bridge functions return safe defaults).
- */
-function getTauriInvoke(): ((command: string, args?: Record<string, unknown>) => Promise<unknown>) | null {
-  if (!isNativePlaybackRuntimeAvailable()) {
-    return null;
-  }
-  try {
-    // @ts-expect-error — __TAURI_INTERNALS__ exists in Tauri runtime
-    const { invoke } = window.__TAURI_INTERNALS__.tauri;
-    return typeof invoke === 'function' ? invoke : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Phase 2.4: find external subtitle files matching a LOCAL media file (fuzzy match by
- * name, episode key, year). Returns absolute filesystem paths sorted by match score.
+ * Phase 2.4: find external subtitle files matching a LOCAL media file.
  *
  * LOCAL-only: returns an empty list for remote (presigned URL / network) media.
  */
 export async function findExternalSubtitles(
   mediaPath: string,
-  mediaTitle?: string,
+  mediaTitle?: string
 ): Promise<ExternalSubtitleMatch[]> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return [];
+  if (!isNativePlaybackRuntimeAvailable()) {
+    return [];
+  }
 
   try {
-    const result = await invoke<FindExternalSubtitlesResponse>('find_external_subtitles', {
+    const result = await invokeTauri<FindExternalSubtitlesResponse>('find_external_subtitles', {
       mediaPath,
       mediaTitle: mediaTitle ?? null,
     });
-    if (result && result.success) {
+
+    if (result?.success) {
       return result.matches;
     }
+
     return [];
   } catch {
     return [];
@@ -668,160 +656,80 @@ export async function subAdd(
   path: string,
   mode: 'select' | 'auto' = 'select',
   title?: string,
-  lang?: string,
+  lang?: string
 ): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('sub_add', {
-      path,
-      mode,
-      title: title ?? null,
-      lang: lang ?? null,
-    });
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+  return invokeBooleanCommand('sub_add', {
+    path,
+    mode,
+    title: title ?? null,
+    lang: lang ?? null,
+  });
 }
 
 /** Remove an external subtitle track by id. */
 export async function subRemove(trackId: number): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('sub_remove', {
-      trackId,
-    });
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+  return invokeBooleanCommand('sub_remove', { trackId });
 }
 
 /** Reload a subtitle track by id (useful after editing an external .srt). */
 export async function subReload(trackId: number): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('sub_reload', {
-      trackId,
-    });
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+  return invokeBooleanCommand('sub_reload', { trackId });
 }
 
 /** Add an external audio track. */
-export async function audioAdd(
-  path: string,
-  mode: 'select' | 'auto' = 'select',
-): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('audio_add', {
-      path,
-      mode,
-    });
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+export async function audioAdd(path: string, mode: 'select' | 'auto' = 'select'): Promise<boolean> {
+  return invokeBooleanCommand('audio_add', { path, mode });
 }
 
 /** Set the subtitle delay (seconds; negative = earlier, positive = later). */
 export async function setSubDelay(seconds: number): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('set_sub_delay', {
-      seconds,
-    });
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+  return invokeBooleanCommand('set_sub_delay', { seconds });
 }
 
 /** Set the audio delay (seconds; negative = earlier, positive = later). */
 export async function setAudioDelay(seconds: number): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('set_audio_delay', {
-      seconds,
-    });
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+  return invokeBooleanCommand('set_audio_delay', { seconds });
 }
 
 /** Set the subtitle font scale (1.0 = default). */
 export async function setSubScale(scale: number): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('set_sub_scale', {
-      scale,
-    });
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+  return invokeBooleanCommand('set_sub_scale', { scale });
 }
 
-/** Set a color adjustment (`brightness` / `contrast` / `saturation` / `gamma` / `hue`). Range: -100..=100. */
+/**
+ * Set a color adjustment.
+ *
+ * Range: -100..=100.
+ */
 export async function setColorAdjustment(
   name: 'brightness' | 'contrast' | 'saturation' | 'gamma' | 'hue',
-  value: number,
+  value: number
 ): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('set_color_adjustment', {
-      name,
-      value,
-    });
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+  return invokeBooleanCommand('set_color_adjustment', {
+    name,
+    value,
+  });
 }
 
 /** Generic mpv option-string setter (power-user surface — prefer typed commands above). */
-export async function mpvSetOptionString(name: string, value: string | number | boolean): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('mpv_set_option_string', {
-      name,
-      value: String(value),
-    });
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+export async function mpvSetOptionString(
+  name: string,
+  value: string | number | boolean
+): Promise<boolean> {
+  return invokeBooleanCommand('mpv_set_option_string', {
+    name,
+    value: String(value),
+  });
 }
 
 /** Get the current track list (audio + sub) as a typed object. One-shot read. */
 export async function getTrackList(): Promise<MpvTrackListResponse | null> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return null;
+  if (!isNativePlaybackRuntimeAvailable()) {
+    return null;
+  }
 
   try {
-    return await invoke<MpvTrackListResponse>('get_track_list');
+    return await invokeTauri<MpvTrackListResponse>('get_track_list');
   } catch {
     return null;
   }
@@ -829,11 +737,12 @@ export async function getTrackList(): Promise<MpvTrackListResponse | null> {
 
 /** Get the chapter list (one-shot read). */
 export async function getChapterList(): Promise<MpvChapterListResponse | null> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return null;
+  if (!isNativePlaybackRuntimeAvailable()) {
+    return null;
+  }
 
   try {
-    return await invoke<MpvChapterListResponse>('get_chapter_list');
+    return await invokeTauri<MpvChapterListResponse>('get_chapter_list');
   } catch {
     return null;
   }
@@ -841,174 +750,78 @@ export async function getChapterList(): Promise<MpvChapterListResponse | null> {
 
 /** Navigate to a chapter by index. */
 export async function setChapter(index: number): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('set_chapter', {
-      index,
-    });
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+  return invokeBooleanCommand('set_chapter', { index });
 }
 
 /** Generic string-valued property getter (one-shot read). */
 export async function getProperty(name: string): Promise<string | null> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return null;
+  if (!isNativePlaybackRuntimeAvailable()) {
+    return null;
+  }
 
   try {
-    const result = await invoke<{ success: boolean; value?: string; error?: string }>('get_property', {
+    const result = await invokeTauri<NativeCommandResponse & { value?: string }>('get_property', {
       name,
     });
-    if (result && result.success) {
+
+    if (result?.success) {
       return result.value ?? null;
     }
+
     return null;
   } catch {
     return null;
   }
 }
 
-/* ── Phase 2.4: typed wrappers for the Phase 2.2 commands (seek, volume, speed,
- *    pause, track selection, keypress, generic command). These existed as Tauri
- *    commands since Phase 2.2 but had no TS bridge — the PlayerView controls now
- *    need them. ───────────────────────────────────────────────────────────── */
+/* ── Phase 2.4: typed wrappers for Phase 2.2 commands ──────────────────── */
 
 /** Seek to an absolute position (seconds). */
 export async function seek(position: number): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('seek', { position });
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+  return invokeBooleanCommand('seek', { position });
 }
 
 /** Seek by a relative offset (seconds; negative = backward). */
 export async function seekRelative(seconds: number): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('seek_relative', {
-      seconds,
-    });
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+  return invokeBooleanCommand('seek_relative', { seconds });
 }
 
 /** Toggle play/pause. */
 export async function togglePause(): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('toggle_pause');
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+  return invokeBooleanCommand('toggle_pause');
 }
 
 /** Explicitly set the pause state (`true` = paused, `false` = playing). */
 export async function setPause(paused: boolean): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('set_pause', { paused });
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+  return invokeBooleanCommand('set_pause', { paused });
 }
 
 /** Set the volume (0–100). */
 export async function setVolume(volume: number): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('set_volume', { volume });
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+  return invokeBooleanCommand('set_volume', { volume });
 }
 
 /** Set the playback speed (1.0 = normal). */
 export async function setSpeed(speed: number): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('set_speed', { speed });
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+  return invokeBooleanCommand('set_speed', { speed });
 }
 
 /** Select the audio track (`null` to disable audio). */
 export async function setAudioTrack(trackId: number | null): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('set_audio_track', {
-      trackId,
-    });
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+  return invokeBooleanCommand('set_audio_track', { trackId });
 }
 
 /** Select the subtitle track (`null` to disable subtitles). */
 export async function setSubtitleTrack(trackId: number | null): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('set_subtitle_track', {
-      trackId,
-    });
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+  return invokeBooleanCommand('set_subtitle_track', { trackId });
 }
 
 /** Forward a keypress to mpv (mpv keystr format, e.g. "Space", "Ctrl+Right", "Volume+"). */
 export async function mpvKeypress(key: string): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('mpv_keypress', { key });
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+  return invokeBooleanCommand('mpv_keypress', { key });
 }
 
 /** Stop playback + clear the playlist. */
 export async function stopMedia(): Promise<boolean> {
-  const invoke = getTauriInvoke();
-  if (!invoke) return false;
-
-  try {
-    const result = await invoke<{ success: boolean; error?: string }>('stop_media');
-    return Boolean(result && result.success);
-  } catch {
-    return false;
-  }
+  return invokeBooleanCommand('stop_media');
 }

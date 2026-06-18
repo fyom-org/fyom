@@ -3,127 +3,123 @@
 //! PORTED_FROM_TSUKIMI @ v26.6.3 (`src/ui/mpv/tsukimi_mpv.rs::TsukimiMPV`)
 //!
 //! Adapted for fyom:
-//! - The GTK-specific bits (epoxy loader, `press_key`/`KEYSTRING_MAP`, `SETTINGS`
-//!   accessors) are dropped.
-//! - The initializer property set + the `Arc<Mpv>` + `unsafe impl Send/Sync` pattern
-//!   are retained.
-//! - The event-pump thread is owned by the instance (tsukimi stores it in `RefCell` —
-//!   fyom uses `Mutex<Option<JoinHandle>>` for interior mutability without `RefCell`'s
-//!   runtime borrow checks, since the instance is shared across Tauri command threads).
-//! - Phase 2.3: the render thread is owned by the instance (`Mutex<Option<RenderThreadState>>`),
-//!   spawned lazily via `spawn_render_thread` (called from the `attach_render_surface`
-//!   Tauri command after the frontend has a window handle) + joined on app exit via
-//!   `shutdown_render_thread` (called before `shutdown_event_loop` so the render context
-//!   is destroyed before the mpv instance). The render context itself is created on the
-//!   render thread (sole GL consumer) — see `mpv/render.rs`.
+//! - GTK-specific pieces are dropped.
+//! - The initializer property set and the `Arc<Mpv>` sharing pattern are retained.
+//! - The event-pump thread is owned by this instance.
+//! - The render thread is owned by this instance and spawned lazily after the frontend
+//!   attaches a platform GL surface.
 //!
-//! See `docs/libmpv-assessment.md` §3.2 + §3.3 + §3.4 for the rationale.
+//! The command layer should talk to mpv through this facade only.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use libmpv2::{GetData, Mpv, SetData};
 use tauri::AppHandle;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::mpv::event_loop::{self, ACTIVE, SHUTDOWN};
 use crate::mpv::render::{self, RenderSurface, RenderThreadState};
 
-/// Default max volume (matches tsukimi's `MAX_VOLUME`).
+/// Default max volume.
 const MAX_VOLUME: i64 = 100;
 
-/// Default cache size (MiB) + cache duration (seconds). Tunable via settings in a
-/// later phase; hardcoded for the spike.
+/// Default cache size in MiB.
 const DEFAULT_CACHE_MIB: u64 = 256;
+
+/// Default cache duration in seconds.
 const DEFAULT_CACHE_SECS: i64 = 10;
+
+/// Default startup volume.
 const DEFAULT_VOLUME: i64 = 80;
 
-/// A thread-safe libmpv instance + its event-pump thread handle.
+/// A thread-safe libmpv instance plus event/render thread lifecycle state.
 ///
-/// `libmpv2::Mpv` holds a raw `mpv_handle` pointer. mpv's core API (`mpv_command`,
-/// `mpv_set_property`, `mpv_get_property`) is thread-safe, so wrapping in `Arc` +
-/// declaring `Send + Sync` is sound — this matches tsukimi's proven pattern.
-///
-/// The event-pump thread is spawned lazily via [`MpvInstance::spawn_event_loop`] (called
-/// from the Tauri `setup` hook) and joined on app exit via
-/// [`MpvInstance::shutdown_event_loop`].
+/// `libmpv2::Mpv` wraps a raw `mpv_handle`. mpv's client API is documented as
+/// thread-safe for command/property calls, so this wrapper exposes synchronous methods
+/// guarded by mpv itself and coordinates only thread lifecycle locally.
 pub struct MpvInstance {
-    /// The libmpv instance. `Arc` so the event-pump thread can hold a clone.
+    /// Shared libmpv handle.
     pub mpv: Arc<Mpv>,
-    /// Event-thread state machine (`ACTIVE` / `PAUSED` / `SHUTDOWN`).
+
+    /// Event-thread state machine.
     event_thread_alive: Arc<AtomicU32>,
-    /// The event-pump thread handle (`Some` after `spawn_event_loop`, cleared on
-    /// `shutdown_event_loop`).
+
+    /// Event-pump thread handle.
     event_handle: Mutex<Option<JoinHandle<()>>>,
-    /// Phase 2.3: render-thread state (handle + shutdown signal). `None` if the render
-    /// thread hasn't been spawned (e.g. `attach_render_surface` not yet called by the
-    /// frontend, or platform-surface creation failed).
+
+    /// Render-thread state. `None` until the platform GL surface is attached.
     render_state: Mutex<Option<RenderThreadState>>,
 }
 
 impl std::fmt::Debug for MpvInstance {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MpvInstance").finish()
+        f.debug_struct("MpvInstance")
+            .field(
+                "event_thread_alive",
+                &self.event_thread_alive.load(Ordering::SeqCst),
+            )
+            .field(
+                "event_handle",
+                &self
+                    .event_handle
+                    .lock()
+                    .map(|g| g.is_some())
+                    .unwrap_or(false),
+            )
+            .field(
+                "render_state",
+                &self
+                    .render_state
+                    .lock()
+                    .map(|g| g.is_some())
+                    .unwrap_or(false),
+            )
+            .finish()
     }
 }
 
 impl MpvInstance {
-    /// Create + initialize a libmpv instance.
+    /// Create and initialize a libmpv instance.
     ///
-    /// The initializer sets the core playback properties (ported from tsukimi's
-    /// `TsukimiMPV::default`): `vo=libmpv` (render-API driven, used once the render
-    /// context is wired in Phase 2.3), `hwdec=auto-safe`, cache, volume, …
-    ///
-    /// The event-pump thread is **not** started here — call
-    /// [`MpvInstance::spawn_event_loop`] after this to begin observing properties +
-    /// emitting `fyom://mpv/*` events.
+    /// The event loop is not started here. Call [`Self::spawn_event_loop`] from the Tauri
+    /// setup hook after the app handle is available.
     pub fn new() -> Result<Self, String> {
-        // mpv requires C locale for numeric parsing (decimal point).
-        // SAFETY: setlocale is process-global; calling once at mpv init is the
-        // established pattern (tsukimi does the same in TsukimiMPV::default).
-        unsafe {
-            use libc::{LC_NUMERIC, setlocale};
-            let c_str = b"C\0";
-            setlocale(LC_NUMERIC, c_str.as_ptr() as *const _);
-        }
+        set_c_numeric_locale();
 
         let mpv = Mpv::with_initializer(|init| {
-            // Render-API driven video output. Phase 2.0/2.2 has no render context yet,
-            // so video is a black frame + audio plays — exactly the PoC exit criterion.
-            // Phase 2.3 wires `mpv_render_context_create(OpenGL)` which drives frames.
+            // Render-API driven video output. The OpenGL render context is attached later
+            // by the render thread.
             init.set_property("vo", "libmpv")?;
             init.set_property("osc", false)?;
             init.set_property("osd-level", 0)?;
 
-            // Hardware decoding: auto-safe (falls back to software on failure).
+            // Hardware decoding: safe auto fallback.
             init.set_property("hwdec", "auto-safe")?;
 
-            // Cache + timing (ported from tsukimi).
+            // Cache and sync defaults.
             init.set_property("video-timing-offset", 0)?;
             init.set_property("video-sync", "audio")?;
-            init.set_property(
-                "demuxer-max-bytes",
-                format!("{}MiB", DEFAULT_CACHE_MIB),
-            )?;
+            init.set_property("demuxer-max-bytes", format!("{}MiB", DEFAULT_CACHE_MIB))?;
             init.set_property("cache-secs", DEFAULT_CACHE_SECS)?;
+
+            // Volume defaults.
             init.set_property("volume-max", MAX_VOLUME)?;
             init.set_property("volume", DEFAULT_VOLUME)?;
 
-            // Input: let mpv handle its own default key bindings (forwarded from the
-            // webview in Phase 2.2 via the `mpv_keypress` command).
+            // Input defaults. Webview key events can be forwarded through `mpv_keypress`.
             init.set_property("input-default-bindings", true)?;
             init.set_property("input-vo-keyboard", true)?;
 
-            // Don't loop by default.
+            // Do not loop by default.
             init.set_property("loop", "no")?;
 
             Ok(())
         })
         .map_err(|e| format!("failed to create libmpv instance: {}", e))?;
 
-        info!("[mpv] instance created + initialized (vo=libmpv, hwdec=auto-safe)");
+        info!("[mpv] instance created and initialized");
 
         Ok(Self {
             mpv: Arc::new(mpv),
@@ -133,190 +129,228 @@ impl MpvInstance {
         })
     }
 
-    /// Spawn the event-pump thread (ports tsukimi's `process_events`).
+    // -----------------------------------------------------------------------
+    // Event-thread lifecycle.
+    // -----------------------------------------------------------------------
+
+    /// Spawn the mpv event-pump thread.
     ///
-    /// Registers the 10 `observe_property` observers + spawns the dedicated
-    /// `fyom mpv event loop` thread that loops `wait_event`, decodes events, and emits
-    /// `fyom://mpv/*` to the frontend via `AppHandle::emit`. Idempotent: a second call
-    /// is a no-op (the thread is already running).
-    ///
-    /// Called once from the Tauri `setup` hook (see `lib.rs`).
+    /// Idempotent: if already running, this is a no-op.
     pub fn spawn_event_loop(&self, app_handle: AppHandle) {
-        let mut guard = self
-            .event_handle
-            .lock()
-            .expect("mpv event_handle mutex poisoned");
+        let mut guard = match self.event_handle.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                warn!(
+                    "[mpv] event_handle mutex poisoned; cannot spawn event loop: {}",
+                    e
+                );
+                return;
+            }
+        };
+
         if guard.is_some() {
-            // Already spawned.
+            debug!("[mpv] spawn_event_loop ignored; event loop already running");
             return;
         }
-        let handle =
-            event_loop::spawn_event_loop(Arc::clone(&self.mpv), app_handle, self.event_thread_alive.clone());
+
+        self.event_thread_alive.store(ACTIVE, Ordering::SeqCst);
+
+        let handle = event_loop::spawn_event_loop(
+            Arc::clone(&self.mpv),
+            app_handle,
+            Arc::clone(&self.event_thread_alive),
+        );
+
         *guard = Some(handle);
+
         info!("[mpv] event loop thread spawned");
     }
 
-    /// Signal the event-pump thread to shut down + join it.
+    /// Signal the event-pump thread to shut down and join it.
     ///
-    /// Called on app exit (see `lib.rs` `RunEvent::Exit`). Idempotent: a second call is
-    /// a no-op. Blocks until the event thread has exited (at most one `wait_event`
-    /// timeout tick — ~1s).
+    /// Idempotent: if no event thread is running, this is a no-op.
     pub fn shutdown_event_loop(&self) {
         self.event_thread_alive.store(SHUTDOWN, Ordering::SeqCst);
-        // `atomic_wait::wake` would unblock a PAUSED thread immediately; an ACTIVE
-        // thread unblocks on the next `wait_event` return (≤1s). Either way, store
-        // SHUTDOWN + join.
-        let mut guard = self
-            .event_handle
-            .lock()
-            .expect("mpv event_handle mutex poisoned");
-        if let Some(handle) = guard.take() {
-            let _ = handle.join();
-            info!("[mpv] event loop thread joined");
+
+        let handle = match self.event_handle.lock() {
+            Ok(mut guard) => guard.take(),
+            Err(e) => {
+                warn!(
+                    "[mpv] event_handle mutex poisoned during shutdown; skipping join: {}",
+                    e
+                );
+                None
+            }
+        };
+
+        if let Some(handle) = handle {
+            if handle.join().is_err() {
+                warn!("[mpv] event loop thread panicked during join");
+            } else {
+                info!("[mpv] event loop thread joined");
+            }
         }
     }
 
     // -----------------------------------------------------------------------
-    // Phase 2.3: render-thread lifecycle.
+    // Render-thread lifecycle.
     // -----------------------------------------------------------------------
 
-    /// Spawn the mpv render thread (ports tsukimi's `mpvglarea.rs` pattern, drop the GTK
-    /// `GLArea` shell — fyom owns its own per-platform GL surface).
+    /// Spawn the mpv render thread.
     ///
-    /// Takes a `Box<dyn RenderSurface>` (the platform GL surface created by
-    /// `crate::platform::create_platform_surface`). The surface is moved into the render
-    /// thread, which is the sole consumer of the GL context.
+    /// The platform GL surface is moved into the render thread and must not be used
+    /// elsewhere after this call.
     ///
-    /// Idempotent: a second call is a no-op (the render thread is already running).
-    ///
-    /// # Errors
-    /// Returns `Err` if the OS fails to spawn the thread. `RenderContext::new` failures
-    /// are logged inside the thread + the thread exits cleanly (the 9.7 `<video>` fallback
-    /// stays green; mpv plays audio with a black frame).
-    ///
-    /// Called from the `attach_render_surface` Tauri command (invoked by the frontend
-    /// after `play_media` succeeds).
+    /// Idempotent: if the render thread is already running, this returns `Ok(())`.
     pub fn spawn_render_thread(&self, surface: Box<dyn RenderSurface>) -> Result<(), String> {
         let mut guard = self
             .render_state
             .lock()
             .map_err(|e| format!("render_state mutex poisoned: {}", e))?;
+
         if guard.is_some() {
-            // Already spawned.
-            warn!("[mpv] spawn_render_thread called twice — ignoring (render thread already running)");
+            warn!("[mpv] spawn_render_thread ignored; render thread is already running");
             return Ok(());
         }
+
         let state = RenderThreadState::new();
+
         let handle = render::spawn_render_thread(
             Arc::clone(&self.mpv),
             surface,
-            state.shutdown.clone(),
+            Arc::clone(&state.shutdown),
         )?;
-        *state.handle.lock().map_err(|e| format!("render handle mutex poisoned: {}", e))? = Some(handle);
+
+        {
+            let mut handle_guard = state
+                .handle
+                .lock()
+                .map_err(|e| format!("render handle mutex poisoned: {}", e))?;
+            *handle_guard = Some(handle);
+        }
+
         *guard = Some(state);
+
         info!("[mpv] render thread spawned");
+
         Ok(())
     }
 
-    /// Signal the render thread to shut down + join it. Called on app exit (after
-    /// `shutdown_event_loop` — the render thread must be joined before the event thread
-    /// so mpv's render context is destroyed before the mpv instance).
+    /// Signal the render thread to shut down and join it.
     ///
-    /// Idempotent: a second call is a no-op.
+    /// This should be called before the mpv instance is dropped so libmpv's render context
+    /// is destroyed while the underlying mpv handle is still valid.
+    ///
+    /// Idempotent: if no render thread is running, this is a no-op.
     pub fn shutdown_render_thread(&self) {
-        let mut guard = match self.render_state.lock() {
-            Ok(g) => g,
-            Err(_) => {
-                warn!("[mpv] render_state mutex poisoned during shutdown — skipping render thread join");
-                return;
+        let state = match self.render_state.lock() {
+            Ok(mut guard) => guard.take(),
+            Err(e) => {
+                warn!(
+                    "[mpv] render_state mutex poisoned during shutdown; skipping render join: {}",
+                    e
+                );
+                None
             }
         };
-        let Some(state) = guard.take() else {
+
+        let Some(state) = state else {
             return;
         };
+
         state.shutdown.store(SHUTDOWN, Ordering::SeqCst);
-        // Wake the render thread so it observes the shutdown signal (otherwise it would
-        // block on `RENDER_UPDATE.rx.recv()` until the next mpv frame, which never comes
-        // after mpv stops).
+
+        // Wake the render loop so it can observe the shutdown flag even if mpv is not
+        // producing frames.
         render::wake_render_thread();
-        let mut handle_guard = match state.handle.lock() {
-            Ok(g) => g,
-            Err(_) => return,
+
+        let handle = match state.handle.lock() {
+            Ok(mut guard) => guard.take(),
+            Err(e) => {
+                warn!(
+                    "[mpv] render handle mutex poisoned during shutdown; skipping join: {}",
+                    e
+                );
+                None
+            }
         };
-        if let Some(handle) = handle_guard.take() {
-            let _ = handle.join();
-            info!("[mpv] render thread joined");
+
+        if let Some(handle) = handle {
+            if handle.join().is_err() {
+                warn!("[mpv] render thread panicked during join");
+            } else {
+                info!("[mpv] render thread joined");
+            }
         }
     }
 
     // -----------------------------------------------------------------------
-    // Command / property facade (thin wrappers over `libmpv2::Mpv`).
+    // Core command/property facade.
     // -----------------------------------------------------------------------
 
-    /// Load a media URL (replaces the current file). Honors the Phase 9.7 contract:
-    /// `invoke('play_media', { mediaUrl, posterUrl? })`.
+    /// Load a media URL or local path, replacing the current playlist entry.
     pub fn loadfile(&self, url: &str) -> Result<(), String> {
         info!("[mpv] loadfile: {}", url);
+
         self.mpv
             .command("loadfile", &[url, "replace"])
             .map_err(|e| format!("mpv loadfile failed: {}", e))
     }
 
-    /// Stop playback + clear the playlist.
+    /// Stop playback and clear the playlist.
     pub fn stop(&self) -> Result<(), String> {
         info!("[mpv] stop");
+
         self.mpv
             .command("stop", &[])
             .map_err(|e| format!("mpv stop failed: {}", e))
     }
 
-    /// Pause / resume.
+    /// Explicitly pause or resume playback.
     pub fn set_pause(&self, paused: bool) -> Result<(), String> {
         self.set_property("pause", paused)
     }
 
-    /// Cycle the `pause` property (toggle play/pause).
+    /// Toggle pause.
     pub fn cycle_pause(&self) -> Result<(), String> {
         self.mpv
             .command("cycle", &["pause"])
             .map_err(|e| format!("mpv cycle pause failed: {}", e))
     }
 
-    /// Seek by a relative offset (seconds).
+    /// Seek by a relative offset in seconds.
     pub fn seek_relative(&self, seconds: f64) -> Result<(), String> {
+        let seconds = seconds.to_string();
+
         self.mpv
-            .command("seek", &[&seconds.to_string(), "relative"])
-            .map_err(|e| format!("mpv seek failed: {}", e))
+            .command("seek", &[seconds.as_str(), "relative"])
+            .map_err(|e| format!("mpv seek relative failed: {}", e))
     }
 
-    /// Seek to an absolute position (seconds).
+    /// Seek to an absolute position in seconds.
     pub fn seek_absolute(&self, position: f64) -> Result<(), String> {
+        let position = position.to_string();
+
         self.mpv
-            .command("seek", &[&position.to_string(), "absolute"])
+            .command("seek", &[position.as_str(), "absolute"])
             .map_err(|e| format!("mpv seek absolute failed: {}", e))
     }
 
-    /// Forward a keypress to mpv (the keystr format mpv accepts, e.g. "Space",
-    /// "Ctrl+Right", "Volume+"). Ported from tsukimi's `press_key` (the GTK keyval
-    /// translation is dropped — the frontend assembles the keystr).
+    /// Forward an mpv key string, for example `Space`, `Ctrl+Right`, or `Volume+`.
     pub fn mpv_keypress(&self, keystr: &str) -> Result<(), String> {
         self.mpv
             .command("keypress", &[keystr])
             .map_err(|e| format!("mpv keypress failed: {}", e))
     }
 
-    /// Generic mpv command (passthrough — for power-user commands not covered by the
-    /// typed facade). Ported from soia's `mpv_run_command` surface.
+    /// Generic mpv command passthrough.
     pub fn command(&self, cmd: &str, args: &[&str]) -> Result<(), String> {
         self.mpv
             .command(cmd, args)
             .map_err(|e| format!("mpv command '{}' failed: {}", cmd, e))
     }
 
-    /// Set a property (synchronous — mpv's `mpv_set_property` is a fast, thread-safe C
-    /// call). tsukimi spawns this off the UI thread; for fyom's Tauri command surface a
-    /// synchronous call is fine and avoids the `Arc<Mpv>: Send` future-bound question
-    /// entirely.
+    /// Set an mpv property.
     pub fn set_property<V>(&self, property: &str, value: V) -> Result<(), String>
     where
         V: SetData,
@@ -326,7 +360,7 @@ impl MpvInstance {
             .map_err(|e| format!("mpv set_property '{}' failed: {}", property, e))
     }
 
-    /// Get a property (synchronous — mpv's `mpv_get_property` is thread-safe).
+    /// Get an mpv property.
     pub fn get_property<V>(&self, property: &str) -> Result<V, String>
     where
         V: GetData,
@@ -336,14 +370,9 @@ impl MpvInstance {
             .map_err(|e| format!("mpv get_property '{}' failed: {}", property, e))
     }
 
-    /// Set an option string (synchronous). Ported from soia's `mpv_set_option_string`
-    /// surface — used for runtime-tunable mpv options like `aid`, `sid`, `sub-delay`,
-    /// `audio-delay`, `brightness`, `contrast`, `saturation`, `gamma`, `hue`, `speed`,
-    /// `sub-scale`, `secondary-sub-delay`.
+    /// Set an mpv option/property using a string value.
     ///
-    /// Prefer the typed `set_property` facade when the value is a known primitive (bool,
-    /// i64, f64, String); this method is for the power-user surface where the frontend
-    /// passes the option name + stringified value directly.
+    /// This is used by power-user command surfaces. Prefer typed setters where possible.
     pub fn set_option_string(&self, name: &str, value: &str) -> Result<(), String> {
         self.mpv
             .set_property(name, value)
@@ -351,18 +380,13 @@ impl MpvInstance {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 2.4: subtitle / audio track management (port soia's sub-add /
-    // sub-remove / sub-reload + audio-add / audio-remove command surface).
+    // Subtitle/audio track management.
     // -----------------------------------------------------------------------
 
-    /// Add an external subtitle file (`sub-add` command). Ported from soia's
-    /// `mpv_run_command(["sub-add", path, mode])`.
+    /// Add an external subtitle file.
     ///
-    /// - `mode = "select"`: select the subtitle immediately (the user picked it).
-    /// - `mode = "auto"`: add but don't select (auto-discovered subs; mpv picks based on
-    ///   `--subs-with-matching-audio` + `--slang`).
-    /// - `title`: optional display title (shown in mpv's track list + fyom's subtitle picker).
-    /// - `lang`: optional ISO 639-1 language code (e.g. "en", "zh").
+    /// mpv command shape:
+    /// `sub-add <url> [<flags> [<title> [<lang>]]]`
     pub fn sub_add(
         &self,
         path: &str,
@@ -370,110 +394,118 @@ impl MpvInstance {
         title: Option<&str>,
         lang: Option<&str>,
     ) -> Result<(), String> {
-        // mpv's `sub-add` command takes args: <url> [<flags> [<title> [<lang>]]].
-        // `flags` is "select" (activate) or "auto" (don't activate).
-        // The command name ("sub-add") is the first arg to `mpv.command()`; the slice
-        // is the remaining args (no command name in the slice).
-        let mut args: Vec<&str> = vec![path, mode];
-        if let Some(t) = title {
-            args.push(t);
-        } else {
-            args.push("");
+        let mut args: Vec<&str> = Vec::with_capacity(4);
+        args.push(path);
+        args.push(mode);
+
+        if title.is_some() || lang.is_some() {
+            args.push(title.unwrap_or(""));
         }
-        if let Some(l) = lang {
-            args.push(l);
+
+        if let Some(lang) = lang {
+            args.push(lang);
         }
+
         self.mpv
             .command("sub-add", &args)
             .map_err(|e| format!("mpv sub-add failed: {}", e))
     }
 
-    /// Remove an external subtitle track by id (`sub-remove` command).
+    /// Remove a subtitle track by id.
     pub fn sub_remove(&self, track_id: i64) -> Result<(), String> {
-        let id_str = track_id.to_string();
+        let id = track_id.to_string();
+
         self.mpv
-            .command("sub-remove", &[&id_str])
+            .command("sub-remove", &[id.as_str()])
             .map_err(|e| format!("mpv sub-remove failed: {}", e))
     }
 
-    /// Reload a subtitle track by id (`sub-reload` command). Useful after the user edits
-    /// an external .srt file.
+    /// Reload a subtitle track by id.
     pub fn sub_reload(&self, track_id: i64) -> Result<(), String> {
-        let id_str = track_id.to_string();
+        let id = track_id.to_string();
+
         self.mpv
-            .command("sub-reload", &[&id_str])
+            .command("sub-reload", &[id.as_str()])
             .map_err(|e| format!("mpv sub-reload failed: {}", e))
     }
 
-    /// Add an external audio track (`audio-add` command). Ported from soia's
-    /// `mpv_run_command(["audio-add", path, mode])`.
+    /// Add an external audio track.
     pub fn audio_add(&self, path: &str, mode: &str) -> Result<(), String> {
         self.mpv
             .command("audio-add", &[path, mode])
             .map_err(|e| format!("mpv audio-add failed: {}", e))
     }
 
-    /// Remove an audio track by id (`audio-remove` command).
+    /// Remove an audio track by id.
     pub fn audio_remove(&self, track_id: i64) -> Result<(), String> {
-        let id_str = track_id.to_string();
+        let id = track_id.to_string();
+
         self.mpv
-            .command("audio-remove", &[&id_str])
+            .command("audio-remove", &[id.as_str()])
             .map_err(|e| format!("mpv audio-remove failed: {}", e))
     }
 
     // -----------------------------------------------------------------------
-    // Phase 2.4: convenience setters for color adjustments + A/V delays
-    // (ported from soia's `usePlaybackAdjustments.ts` invoke surface).
+    // Playback adjustments.
     // -----------------------------------------------------------------------
 
-    /// Set subtitle delay (seconds; negative = earlier, positive = later).
+    /// Set subtitle delay in seconds.
     pub fn set_sub_delay(&self, seconds: f64) -> Result<(), String> {
         self.set_property("sub-delay", seconds)
     }
 
-    /// Set secondary subtitle delay (seconds; for dual-sub mode).
+    /// Set secondary subtitle delay in seconds.
     pub fn set_secondary_sub_delay(&self, seconds: f64) -> Result<(), String> {
         self.set_property("secondary-sub-delay", seconds)
     }
 
-    /// Set audio delay (seconds; negative = earlier, positive = later).
+    /// Set audio delay in seconds.
     pub fn set_audio_delay(&self, seconds: f64) -> Result<(), String> {
         self.set_property("audio-delay", seconds)
     }
 
-    /// Set subtitle scale (font size multiplier; 1.0 = default).
+    /// Set subtitle scale.
     pub fn set_sub_scale(&self, scale: f64) -> Result<(), String> {
         self.set_property("sub-scale", scale)
     }
 
-    /// Set brightness (-100..=100; 0 = default).
+    /// Set brightness.
     pub fn set_brightness(&self, value: f64) -> Result<(), String> {
         self.set_property("brightness", value)
     }
 
-    /// Set contrast (-100..=100; 0 = default).
+    /// Set contrast.
     pub fn set_contrast(&self, value: f64) -> Result<(), String> {
         self.set_property("contrast", value)
     }
 
-    /// Set saturation (-100..=100; 0 = default).
+    /// Set saturation.
     pub fn set_saturation(&self, value: f64) -> Result<(), String> {
         self.set_property("saturation", value)
     }
 
-    /// Set gamma (-100..=100; 0 = default).
+    /// Set gamma.
     pub fn set_gamma(&self, value: f64) -> Result<(), String> {
         self.set_property("gamma", value)
     }
 
-    /// Set hue (-100..=100; 0 = default).
+    /// Set hue.
     pub fn set_hue(&self, value: f64) -> Result<(), String> {
         self.set_property("hue", value)
     }
 
-    /// Navigate to a chapter by index (`set_property("chapter", n)`).
+    /// Navigate to a chapter by index.
     pub fn set_chapter(&self, index: i64) -> Result<(), String> {
         self.set_property("chapter", index)
+    }
+}
+
+impl Drop for MpvInstance {
+    fn drop(&mut self) {
+        // Best-effort cleanup. Normal app shutdown should call these explicitly from the
+        // Tauri exit path, but this prevents leaking threads in test/dev paths.
+        self.shutdown_render_thread();
+        self.shutdown_event_loop();
     }
 }
 
@@ -483,13 +515,22 @@ impl Default for MpvInstance {
     }
 }
 
-// SAFETY: `libmpv2::Mpv` holds a raw `mpv_handle`. mpv's core command/property API is
-// thread-safe (documented in mpv/client.h). `Arc<Mpv>` sharing across threads is the
-// established pattern (tsukimi ships this in production). `Arc<AtomicU32>` + the
-// `Mutex<Option<JoinHandle>>` + `Mutex<Option<RenderThreadState>>` are `Send + Sync` by
-// construction. The render context + event context have their own thread-affinity rules
-// handled separately (the event thread owns the `EventContext`; the render thread owns
-// the `RenderContext` + the platform GL surface — created on the render thread + never
-// shared).
+/// Set C numeric locale for mpv numeric parsing.
+///
+/// mpv expects a C numeric locale so decimal values use `.` consistently.
+fn set_c_numeric_locale() {
+    // SAFETY: `setlocale` is process-global. This mirrors common mpv integration
+    // practice and should run once before creating the mpv handle.
+    unsafe {
+        use libc::{LC_NUMERIC, setlocale};
+
+        let c_locale = b"C\0";
+        setlocale(LC_NUMERIC, c_locale.as_ptr() as *const _);
+    }
+}
+
+// SAFETY: `libmpv2::Mpv` wraps an `mpv_handle`. mpv's client API is documented as
+// thread-safe for command/property access. Event and render contexts are confined to
+// their dedicated threads.
 unsafe impl Send for MpvInstance {}
 unsafe impl Sync for MpvInstance {}

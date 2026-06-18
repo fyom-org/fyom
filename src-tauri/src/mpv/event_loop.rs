@@ -1,26 +1,18 @@
-//! libmpv event pump — ports tsukimi's `process_events` + `ListenEvent` + node parsers.
+//! libmpv event pump.
+//!
+//! This module owns the mpv event thread. It observes mpv properties, converts raw mpv
+//! events into strongly typed Rust events, sends them to an internal flume channel, and
+//! emits `fyom://mpv/*` events to the frontend.
 //!
 //! PORTED_FROM_TSUKIMI @ v26.6.3 (`src/ui/mpv/tsukimi_mpv.rs`)
 //!
 //! Adapted for fyom:
-//! - tsukimi's `flume` `MPV_EVENT_CHANNEL` is **retained** (reserved for Phase 2.5
-//!   Rust-side consumers — watched-status / progress logic); the primary consumer
-//!   path is `AppHandle::emit("fyom://mpv/*")` to the frontend (Tauri emit is
-//!   thread-safe; callable directly from the event thread).
-//! - tsukimi's GTK `press_key` / `KEYSTRING_MAP` / `get_full_keystr` are **dropped**
-//!   (fyom forwards keys from the webview via a Tauri `mpv_keypress` command; the
-//!   keystr assembly is the frontend's job — mpv accepts keystrs like "Space",
-//!   "Ctrl+Right", "Volume+").
-//! - tsukimi's `RefCell<Option<RenderContext>>` is **dropped** (Phase 2.3 wires the
-//!   GL render context in a separate module).
-//! - The `atomic_wait` PAUSED/ACTIVE/SHUTDOWN state machine is **retained**; fyom
-//!   starts the thread `ACTIVE` (runs immediately on spawn) and transitions to
-//!   `SHUTDOWN` on app exit.
-//! - tsukimi's `node_to_tracks` / `node_to_chapter_list` are ported **verbatim**
-//!   (with a defensive `unwrap_or` instead of `unwrap` on node field access — a
-//!   malformed track node should not crash the event thread).
-//!
-//! See `docs/libmpv-assessment.md` §3.4 for the port rationale + adaptation list.
+//! - The internal flume channel is retained for future Rust-side consumers.
+//! - The primary current consumer is the frontend via Tauri `AppHandle::emit`.
+//! - GTK-specific key handling is intentionally not included.
+//! - Rendering is handled separately in `crate::mpv::render`.
+//! - Property parsing is defensive: malformed mpv node payloads must not crash the event
+//!   thread.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -30,50 +22,54 @@ use std::thread::JoinHandle;
 use flume::{Receiver, Sender, unbounded};
 use libmpv2::events::{Event, EventContext, PropertyData};
 use libmpv2::mpv_node::MpvNode;
-use libmpv2::{Format, Mpv};
+use libmpv2::{Format, GetData, Mpv};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, warn};
 
 // ---------------------------------------------------------------------------
-// Event-thread state machine (ported verbatim from tsukimi).
+// Event-thread state machine.
 // ---------------------------------------------------------------------------
 
-/// Event-loop thread is paused (waiting on `atomic_wait`).
+/// Event-loop thread is paused.
 pub const PAUSED: u32 = 0;
+
 /// Event-loop thread is running.
 pub const ACTIVE: u32 = 1;
-/// Event-loop thread should exit on the next loop iteration.
+
+/// Event-loop thread should exit.
 pub const SHUTDOWN: u32 = 2;
 
 // ---------------------------------------------------------------------------
-// Typed event payloads (ported from tsukimi's `ListenEvent` → `MpvEvent`).
+// Typed payloads.
 // ---------------------------------------------------------------------------
 
-/// A single libmpv track (audio or subtitle), parsed from the `track-list` node.
-///
-/// Phase 2.4: extended with `selected`, `external`, `src_id` fields (needed by the
-/// subtitle/audio picker UI to highlight the active track + show external-track badges).
+/// A single libmpv track, parsed from the `track-list` node.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MpvTrack {
     pub id: i64,
     pub title: String,
     pub lang: String,
-    /// Track type: `"audio"` or `"sub"`. Renamed to `type` in JSON (mpv's field name).
+
+    /// Track type: `"audio"` or `"sub"`.
     #[serde(rename = "type")]
     pub type_: String,
-    /// Whether this track is currently selected (Phase 2.4).
+
+    /// Whether this track is currently selected.
     #[serde(default)]
     pub selected: bool,
-    /// Whether this is an external track (loaded via `sub-add` / `audio-add`) (Phase 2.4).
+
+    /// Whether this track is external.
     #[serde(default)]
     pub external: bool,
-    /// Source id (the track's originating file index; 0 for the main file) (Phase 2.4).
+
+    /// Source id. `0` usually means the main file.
     #[serde(default, rename = "src_id")]
     pub src_id: i64,
 }
 
-/// Parsed track list.
+/// Parsed audio/subtitle track list.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MpvTracks {
     pub audio_tracks: Vec<MpvTrack>,
@@ -91,8 +87,8 @@ pub struct Chapter {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChapterList(pub Vec<Chapter>);
 
-/// Track selection for the `aid`/`sid` properties: a track id, or `None` to disable.
-#[derive(Debug, Clone)]
+/// Track selection for `aid` / `sid`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrackSelection {
     Track(i64),
     None,
@@ -101,21 +97,18 @@ pub enum TrackSelection {
 impl std::fmt::Display for TrackSelection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TrackSelection::Track(id) => write!(f, "{id}"),
-            TrackSelection::None => write!(f, "no"),
+            Self::Track(id) => write!(f, "{id}"),
+            Self::None => write!(f, "no"),
         }
     }
 }
 
-/// Internal strongly-typed event enum (ported from tsukimi's `ListenEvent`).
+/// Internal strongly typed event enum.
 ///
-/// Sent into the internal `MPV_EVENT_CHANNEL` flume channel for Rust-side consumers
-/// (Phase 2.5 watched-status / progress logic). The frontend receives the same data
-/// via `AppHandle::emit("fyom://mpv/*")` with event-specific payloads (see
-/// `spawn_event_loop`).
+/// The frontend receives equivalent event-specific payloads via `fyom://mpv/*`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", content = "data")]
-#[allow(clippy::large_enum_variant)] // TrackList / ChapterList are small in practice
+#[allow(clippy::large_enum_variant)]
 pub enum MpvEvent {
     Seek,
     PlaybackRestart,
@@ -129,11 +122,12 @@ pub enum MpvEvent {
     Volume(i64),
     Speed(f64),
     Shutdown,
-    DemuxerCacheTime(i64),
-    TimePos(i64),
+    DemuxerCacheTime(f64),
+    TimePos(f64),
     PausedForCache(bool),
     ChapterList(ChapterList),
-    // Phase 2.4 additions
+
+    // Phase 2.4 additions.
     HwdecCurrent(String),
     Aid(i64),
     Sid(i64),
@@ -149,16 +143,14 @@ pub enum MpvEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Internal event channel (reserved for Phase 2.5 Rust-side consumers).
+// Internal event channel.
 // ---------------------------------------------------------------------------
 
-/// A flume pair carrying `MpvEvent`s to Rust-side consumers.
-///
-/// The sender is fed by the event-pump thread; the receiver is reserved for Phase 2.5
-/// (watched-status / progress logic that should not round-trip through the frontend).
+/// Internal event channel reserved for Rust-side consumers.
 pub struct MpvEventChannel {
     pub tx: Sender<MpvEvent>,
-    /// Unused until Phase 2.5 wires a Rust-side consumer.
+
+    /// Reserved for future Rust-side consumers.
     #[allow(dead_code)]
     pub rx: Receiver<MpvEvent>,
 }
@@ -168,7 +160,42 @@ pub static MPV_EVENT_CHANNEL: LazyLock<MpvEventChannel> = LazyLock::new(|| {
     MpvEventChannel { tx, rx }
 });
 
-/// Map an mpv `EndFileReason` code to a human-readable name (per mpv/client.h).
+// ---------------------------------------------------------------------------
+// Small helpers.
+// ---------------------------------------------------------------------------
+
+fn send_internal(event: MpvEvent) {
+    let _ = MPV_EVENT_CHANNEL.tx.send(event);
+}
+
+fn emit_payload<T>(app_handle: &AppHandle, event_name: &str, payload: T)
+where
+    T: Serialize + Clone,
+{
+    let _ = app_handle.emit(event_name, payload);
+}
+
+fn emit_void(app_handle: &AppHandle, event_name: &str) {
+    let _ = app_handle.emit(event_name, ());
+}
+
+/// Observe an mpv property. Failure should not crash the whole app; a failed observer
+/// only means that one frontend event stream will not be produced.
+fn observe_property(
+    event_context: &mut EventContext,
+    name: &'static str,
+    format: Format,
+    reply_userdata: u64,
+) {
+    if let Err(e) = event_context.observe_property(name, format, reply_userdata) {
+        warn!(
+            "[mpv] observe_property({}) failed; this event stream will be disabled: {}",
+            name, e
+        );
+    }
+}
+
+/// Map an mpv EndFile reason code to a stable frontend string.
 fn endfile_reason_name(reason: u32) -> &'static str {
     match reason {
         0 => "eof",
@@ -180,260 +207,193 @@ fn endfile_reason_name(reason: u32) -> &'static str {
     }
 }
 
+/// Read a property from mpv and return a default on error.
+fn get_property_or_default<T>(mpv: &Mpv, name: &str, default: T) -> T
+where
+    T: GetData,
+{
+    mpv.get_property(name).unwrap_or(default)
+}
+
 // ---------------------------------------------------------------------------
-// Event-pump spawn (the core port — tsukimi's `process_events`).
+// Event-pump spawn.
 // ---------------------------------------------------------------------------
 
 /// Spawn the mpv event-pump thread.
 ///
-/// Creates an `EventContext` on the current thread, registers the 10 `observe_property`
-/// observers (ported verbatim from tsukimi), then spawns a dedicated thread that loops
-/// `wait_event(1000.0)`, decodes each event, sends a typed `MpvEvent` into the internal
-/// flume channel, AND emits a frontend event `fyom://mpv/<name>` with a typed payload.
-///
-/// The thread exits when `event_thread_alive` is set to `SHUTDOWN`. Returns the
-/// `JoinHandle` so the caller can join on shutdown.
-///
-/// # Panics
-/// Panics if `EventContext` setup (`disable_deprecated_events` / `observe_property`)
-/// fails — these are non-recoverable libmpv state errors.
+/// The returned handle must be joined during application shutdown.
 pub fn spawn_event_loop(
     mpv: Arc<Mpv>,
     app_handle: AppHandle,
     event_thread_alive: Arc<AtomicU32>,
 ) -> JoinHandle<()> {
-    // Build + configure the EventContext on this thread (tsukimi's pattern), then move
-    // it into the dedicated event thread. `mpv.ctx` is the raw `mpv_handle*`; the
-    // `Arc<Mpv>` kept alive in the thread ensures the handle outlives the context.
     let mut event_context = EventContext::new(mpv.ctx);
-    event_context
-        .disable_deprecated_events()
-        .expect("mpv: failed to disable deprecated events");
 
-    // observe_property set — ported verbatim from tsukimi's `process_events`.
-    // (reply_userdata ids 0–9 mirror tsukimi; we match on `name` so the ids are
-    // informational only.)
-    event_context
-        .observe_property("duration", Format::Double, 0u64)
-        .expect("mpv: observe_property(duration) failed");
-    event_context
-        .observe_property("pause", Format::Flag, 1u64)
-        .expect("mpv: observe_property(pause) failed");
-    event_context
-        .observe_property("cache-speed", Format::Int64, 2u64)
-        .expect("mpv: observe_property(cache-speed) failed");
-    event_context
-        .observe_property("track-list", Format::Node, 3u64)
-        .expect("mpv: observe_property(track-list) failed");
-    event_context
-        .observe_property("paused-for-cache", Format::Flag, 4u64)
-        .expect("mpv: observe_property(paused-for-cache) failed");
-    event_context
-        .observe_property("demuxer-cache-time", Format::Int64, 5u64)
-        .expect("mpv: observe_property(demuxer-cache-time) failed");
-    event_context
-        .observe_property("time-pos", Format::Int64, 6u64)
-        .expect("mpv: observe_property(time-pos) failed");
-    event_context
-        .observe_property("volume", Format::Int64, 7u64)
-        .expect("mpv: observe_property(volume) failed");
-    event_context
-        .observe_property("chapter-list", Format::Node, 8u64)
-        .expect("mpv: observe_property(chapter-list) failed");
-    event_context
-        .observe_property("speed", Format::Double, 9u64)
-        .expect("mpv: observe_property(speed) failed");
+    if let Err(e) = event_context.disable_deprecated_events() {
+        warn!("[mpv] failed to disable deprecated events: {}", e);
+    }
 
-    // Phase 2.4 additions — observe hwdec-current, aid, sid, A/V delays, color
-    // adjustments, chapter, eof-reached. These drive the new `fyom://mpv/*` events for
-    // the HTML controls overlay (subtitle/audio picker, color adjustments panel,
-    // chapter nav, eof-restart-after-eof).
+    // Core Phase 2.2 observers.
+    observe_property(&mut event_context, "duration", Format::Double, 0);
+    observe_property(&mut event_context, "pause", Format::Flag, 1);
+    observe_property(&mut event_context, "cache-speed", Format::Int64, 2);
+    observe_property(&mut event_context, "track-list", Format::Node, 3);
+    observe_property(&mut event_context, "paused-for-cache", Format::Flag, 4);
+    observe_property(&mut event_context, "demuxer-cache-time", Format::Double, 5);
+    observe_property(&mut event_context, "time-pos", Format::Double, 6);
+    observe_property(&mut event_context, "volume", Format::Int64, 7);
+    observe_property(&mut event_context, "chapter-list", Format::Node, 8);
+    observe_property(&mut event_context, "speed", Format::Double, 9);
+
+    // Phase 2.4 observers.
     //
-    // NOTE: `hwdec-current` is observed as `Format::Node` (not `Format::String`) because
-    // tsukimi's proven observer set only uses `{Double, Flag, Int64, Node}` — using
-    // `Format::String` would require verifying the `PropertyData::Str` variant exists in
-    // libmpv2 4.1, which we can't compile-check in this sandbox. `Format::Node` +
-    // `node.str()` extraction is the safe path (tsukimi uses `Format::Node` for
-    // `track-list` + `chapter-list` successfully).
-    event_context
-        .observe_property("hwdec-current", Format::Node, 10u64)
-        .expect("mpv: observe_property(hwdec-current) failed");
-    event_context
-        .observe_property("aid", Format::Int64, 11u64)
-        .expect("mpv: observe_property(aid) failed");
-    event_context
-        .observe_property("sid", Format::Int64, 12u64)
-        .expect("mpv: observe_property(sid) failed");
-    event_context
-        .observe_property("sub-delay", Format::Double, 13u64)
-        .expect("mpv: observe_property(sub-delay) failed");
-    event_context
-        .observe_property("audio-delay", Format::Double, 14u64)
-        .expect("mpv: observe_property(audio-delay) failed");
-    event_context
-        .observe_property("brightness", Format::Double, 15u64)
-        .expect("mpv: observe_property(brightness) failed");
-    event_context
-        .observe_property("contrast", Format::Double, 16u64)
-        .expect("mpv: observe_property(contrast) failed");
-    event_context
-        .observe_property("saturation", Format::Double, 17u64)
-        .expect("mpv: observe_property(saturation) failed");
-    event_context
-        .observe_property("gamma", Format::Double, 18u64)
-        .expect("mpv: observe_property(gamma) failed");
-    event_context
-        .observe_property("hue", Format::Double, 19u64)
-        .expect("mpv: observe_property(hue) failed");
-    event_context
-        .observe_property("chapter", Format::Int64, 20u64)
-        .expect("mpv: observe_property(chapter) failed");
-    event_context
-        .observe_property("eof-reached", Format::Flag, 21u64)
-        .expect("mpv: observe_property(eof-reached) failed");
+    // `hwdec-current` is observed as Node so we can extract it through `MpvNode::str()`
+    // without depending on a specific `PropertyData::String` variant.
+    observe_property(&mut event_context, "hwdec-current", Format::Node, 10);
+    observe_property(&mut event_context, "aid", Format::Int64, 11);
+    observe_property(&mut event_context, "sid", Format::Int64, 12);
+    observe_property(&mut event_context, "sub-delay", Format::Double, 13);
+    observe_property(&mut event_context, "audio-delay", Format::Double, 14);
+    observe_property(&mut event_context, "brightness", Format::Double, 15);
+    observe_property(&mut event_context, "contrast", Format::Double, 16);
+    observe_property(&mut event_context, "saturation", Format::Double, 17);
+    observe_property(&mut event_context, "gamma", Format::Double, 18);
+    observe_property(&mut event_context, "hue", Format::Double, 19);
+    observe_property(&mut event_context, "chapter", Format::Int64, 20);
+    observe_property(&mut event_context, "eof-reached", Format::Flag, 21);
 
-    let alive = event_thread_alive.clone();
+    let alive = Arc::clone(&event_thread_alive);
     let mpv_for_thread = Arc::clone(&mpv);
 
     std::thread::Builder::new()
         .name("fyom mpv event loop".into())
         .spawn(move || {
-            loop {
-                // State machine (ported verbatim). SHUTDOWN → exit; PAUSED → block until
-                // state changes; ACTIVE → drain events.
-                let state = alive.load(Ordering::SeqCst);
-                match state {
-                    SHUTDOWN => break,
-                    PAUSED => atomic_wait::wait(&alive, PAUSED),
-                    _ => (),
-                }
-
-                match event_context.wait_event(1000.0) {
-                    Some(Ok(event)) => match event {
-                        Event::PropertyChange { name, change, .. } => {
-                            handle_property_change(name, change, &mpv_for_thread, &app_handle);
-                        }
-                        Event::Seek { .. } => {
-                            let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Seek);
-                            let _ = app_handle.emit("fyom://mpv/seek", ());
-                        }
-                        Event::PlaybackRestart { .. } => {
-                            let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::PlaybackRestart);
-                            let _ = app_handle.emit("fyom://mpv/playback-restart", ());
-                        }
-                        Event::EndFile(reason) => {
-                            let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::EndFile(reason));
-                            let payload = serde_json::json!({
-                                "reason": reason,
-                                "reason_name": endfile_reason_name(reason),
-                            });
-                            let _ = app_handle.emit("fyom://mpv/end-file", payload);
-                        }
-                        Event::FileLoaded => {
-                            let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::FileLoaded);
-                            // mpv doesn't know fyom's media_id; emit the loaded path so
-                            // the frontend can correlate with its pending play request.
-                            let path: Option<String> = mpv_for_thread.get_property("path").ok();
-                            let payload = serde_json::json!({ "path": path });
-                            let _ = app_handle.emit("fyom://mpv/file-loaded", payload);
-                        }
-                        Event::Shutdown => {
-                            let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Shutdown);
-                            let _ = app_handle.emit("fyom://mpv/shutdown", ());
-                        }
-                        _ => {}
-                    },
-                    Some(Err(e)) => {
-                        let msg = e.to_string();
-                        warn!("[mpv] event error: {}", msg);
-                        let _ = MPV_EVENT_CHANNEL
-                            .tx
-                            .send(MpvEvent::Error(msg.clone()));
-                        let _ = app_handle.emit(
-                            "fyom://mpv/error",
-                            serde_json::json!({ "message": msg }),
-                        );
-                    }
-                    None => {}
-                }
-            }
-            debug!("[mpv] event loop thread exited");
+            run_event_loop(event_context, mpv_for_thread, app_handle, alive);
         })
         .expect("failed to spawn fyom mpv event loop thread")
 }
 
-/// Decode a property-change event: send a typed `MpvEvent` into the internal channel +
-/// emit a `fyom://mpv/<name>` frontend event with a typed payload.
-///
-/// Payload shapes (per `ROADMAP.md` Phase 2.2 + Phase 2.4):
-/// - `fyom://mpv/duration`           → `{ "duration": f64 }`
-/// - `fyom://mpv/pause`              → `{ "paused": bool }`
-/// - `fyom://mpv/cache-speed`        → `{ "speed": i64 }`
-/// - `fyom://mpv/track-list`         → `{ "audio_tracks": [...], "sub_tracks": [...] }`
-/// - `fyom://mpv/chapter-list`       → `{ "chapters": [...] }`
-/// - `fyom://mpv/volume`             → `{ "volume": i64 }`
-/// - `fyom://mpv/speed`              → `{ "speed": f64 }`
-/// - `fyom://mpv/demuxer-cache-time` → `{ "time": i64 }`
-/// - `fyom://mpv/time-pos`           → `{ "position": i64, "duration": f64 }`
-/// - `fyom://mpv/paused-for-cache`   → `{ "paused": bool }`
-///
-/// Phase 2.4 additions:
-/// - `fyom://mpv/hwdec-current`      → `{ "hwdec": string }` (e.g. "auto-safe", "vt", "vaapi", "d3d11va")
-/// - `fyom://mpv/aid`                → `{ "id": i64 }` (current audio track id; 0 = none)
-/// - `fyom://mpv/sid`                → `{ "id": i64 }` (current subtitle track id; 0 = none)
-/// - `fyom://mpv/sub-delay`          → `{ "delay": f64 }` (seconds)
-/// - `fyom://mpv/audio-delay`        → `{ "delay": f64 }` (seconds)
-/// - `fyom://mpv/brightness`         → `{ "value": f64 }` (-100..=100)
-/// - `fyom://mpv/contrast`           → `{ "value": f64 }`
-/// - `fyom://mpv/saturation`         → `{ "value": f64 }`
-/// - `fyom://mpv/gamma`              → `{ "value": f64 }`
-/// - `fyom://mpv/hue`                → `{ "value": f64 }`
-/// - `fyom://mpv/chapter`            → `{ "index": i64 }` (-1 = no chapter)
-/// - `fyom://mpv/eof-reached`        → `{ "eof": bool }`
-#[allow(clippy::too_many_lines)] // faithful 1:1 port of tsukimi's match arms + Phase 2.4 additions
-fn handle_property_change(
-    name: &str,
-    change: PropertyData<'_>,
-    mpv: &Mpv,
-    app_handle: &AppHandle,
+fn run_event_loop(
+    mut event_context: EventContext,
+    mpv: Arc<Mpv>,
+    app_handle: AppHandle,
+    alive: Arc<AtomicU32>,
 ) {
+    loop {
+        match alive.load(Ordering::SeqCst) {
+            SHUTDOWN => break,
+            PAUSED => {
+                atomic_wait::wait(&alive, PAUSED);
+                continue;
+            }
+            _ => {}
+        }
+
+        match event_context.wait_event(1000.0) {
+            Some(Ok(event)) => handle_event(event, &mpv, &app_handle),
+            Some(Err(e)) => {
+                let message = e.to_string();
+                warn!("[mpv] event error: {}", message);
+
+                send_internal(MpvEvent::Error(message.clone()));
+                emit_payload(
+                    &app_handle,
+                    "fyom://mpv/error",
+                    json!({ "message": message }),
+                );
+            }
+            None => {}
+        }
+    }
+
+    debug!("[mpv] event loop thread exited");
+}
+
+fn handle_event(event: Event, mpv: &Mpv, app_handle: &AppHandle) {
+    match event {
+        Event::PropertyChange { name, change, .. } => {
+            handle_property_change(name, change, mpv, app_handle);
+        }
+        Event::Seek { .. } => {
+            send_internal(MpvEvent::Seek);
+            emit_void(app_handle, "fyom://mpv/seek");
+        }
+        Event::PlaybackRestart { .. } => {
+            send_internal(MpvEvent::PlaybackRestart);
+            emit_void(app_handle, "fyom://mpv/playback-restart");
+        }
+        Event::EndFile(reason) => {
+            send_internal(MpvEvent::EndFile(reason));
+            emit_payload(
+                app_handle,
+                "fyom://mpv/end-file",
+                json!({
+                    "reason": reason,
+                    "reason_name": endfile_reason_name(reason),
+                }),
+            );
+        }
+        Event::FileLoaded => {
+            send_internal(MpvEvent::FileLoaded);
+
+            let path: Option<String> = mpv.get_property("path").ok();
+
+            emit_payload(
+                app_handle,
+                "fyom://mpv/file-loaded",
+                json!({ "path": path }),
+            );
+        }
+        Event::Shutdown => {
+            send_internal(MpvEvent::Shutdown);
+            emit_void(app_handle, "fyom://mpv/shutdown");
+        }
+        _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Property decoding.
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_lines)]
+fn handle_property_change(name: &str, change: PropertyData<'_>, mpv: &Mpv, app_handle: &AppHandle) {
     match name {
         "duration" => {
-            if let PropertyData::Double(dur) = change {
-                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Duration(dur));
-                let _ = app_handle.emit(
+            if let PropertyData::Double(duration) = change {
+                send_internal(MpvEvent::Duration(duration));
+                emit_payload(
+                    app_handle,
                     "fyom://mpv/duration",
-                    serde_json::json!({ "duration": dur }),
+                    json!({ "duration": duration }),
                 );
             }
         }
         "pause" => {
-            if let PropertyData::Flag(pause) = change {
-                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Pause(pause));
-                let _ = app_handle.emit(
-                    "fyom://mpv/pause",
-                    serde_json::json!({ "paused": pause }),
-                );
+            if let PropertyData::Flag(paused) = change {
+                send_internal(MpvEvent::Pause(paused));
+                emit_payload(app_handle, "fyom://mpv/pause", json!({ "paused": paused }));
             }
         }
         "cache-speed" => {
             if let PropertyData::Int64(speed) = change {
-                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::CacheSpeed(speed));
-                let _ = app_handle.emit(
+                send_internal(MpvEvent::CacheSpeed(speed));
+                emit_payload(
+                    app_handle,
                     "fyom://mpv/cache-speed",
-                    serde_json::json!({ "speed": speed }),
+                    json!({ "speed": speed }),
                 );
             }
         }
         "track-list" => {
             if let PropertyData::Node(node) = change {
                 let tracks = node_to_tracks(node);
-                let _ = MPV_EVENT_CHANNEL
-                    .tx
-                    .send(MpvEvent::TrackList(tracks.clone()));
-                let _ = app_handle.emit(
+
+                send_internal(MpvEvent::TrackList(tracks.clone()));
+                emit_payload(
+                    app_handle,
                     "fyom://mpv/track-list",
-                    serde_json::json!({
+                    json!({
                         "audio_tracks": tracks.audio_tracks,
                         "sub_tracks": tracks.sub_tracks,
                     }),
@@ -443,177 +403,157 @@ fn handle_property_change(
         "chapter-list" => {
             if let PropertyData::Node(node) = change {
                 let chapters = node_to_chapter_list(node);
-                let _ = MPV_EVENT_CHANNEL
-                    .tx
-                    .send(MpvEvent::ChapterList(chapters.clone()));
-                let _ = app_handle.emit(
+
+                send_internal(MpvEvent::ChapterList(chapters.clone()));
+                emit_payload(
+                    app_handle,
                     "fyom://mpv/chapter-list",
-                    serde_json::json!({ "chapters": chapters.0 }),
+                    json!({ "chapters": chapters.0 }),
                 );
             }
         }
         "volume" => {
             if let PropertyData::Int64(volume) = change {
-                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Volume(volume));
-                let _ = app_handle.emit(
-                    "fyom://mpv/volume",
-                    serde_json::json!({ "volume": volume }),
-                );
+                send_internal(MpvEvent::Volume(volume));
+                emit_payload(app_handle, "fyom://mpv/volume", json!({ "volume": volume }));
             }
         }
         "speed" => {
             if let PropertyData::Double(speed) = change {
-                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Speed(speed));
-                let _ = app_handle.emit(
-                    "fyom://mpv/speed",
-                    serde_json::json!({ "speed": speed }),
-                );
+                send_internal(MpvEvent::Speed(speed));
+                emit_payload(app_handle, "fyom://mpv/speed", json!({ "speed": speed }));
             }
         }
         "demuxer-cache-time" => {
-            if let PropertyData::Int64(time) = change {
-                let _ = MPV_EVENT_CHANNEL
-                    .tx
-                    .send(MpvEvent::DemuxerCacheTime(time));
-                let _ = app_handle.emit(
+            if let PropertyData::Double(time) = change {
+                send_internal(MpvEvent::DemuxerCacheTime(time));
+                emit_payload(
+                    app_handle,
                     "fyom://mpv/demuxer-cache-time",
-                    serde_json::json!({ "time": time }),
+                    json!({ "time": time }),
                 );
             }
         }
         "time-pos" => {
-            if let PropertyData::Int64(time) = change {
-                // Include the current duration so the frontend can render a progress
-                // bar from a single event (per the ROADMAP payload contract). `duration`
-                // is observed separately + rarely changes; a cheap get_property here is
-                // fine (time-pos fires ~1×/sec by default).
-                let duration: f64 = mpv.get_property("duration").unwrap_or(0.0);
-                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::TimePos(time));
-                let _ = app_handle.emit(
+            if let PropertyData::Double(position) = change {
+                let duration: f64 = get_property_or_default(mpv, "duration", 0.0);
+
+                send_internal(MpvEvent::TimePos(position));
+                emit_payload(
+                    app_handle,
                     "fyom://mpv/time-pos",
-                    serde_json::json!({ "position": time, "duration": duration }),
+                    json!({
+                        "position": position,
+                        "duration": duration,
+                    }),
                 );
             }
         }
         "paused-for-cache" => {
-            if let PropertyData::Flag(pause) = change {
-                // tsukimi ORs in `seeking` so the UI shows a buffering indicator while
-                // seeking too — ported verbatim.
-                let seeking: bool = mpv.get_property("seeking").unwrap_or(false);
-                let buffered_paused = pause || seeking;
-                let _ = MPV_EVENT_CHANNEL
-                    .tx
-                    .send(MpvEvent::PausedForCache(buffered_paused));
-                let _ = app_handle.emit(
+            if let PropertyData::Flag(paused_for_cache) = change {
+                let seeking: bool = get_property_or_default(mpv, "seeking", false);
+                let paused = paused_for_cache || seeking;
+
+                send_internal(MpvEvent::PausedForCache(paused));
+                emit_payload(
+                    app_handle,
                     "fyom://mpv/paused-for-cache",
-                    serde_json::json!({ "paused": buffered_paused }),
+                    json!({ "paused": paused }),
                 );
             }
         }
-        // -----------------------------------------------------------------------
-        // Phase 2.4 property observers (hwdec, aid, sid, A/V delays, color
-        // adjustments, chapter, eof-reached).
-        // -----------------------------------------------------------------------
         "hwdec-current" => {
-            // Observed as `Format::Node` (see the observe_property call above for the
-            // rationale). Extract the string via `MpvNode::str()`.
             if let PropertyData::Node(node) = change {
-                let hwdec_string = node
-                    .str()
-                    .map(|s| s.to_string())
-                    .unwrap_or_default();
-                let _ = MPV_EVENT_CHANNEL
-                    .tx
-                    .send(MpvEvent::HwdecCurrent(hwdec_string.clone()));
-                let _ = app_handle.emit(
+                let hwdec = node.str().unwrap_or_default().to_string();
+
+                send_internal(MpvEvent::HwdecCurrent(hwdec.clone()));
+                emit_payload(
+                    app_handle,
                     "fyom://mpv/hwdec-current",
-                    serde_json::json!({ "hwdec": hwdec_string }),
+                    json!({ "hwdec": hwdec }),
                 );
             }
         }
         "aid" => {
             if let PropertyData::Int64(id) = change {
-                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Aid(id));
-                let _ = app_handle
-                    .emit("fyom://mpv/aid", serde_json::json!({ "id": id }));
+                send_internal(MpvEvent::Aid(id));
+                emit_payload(app_handle, "fyom://mpv/aid", json!({ "id": id }));
             }
         }
         "sid" => {
             if let PropertyData::Int64(id) = change {
-                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Sid(id));
-                let _ = app_handle
-                    .emit("fyom://mpv/sid", serde_json::json!({ "id": id }));
+                send_internal(MpvEvent::Sid(id));
+                emit_payload(app_handle, "fyom://mpv/sid", json!({ "id": id }));
             }
         }
         "sub-delay" => {
             if let PropertyData::Double(delay) = change {
-                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::SubDelay(delay));
-                let _ = app_handle.emit(
+                send_internal(MpvEvent::SubDelay(delay));
+                emit_payload(
+                    app_handle,
                     "fyom://mpv/sub-delay",
-                    serde_json::json!({ "delay": delay }),
+                    json!({ "delay": delay }),
                 );
             }
         }
         "audio-delay" => {
             if let PropertyData::Double(delay) = change {
-                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::AudioDelay(delay));
-                let _ = app_handle.emit(
+                send_internal(MpvEvent::AudioDelay(delay));
+                emit_payload(
+                    app_handle,
                     "fyom://mpv/audio-delay",
-                    serde_json::json!({ "delay": delay }),
+                    json!({ "delay": delay }),
                 );
             }
         }
         "brightness" => {
             if let PropertyData::Double(value) = change {
-                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Brightness(value));
-                let _ = app_handle.emit(
+                send_internal(MpvEvent::Brightness(value));
+                emit_payload(
+                    app_handle,
                     "fyom://mpv/brightness",
-                    serde_json::json!({ "value": value }),
+                    json!({ "value": value }),
                 );
             }
         }
         "contrast" => {
             if let PropertyData::Double(value) = change {
-                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Contrast(value));
-                let _ = app_handle
-                    .emit("fyom://mpv/contrast", serde_json::json!({ "value": value }));
+                send_internal(MpvEvent::Contrast(value));
+                emit_payload(app_handle, "fyom://mpv/contrast", json!({ "value": value }));
             }
         }
         "saturation" => {
             if let PropertyData::Double(value) = change {
-                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Saturation(value));
-                let _ = app_handle.emit(
+                send_internal(MpvEvent::Saturation(value));
+                emit_payload(
+                    app_handle,
                     "fyom://mpv/saturation",
-                    serde_json::json!({ "value": value }),
+                    json!({ "value": value }),
                 );
             }
         }
         "gamma" => {
             if let PropertyData::Double(value) = change {
-                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Gamma(value));
-                let _ = app_handle
-                    .emit("fyom://mpv/gamma", serde_json::json!({ "value": value }));
+                send_internal(MpvEvent::Gamma(value));
+                emit_payload(app_handle, "fyom://mpv/gamma", json!({ "value": value }));
             }
         }
         "hue" => {
             if let PropertyData::Double(value) = change {
-                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Hue(value));
-                let _ = app_handle
-                    .emit("fyom://mpv/hue", serde_json::json!({ "value": value }));
+                send_internal(MpvEvent::Hue(value));
+                emit_payload(app_handle, "fyom://mpv/hue", json!({ "value": value }));
             }
         }
         "chapter" => {
             if let PropertyData::Int64(index) = change {
-                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Chapter(index));
-                let _ = app_handle
-                    .emit("fyom://mpv/chapter", serde_json::json!({ "index": index }));
+                send_internal(MpvEvent::Chapter(index));
+                emit_payload(app_handle, "fyom://mpv/chapter", json!({ "index": index }));
             }
         }
         "eof-reached" => {
             if let PropertyData::Flag(eof) = change {
-                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::EofReached(eof));
-                let _ = app_handle
-                    .emit("fyom://mpv/eof-reached", serde_json::json!({ "eof": eof }));
+                send_internal(MpvEvent::EofReached(eof));
+                emit_payload(app_handle, "fyom://mpv/eof-reached", json!({ "eof": eof }));
             }
         }
         _ => {}
@@ -621,60 +561,36 @@ fn handle_property_change(
 }
 
 // ---------------------------------------------------------------------------
-// Node parsers (ported from tsukimi, with defensive `unwrap_or`).
+// Node parsers.
 // ---------------------------------------------------------------------------
 
 /// Parse the `track-list` property node into `MpvTracks`.
-///
-/// Ported from tsukimi's `node_to_tracks` with a defensive twist: missing `id`/`title`/
-/// `lang`/`type` fields fall back to sane defaults instead of panicking (a malformed
-/// track node should not crash the event thread).
 fn node_to_tracks(node: MpvNode) -> MpvTracks {
-    let mut audio_tracks = Vec::new();
-    let mut sub_tracks = Vec::new();
     let Some(array) = node.array() else {
         return MpvTracks::default();
     };
+
+    let mut audio_tracks = Vec::new();
+    let mut sub_tracks = Vec::new();
+
     for entry in array {
         let Some(map) = entry.map() else {
             continue;
         };
-        let range = map.collect::<HashMap<_, _>>();
-        let id = range.get("id").and_then(|v| v.i64()).unwrap_or(0);
-        let title = range
-            .get("title")
-            .and_then(|v| v.str())
-            .unwrap_or("unknown")
-            .to_string();
-        let lang = range
-            .get("lang")
-            .and_then(|v| v.str())
-            .unwrap_or("unknown")
-            .to_string();
-        let type_ = range
-            .get("type")
-            .and_then(|v| v.str())
-            .unwrap_or("unknown")
-            .to_string();
-        // Phase 2.4: parse selection + external + src-id fields (defensive unwrap_or
-        // — a malformed track node should not crash the event thread).
-        // NOTE: booleans are read via `i64()` + `!= 0` conversion because `MpvNode::flag()`
-        // may not exist in libmpv2 4.1 (can't compile-check in this sandbox). mpv stores
-        // `MPV_FORMAT_FLAG` as 0/1 ints in node form, so `i64()` is the safe path.
-        let selected = range
-            .get("selected")
-            .and_then(|v| v.i64())
-            .map(|n| n != 0)
-            .unwrap_or(false);
-        let external = range
-            .get("external")
-            .and_then(|v| v.i64())
-            .map(|n| n != 0)
-            .unwrap_or(false);
-        let src_id = range
-            .get("src-id")
-            .and_then(|v| v.i64())
-            .unwrap_or(0);
+
+        // Current libmpv2 exposes node maps as `(String, MpvNode)` pairs.
+        // Keep this as `HashMap<String, MpvNode>` to match the crate's concrete API.
+        let fields: HashMap<String, MpvNode> = map.collect();
+
+        let id = node_i64(&fields, "id", 0);
+        let title = node_string(&fields, "title", "");
+        let lang = node_string(&fields, "lang", "");
+        let type_ = node_string(&fields, "type", "");
+
+        let selected = node_bool(&fields, "selected", false);
+        let external = node_bool(&fields, "external", false);
+        let src_id = node_i64(&fields, "src-id", 0);
+
         let track = MpvTrack {
             id,
             title,
@@ -684,12 +600,14 @@ fn node_to_tracks(node: MpvNode) -> MpvTracks {
             external,
             src_id,
         };
-        if track.type_ == "audio" {
-            audio_tracks.push(track);
-        } else if track.type_ == "sub" {
-            sub_tracks.push(track);
+
+        match track.type_.as_str() {
+            "audio" => audio_tracks.push(track),
+            "sub" => sub_tracks.push(track),
+            _ => {}
         }
     }
+
     MpvTracks {
         audio_tracks,
         sub_tracks,
@@ -697,26 +615,51 @@ fn node_to_tracks(node: MpvNode) -> MpvTracks {
 }
 
 /// Parse the `chapter-list` property node into `ChapterList`.
-///
-/// Ported from tsukimi's `node_to_chapter_list` with a defensive `unwrap_or` on field
-/// access.
 fn node_to_chapter_list(node: MpvNode) -> ChapterList {
-    let mut chapters = Vec::new();
     let Some(array) = node.array() else {
         return ChapterList::default();
     };
+
+    let mut chapters = Vec::new();
+
     for entry in array {
         let Some(map) = entry.map() else {
             continue;
         };
-        let range = map.collect::<HashMap<_, _>>();
-        let title = range
-            .get("title")
-            .and_then(|v| v.str())
-            .unwrap_or("unknown")
-            .to_string();
-        let time = range.get("time").and_then(|v| v.f64()).unwrap_or(0.0);
+
+        // Current libmpv2 exposes node maps as `(String, MpvNode)` pairs.
+        // Keep this as `HashMap<String, MpvNode>` to match the crate's concrete API.
+        let fields: HashMap<String, MpvNode> = map.collect();
+
+        let title = node_string(&fields, "title", "");
+        let time = node_f64(&fields, "time", 0.0);
+
         chapters.push(Chapter { title, time });
     }
+
     ChapterList(chapters)
+}
+
+fn node_i64(fields: &HashMap<String, MpvNode>, key: &str, default: i64) -> i64 {
+    fields.get(key).and_then(MpvNode::i64).unwrap_or(default)
+}
+
+fn node_f64(fields: &HashMap<String, MpvNode>, key: &str, default: f64) -> f64 {
+    fields.get(key).and_then(MpvNode::f64).unwrap_or(default)
+}
+
+fn node_string(fields: &HashMap<String, MpvNode>, key: &str, default: &str) -> String {
+    fields
+        .get(key)
+        .and_then(MpvNode::str)
+        .unwrap_or(default)
+        .to_string()
+}
+
+fn node_bool(fields: &HashMap<String, MpvNode>, key: &str, default: bool) -> bool {
+    fields
+        .get(key)
+        .and_then(MpvNode::i64)
+        .map(|value| value != 0)
+        .unwrap_or(default)
 }
