@@ -19,45 +19,55 @@
           {{ $t('player.backToDetails') }}
         </router-link>
 
-        <router-link to="/library" class="error-link"> {{ $t('player.backToLibrary') }} </router-link>
+        <router-link to="/library" class="error-link">
+          {{ $t('player.backToLibrary') }}
+        </router-link>
       </div>
     </section>
 
     <section v-else class="player-surface">
-      <div v-if="isLoading" class="loading">
-        <span class="spinner" aria-hidden="true"></span>
-        <span>{{ loadingLabel }}</span>
+      <div v-if="streamUrl" class="browser-player-shell">
+        <video
+          :key="videoElementKey"
+          ref="videoRef"
+          :src="streamUrl"
+          controls
+          autoplay
+          playsinline
+          preload="metadata"
+          class="video-player"
+          @loadstart="onVideoLoadStart"
+          @loaded-metadata="onLoadedMetadata"
+          @canplay="onCanPlay"
+          @playing="onPlaying"
+          @waiting="onWaiting"
+          @stalled="onStalled"
+          @timeupdate="onTimeUpdate"
+          @pause="onPause"
+          @ended="onEnded"
+          @error="onVideoError"
+        >
+          {{ $t('player.browserNotSupported') }}
+        </video>
+
+        <div v-if="browserLoading" class="player-overlay">
+          <span class="spinner" aria-hidden="true"></span>
+          <span>{{ loadingLabel }}</span>
+        </div>
+
+        <div v-if="browserPlaybackBlocked" class="player-overlay player-overlay-action">
+          <p class="overlay-title">{{ $t('player.playbackBlocked') }}</p>
+          <p class="overlay-subtitle">
+            {{ $t('player.browserBlockedAutoplay') }}
+          </p>
+          <button type="button" class="overlay-btn" @click="onManualBrowserPlay">
+            {{ $t('player.startPlayback') }}
+          </button>
+        </div>
       </div>
 
-      <video
-        v-else-if="showBrowserPlayer && streamUrl"
-        ref="videoRef"
-        :src="streamUrl"
-        controls
-        autoplay
-        playsinline
-        class="video-player"
-        @timeupdate="onTimeUpdate"
-        @pause="onPause"
-        @ended="onEnded"
-        @loaded-metadata="onLoadedMetadata"
-        @error="onVideoError"
-      >
-        {{ $t('player.browserNotSupported') }}
-      </video>
-
       <div v-else-if="isNativeReady" class="native-surface">
-        <!-- Phase 2.3: the mpv GL layer renders behind this transparent webview root.
-             The `.video-mode` class on `.player-view` sets `background: transparent !important`
-             so the native NSOpenGL / WGL / GLX layer (created by `attach_render_surface`)
-             shows through. HTML controls overlay on top with their own opaque backgrounds. -->
-        <span v-if="!isVideoModeActive" class="native-status">{{ $t('player.nativeActive') }}</span>
-        <span v-if="!isVideoModeActive" class="native-subtitle"> {{ $t('player.nativeRunning') }} </span>
-
-        <!-- Phase 2.4: HTML controls overlay on top of the transparent webview.
-             Only shown when video-mode is active (the GL layer is visible). -->
         <PlayerControls
-          v-if="isVideoModeActive"
           :state="controlsState"
           @toggle-pause="onTogglePause"
           @seek="onSeek"
@@ -77,8 +87,9 @@
         />
       </div>
 
-      <div v-else class="loading">
-        <span>{{ $t('player.loadingPlayer') }}</span>
+      <div v-if="isLoading && !streamUrl" class="loading">
+        <span class="spinner" aria-hidden="true"></span>
+        <span>{{ loadingLabel }}</span>
       </div>
     </section>
   </main>
@@ -141,9 +152,13 @@ const route = useRoute();
 const { t } = useI18n();
 
 const videoRef = ref<HTMLVideoElement | null>(null);
+const videoElementKey = ref(0);
+
 const streamUrl = ref('');
 const error = ref('');
 const loadingMedia = ref(false);
+const browserLoading = ref(false);
+const browserPlaybackBlocked = ref(false);
 
 const nativePlayerState = shallowRef<NativePlayerState>(createInitialNativePlayerState());
 
@@ -151,10 +166,6 @@ const nativeInitAttempted = ref(false);
 const lastReportedPosition = ref(0);
 const progressRequestInFlight = ref(false);
 const pendingProgressPayload = ref<ProgressPayload | null>(null);
-
-// Phase 2.5: resume position fetched from the Go backend before playback starts.
-// Consumed (reset to 0) once the seek lands — in `onFileLoaded` for native mpv,
-// or `onLoadedMetadata` for the HTML5 `<video>` fallback.
 const resumePosition = ref(0);
 
 let loadGeneration = 0;
@@ -163,75 +174,55 @@ let mpvEventsUnlisten: (() => void) | null = null;
 
 const mediaId = computed(() => {
   const id = route.params.id;
-
   return typeof id === 'string' ? id : '';
 });
 
-const isNativeAvailable = computed(() => isNativePlaybackRuntimeAvailable());
+const hasTauriInvoke = computed(() => Boolean(getTauriInvoke()));
+const isNativeAvailable = computed(
+  () => hasTauriInvoke.value && isNativePlaybackRuntimeAvailable()
+);
 const isInitializing = computed(() => nativePlayerState.value.status === 'initializing');
 const isNativeReady = computed(() => nativePlayerState.value.status === 'ready');
 const isNativeFailed = computed(() => nativePlayerState.value.status === 'failed');
 const isNativeUnavailable = computed(() => nativePlayerState.value.status === 'unavailable');
 const isNativeIdle = computed(() => nativePlayerState.value.status === 'idle');
 
+const shouldAttemptNativePlayback = computed(() => {
+  return isNativeAvailable.value && Boolean(streamUrl.value);
+});
+
+const showBrowserPlayer = computed(() => {
+  if (error.value) return false;
+  if (!streamUrl.value) return false;
+  return true;
+});
+
 const showFallbackBanner = computed(() => {
-  return isNativeAvailable.value && isNativeFailed.value && showBrowserPlayer.value;
+  return (
+    isNativeAvailable.value && nativeInitAttempted.value && isNativeFailed.value && streamUrl.value
+  );
 });
 
 const isLoading = computed(() => {
-  return loadingMedia.value || isInitializing.value;
+  return (
+    loadingMedia.value || (isNativeAvailable.value && isInitializing.value) || browserLoading.value
+  );
 });
 
 const loadingLabel = computed(() => {
   if (loadingMedia.value) return t('player.loadingMedia');
   if (isInitializing.value) return t('player.initializingNative');
-
   return t('player.loadingPlayer');
 });
 
-const showBrowserPlayer = computed(() => {
-  if (error.value) return false;
-  if (isInitializing.value) return false;
-  if (!streamUrl.value) return false;
-
-  if (isNativeFailed.value) return true;
-  if (isNativeUnavailable.value) return true;
-  if (isNativeIdle.value) return true;
-
-  return false;
-});
-
-/**
- * Phase 2.3: when the native player is ready + a stream URL is loaded, activate
- * `.video-mode` (transparent webview root) so the mpv GL layer shows through.
- *
- * Deactivates when:
- * - The native player is not ready (init failed / unavailable / idle).
- * - An error is showing (the error overlay should be opaque for readability).
- * - The browser `<video>` fallback is active (no GL layer to show).
- */
 const isVideoModeActive = computed(() => {
   if (error.value) return false;
   if (!isNativeReady.value) return false;
-  if (showBrowserPlayer.value) return false;
   if (!streamUrl.value) return false;
   return true;
 });
 
-// Phase 2.3: tracks whether `attach_render_surface` has been called (idempotent guard
-// so we don't re-attach on every `mediaId` watch).
 const renderSurfaceAttached = ref(false);
-
-// ---------------------------------------------------------------------------
-// Phase 2.4: mpv event-driven playback state + composable instances.
-//
-// The mpv event subscription (`subscribeMpvEvents`) drives all native playback state:
-// `isPaused`, `currentTime`, `duration`, `volume`, `speed`, `audioTracks`, `subTracks`,
-// `currentAudioId`, `currentSubId`, `chapters`, `currentChapter`, `hwdec`, and the
-// color-adjustment / A/V-delay values. The HTML controls (PlayerControls.vue) render
-// this state + emit user actions, which the handlers below translate back into mpv
-// commands via the `native-player.ts` bridge.
-// ---------------------------------------------------------------------------
 
 const isPaused = ref(true);
 const currentTime = ref(0);
@@ -244,16 +235,11 @@ const currentChapter = ref(-1);
 const hwdec = ref('');
 const isBuffering = ref(false);
 
-// Composable instances (track management + adjustments + speed + history).
 const tracksComposable = useMediaTracks(() => streamUrl.value);
 const adjustmentsComposable = usePlaybackAdjustments();
 const speedComposable = usePlaybackSpeed();
 const historyComposable = usePlaybackHistory();
 
-/**
- * The full playback state rendered by PlayerControls. Computed from the reactive refs
- * + composable state above. PlayerControls is a pure presentational component.
- */
 const controlsState = computed<PlayerControlsState>(() => ({
   isPaused: isPaused.value,
   currentTime: currentTime.value,
@@ -279,21 +265,14 @@ const controlsState = computed<PlayerControlsState>(() => ({
   isBuffering: isBuffering.value,
 }));
 
-/**
- * Subscribe to `fyom://mpv/*` events. Called once on mount when native playback is
- * available. The unlisten function is stored for `onBeforeUnmount` cleanup.
- */
 async function setupMpvEventSubscription(): Promise<void> {
   if (mpvEventsUnlisten) return;
-  if (!isNativePlaybackRuntimeAvailable()) return;
+  if (!isNativeAvailable.value) return;
 
   mpvEventsUnlisten = await subscribeMpvEvents({
     onTimePos: ({ position, duration: dur }) => {
       currentTime.value = position;
       if (dur > 0) duration.value = dur;
-      // Phase 2.5: 10s-throttled progress report for native playback, replacing
-      // the HTML5 `onTimeUpdate` path when native is active. The finish
-      // threshold (90%) forces an immediate report so the watched status lands.
       void maybeReportNativeProgress();
     },
     onDuration: ({ duration: dur }) => {
@@ -301,8 +280,6 @@ async function setupMpvEventSubscription(): Promise<void> {
     },
     onPause: ({ paused }) => {
       isPaused.value = paused;
-      // Phase 2.5: flush progress on pause so the latest position survives a
-      // reload / app quit (the 10s throttle would otherwise drop the tail).
       if (paused) {
         void flushProgressFromMpv(false);
       }
@@ -314,17 +291,17 @@ async function setupMpvEventSubscription(): Promise<void> {
       speedComposable.reconcileSpeed(speed);
     },
     onTrackList: (e) => {
-      // The Phase 2.4 event payload includes `selected`/`external`/`src_id` (the
-      // `MpvTrack` type was extended). Feed the composable + reconcile current track ids.
       const payload = {
         audio_tracks: e.audio_tracks,
         sub_tracks: e.sub_tracks,
       };
+
       tracksComposable.handleTracksUpdate(payload);
-      // Reconcile current track ids from the selected flags.
-      const selectedAudio = payload.audio_tracks.find((t) => t.selected);
+
+      const selectedAudio = payload.audio_tracks.find((track) => track.selected);
       currentAudioId.value = selectedAudio ? selectedAudio.id : 0;
-      const selectedSub = payload.sub_tracks.find((t) => t.selected);
+
+      const selectedSub = payload.sub_tracks.find((track) => track.selected);
       currentSubId.value = selectedSub ? selectedSub.id : 0;
     },
     onChapterList: ({ chapters: chs }) => {
@@ -367,20 +344,16 @@ async function setupMpvEventSubscription(): Promise<void> {
       isBuffering.value = paused;
     },
     onFileLoaded: ({ path }) => {
-      // Phase 2.4: on file-loaded, apply per-media color adjustments + auto-discover
-      // external subtitles (LOCAL-only — `findExternalSubtitles` returns [] for remote).
       void adjustmentsComposable.applyColorAdjustmentsForMedia(path || streamUrl.value);
+
       if (path) {
         void tracksComposable.applyExternalSubtitlesForUrl(path);
       }
-      // Phase 2.5: resume from saved position. `resumePosition` is fetched in
-      // `loadMedia` before `play_media` is invoked, so it's available here. The
-      // seek is absolute (mpv `seek <pos> absolute`); mpv accepts it post-
-      // file-loaded. Consumed once so a later re-load of the same file (without
-      // a fresh `loadMedia`) starts from 0.
+
       if (resumePosition.value > 0) {
         const pos = resumePosition.value;
         resumePosition.value = 0;
+
         void bridgeSeek(pos).then((ok) => {
           if (!ok) return;
           currentTime.value = pos;
@@ -389,23 +362,18 @@ async function setupMpvEventSubscription(): Promise<void> {
       }
     },
     onEndFile: ({ reason }) => {
-      // Phase 2.5: on EOF (reason=0), flush progress with `finished:true`. The
-      // Go backend's `UpdateProgress` auto-transitions the user status to
-      // `watched` when `Finished && Position > 0`, so no separate status write
-      // is needed. Other reasons (stop/quit/error/redirect) flush the current
-      // position without marking finished.
       if (reason === 0) {
         void flushProgressFromMpv(true);
       } else {
         void flushProgressFromMpv(false);
       }
+
       tracksComposable.resetTracks();
       currentTime.value = 0;
       currentChapter.value = -1;
       chapters.value = [];
     },
     onPlaybackRestart: () => {
-      // Seek completed — mpv is rendering again.
       isBuffering.value = false;
     },
     onError: ({ message }) => {
@@ -413,10 +381,6 @@ async function setupMpvEventSubscription(): Promise<void> {
     },
   });
 }
-
-// ---------------------------------------------------------------------------
-// Phase 2.4: PlayerControls event handlers (translate UI actions → mpv commands).
-// ---------------------------------------------------------------------------
 
 const onTogglePause = (): void => {
   void bridgeTogglePause();
@@ -452,14 +416,14 @@ const onSelectSub = (trackId: number): void => {
   } else {
     void bridgeSetSubtitleTrack(trackId);
   }
+
   currentSubId.value = trackId;
 };
 
 const onSetColorAdjustment = (
   name: 'brightness' | 'contrast' | 'saturation' | 'gamma' | 'hue',
-  value: number,
+  value: number
 ): void => {
-  // Dispatch to the composable (which calls the bridge + persists if global is on).
   switch (name) {
     case 'brightness':
       void adjustmentsComposable.setBrightness(value);
@@ -511,7 +475,6 @@ const onResetAdjustments = (): void => {
 };
 
 const onToggleFullscreen = (): void => {
-  // Toggle the browser fullscreen (works in both Tauri + plain browser).
   if (document.fullscreenElement) {
     void document.exitFullscreen();
   } else {
@@ -519,12 +482,15 @@ const onToggleFullscreen = (): void => {
   }
 };
 
-// Keyboard shortcuts (ported from soia's `usePlaybackShortcuts`, simplified).
 const onKeyDown = (event: KeyboardEvent): void => {
   if (!isNativeReady.value) return;
-  // Don't intercept when the user is typing in an input/textarea.
+
   const target = event.target as HTMLElement | null;
-  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+
+  if (
+    target &&
+    (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+  ) {
     return;
   }
 
@@ -559,9 +525,6 @@ const onKeyDown = (event: KeyboardEvent): void => {
       onSetVolume(volume.value > 0 ? 0 : 80);
       break;
     default:
-      // Forward other keys to mpv (mpv keystr format — e.g. "Space", "Ctrl+Right").
-      // This lets power-user mpv bindings work (e.g. "j" for subtitle cycle, "#" for
-      // audio cycle). The frontend assembles the keystr.
       if (event.key.length === 1 || event.key.startsWith('Arrow') === false) {
         const keystr = event.key === ' ' ? 'Space' : event.key;
         void bridgeMpvKeypress(keystr);
@@ -570,7 +533,6 @@ const onKeyDown = (event: KeyboardEvent): void => {
   }
 };
 
-// Phase 2.3: window resize listener (notifies backend to update the GL drawable).
 const handleWindowResize = (): void => {
   const w = window.innerWidth;
   const h = window.innerHeight;
@@ -581,10 +543,11 @@ const handleWindowResize = (): void => {
 onMounted(() => {
   window.addEventListener('resize', handleWindowResize, { passive: true });
   window.addEventListener('keydown', onKeyDown);
-  // Phase 2.4: subscribe to mpv events early (the subscription is a no-op outside
-  // Tauri, so it's safe to call before native init completes — the events will start
-  // flowing once `play_media` succeeds).
-  void setupMpvEventSubscription();
+
+  if (isNativeAvailable.value) {
+    void setupMpvEventSubscription();
+  }
+
   void reloadCurrentMedia();
 });
 
@@ -598,33 +561,31 @@ watch(
   }
 );
 
-// Phase 2.3: when `.video-mode` toggles, notify the backend (informational — the CSS is
-// the actual mechanism; the backend logs the transition).
 watch(isVideoModeActive, (active) => {
   void setVideoMode(active);
 });
 
 onBeforeUnmount(() => {
   disposed = true;
+
   window.removeEventListener('resize', handleWindowResize);
   window.removeEventListener('keydown', onKeyDown);
-  // Phase 2.3: ensure `.video-mode` is disabled when leaving the player view (so the
-  // webview root goes back to opaque for the rest of the app).
+
   void setVideoMode(false);
-  // Phase 2.4: reset track state + tear down mpv event subscription.
+
   tracksComposable.resetTracks();
+
   if (mpvEventsUnlisten) {
     mpvEventsUnlisten();
     mpvEventsUnlisten = null;
   }
-  // Phase 2.5: flush the latest progress on exit so it survives a reload / app
-  // quit. Mode-aware: native mpv reads the reactive refs, HTML5 reads the
-  // `<video>` element. Both honor the 90% finish threshold.
+
   if (isNativeReady.value) {
     void flushProgressFromMpv(false);
   } else {
     void flushProgressFromVideo(false);
   }
+
   void teardownCurrentPlayback();
 });
 
@@ -641,14 +602,17 @@ function resetViewState(): void {
   streamUrl.value = '';
   error.value = '';
   loadingMedia.value = false;
+  browserLoading.value = false;
+  browserPlaybackBlocked.value = false;
+
   nativePlayerState.value = createInitialNativePlayerState();
   nativeInitAttempted.value = false;
+
   lastReportedPosition.value = 0;
   progressRequestInFlight.value = false;
   pendingProgressPayload.value = null;
-  // Phase 2.5: reset resume position (a stale value would seek the next media).
   resumePosition.value = 0;
-  // Phase 2.4: reset playback state + tracks + chapters.
+
   isPaused.value = true;
   currentTime.value = 0;
   duration.value = 0;
@@ -659,6 +623,7 @@ function resetViewState(): void {
   currentChapter.value = -1;
   hwdec.value = '';
   isBuffering.value = false;
+
   tracksComposable.resetTracks();
 }
 
@@ -677,42 +642,35 @@ async function loadMedia(id: string): Promise<void> {
 
     if (!resolvedStreamUrl) {
       error.value = t('player.noStream');
-      nativePlayerState.value = {
-        status: 'unavailable',
-        failure: null,
-        attempted: false,
-      };
       return;
     }
 
     streamUrl.value = resolvedStreamUrl;
+    videoElementKey.value += 1;
 
-    // Phase 2.5: fetch the saved resume position before native init / `<video>`
-    // load. `fetchResumePosition` applies soia's 0.99 skip-resume rule (restart
-    // from 0 if the user already finished). Best-effort: a network failure
-    // leaves `resumePosition` at 0 (play from start). Awaited so the value is
-    // available when `onFileLoaded` (native) / `onLoadedMetadata` (HTML5) fires.
     try {
       const resume = await historyComposable.fetchResumePosition(id);
+
       if (generation !== loadGeneration || disposed) return;
+
       resumePosition.value = resume?.position ?? 0;
     } catch {
-      // Resume is best-effort — ignore failures + play from the start.
+      // Resume is best-effort.
     }
 
     await nextTick();
 
     if (generation !== loadGeneration || disposed) return;
 
-    // Media has loaded — clear the "Loading media..." flag BEFORE starting
-    // native init so the loading label can switch to the more specific
-    // "Initializing native player..." text (see loadingLabel computed).
-    // Without this, loadingMedia stays true for the entire duration of
-    // attemptNativeInit (which awaits the invoke promise), and the
-    // "Initializing native player" branch in loadingLabel is unreachable.
     loadingMedia.value = false;
 
-    await attemptNativeInit(generation);
+    // Web always uses HTML5 video. Tauri attempts native only when runtime exists.
+    if (isNativeAvailable.value) {
+      await attemptNativeInit(generation);
+      return;
+    }
+
+    await prepareBrowserPlayback(generation);
   } catch (unknownError) {
     if (generation !== loadGeneration || disposed) return;
 
@@ -735,7 +693,46 @@ async function loadMedia(id: string): Promise<void> {
 function extractStreamUrl(media: MediaItem): string {
   const raw = media.stream_url;
 
-  return typeof raw === 'string' ? raw : '';
+  if (typeof raw !== 'string') return '';
+
+  return normalizeStreamUrl(raw);
+}
+
+function normalizeStreamUrl(raw: string): string {
+  const trimmed = raw.trim();
+
+  if (!trimmed) return '';
+
+  // Some backends accidentally return HTML-escaped signed URLs.
+  const unescaped = trimmed.replaceAll('&amp;', '&');
+
+  try {
+    return new URL(unescaped, window.location.origin).toString();
+  } catch {
+    return unescaped;
+  }
+}
+
+async function prepareBrowserPlayback(generation: number): Promise<void> {
+  await nextTick();
+
+  if (generation !== loadGeneration || disposed) return;
+  if (!showBrowserPlayer.value) return;
+
+  const video = videoRef.value;
+
+  if (!video) return;
+
+  browserLoading.value = true;
+  browserPlaybackBlocked.value = false;
+
+  try {
+    video.load();
+  } catch {
+    // Browser load() can throw if the element is already being detached.
+  }
+
+  await safePlayBrowserVideo('prepare');
 }
 
 async function attemptNativeInit(generation: number): Promise<void> {
@@ -743,7 +740,7 @@ async function attemptNativeInit(generation: number): Promise<void> {
 
   nativeInitAttempted.value = true;
 
-  if (!streamUrl.value || !isNativePlaybackRuntimeAvailable()) {
+  if (!streamUrl.value || !isNativeAvailable.value) {
     nativePlayerState.value = {
       status: 'unavailable',
       failure: null,
@@ -771,26 +768,22 @@ async function attemptNativeInit(generation: number): Promise<void> {
       attempted: true,
     };
 
-    // Phase 2.3: native player init succeeded — attach the GL render surface to the main
-    // window + spawn the mpv render thread. On failure, log + fall back to the `<video>`
-    // path (the 9.7 guardrail: native playback is an enhancement, never a regression).
     if (!renderSurfaceAttached.value) {
       renderSurfaceAttached.value = true;
+
       const surfaceResult = await attachRenderSurface();
+
       if (generation !== loadGeneration || disposed) return;
 
       if (!surfaceResult.ok) {
         console.warn(
-          '[fyom] render surface attach failed — keeping native audio + black video:',
+          '[fyom] render surface attach failed:',
           surfaceResult.failure.stage,
-          surfaceResult.failure.message,
+          surfaceResult.failure.message
         );
-        // Note: do NOT mark the native player as failed here — `play_media` succeeded, so
-        // mpv is playing audio (with a black video frame). The `<video>` fallback is NOT
-        // triggered; the user gets audio + a status overlay. Phase 2.4 may revisit this
-        // (e.g. show a "video rendering unavailable, audio playing" notice).
       }
     }
+
     return;
   }
 
@@ -812,18 +805,20 @@ function buildProgressPayload(
   durationSeconds: number,
   finished: boolean
 ): ProgressPayload | null {
-  const duration = Math.floor(durationSeconds || 0);
+  const durationValue = Math.floor(durationSeconds || 0);
 
-  if (!Number.isFinite(duration) || duration <= 0) {
+  if (!Number.isFinite(durationValue) || durationValue <= 0) {
     return null;
   }
 
-  const currentTime = Math.floor(currentTimeSeconds || 0);
-  const position = finished ? duration : Math.min(duration, Math.max(0, currentTime));
+  const currentTimeValue = Math.floor(currentTimeSeconds || 0);
+  const position = finished
+    ? durationValue
+    : Math.min(durationValue, Math.max(0, currentTimeValue));
 
   return {
     position,
-    duration,
+    duration: durationValue,
     finished,
   };
 }
@@ -839,10 +834,6 @@ async function reportProgress(payload: ProgressPayload): Promise<void> {
   progressRequestInFlight.value = true;
 
   try {
-    // Phase 2.5: delegate to the history composable (which wraps
-    // `setMediaProgress` — 401/403/404 are swallowed there since progress is
-    // best-effort). The in-flight queue + pending-payload retry stays here so
-    // it remains coupled to this component's `disposed` lifecycle flag.
     await historyComposable.persistProgress(mediaId.value, payload);
   } catch (unknownError) {
     console.warn(
@@ -861,16 +852,110 @@ async function reportProgress(payload: ProgressPayload): Promise<void> {
   }
 }
 
-function onTimeUpdate(): void {
+function onVideoLoadStart(): void {
+  if (!showBrowserPlayer.value) return;
+
+  browserLoading.value = true;
+  browserPlaybackBlocked.value = false;
+}
+
+function onLoadedMetadata(): void {
   const video = videoRef.value;
+
   if (!video) return;
 
-  const currentTime = Math.floor(video.currentTime || 0);
-  const delta = Math.abs(currentTime - lastReportedPosition.value);
+  duration.value = Number.isFinite(video.duration) ? video.duration : 0;
+
+  if (resumePosition.value > 0) {
+    const pos = resumePosition.value;
+    resumePosition.value = 0;
+
+    try {
+      video.currentTime = pos;
+      lastReportedPosition.value = Math.floor(pos);
+    } catch {
+      // Some streams reject early seeking before enough data is available.
+    }
+  }
+
+  void safePlayBrowserVideo('loaded-metadata');
+}
+
+function onCanPlay(): void {
+  browserLoading.value = false;
+  void safePlayBrowserVideo('canplay');
+}
+
+function onPlaying(): void {
+  browserLoading.value = false;
+  browserPlaybackBlocked.value = false;
+  isPaused.value = false;
+}
+
+function onWaiting(): void {
+  if (!showBrowserPlayer.value) return;
+  browserLoading.value = true;
+}
+
+function onStalled(): void {
+  if (!showBrowserPlayer.value) return;
+  browserLoading.value = true;
+}
+
+async function safePlayBrowserVideo(reason: string): Promise<void> {
+  const video = videoRef.value;
+
+  if (!video) return;
+  if (!showBrowserPlayer.value) return;
+  if (disposed) return;
+
+  try {
+    const playResult = video.play();
+
+    if (playResult && typeof playResult.then === 'function') {
+      await playResult;
+    }
+
+    browserPlaybackBlocked.value = false;
+    browserLoading.value = false;
+    isPaused.value = false;
+  } catch (unknownError) {
+    const err = unknownError instanceof DOMException ? unknownError : null;
+
+    if (err?.name === 'NotAllowedError') {
+      browserPlaybackBlocked.value = true;
+      browserLoading.value = false;
+      isPaused.value = true;
+      console.info('[fyom] browser autoplay blocked:', reason);
+      return;
+    }
+
+    if (err?.name === 'AbortError') {
+      // AbortError commonly happens when src changes during navigation/reload.
+      return;
+    }
+
+    console.warn('[fyom] browser video play() failed:', reason, unknownError);
+  }
+}
+
+function onManualBrowserPlay(): void {
+  browserPlaybackBlocked.value = false;
+  void safePlayBrowserVideo('manual');
+}
+
+function onTimeUpdate(): void {
+  const video = videoRef.value;
+
+  if (!video) return;
+
+  currentTime.value = video.currentTime || 0;
+  duration.value = Number.isFinite(video.duration) ? video.duration : 0;
+
+  const currentTimeValue = Math.floor(video.currentTime || 0);
+  const delta = Math.abs(currentTimeValue - lastReportedPosition.value);
   const finished = historyComposable.isFinished(video.currentTime, video.duration || 0);
 
-  // Phase 2.5: force a report when the finish threshold is crossed (so the
-  // watched status lands promptly), otherwise throttle to the 10s interval.
   if (delta < PROGRESS_REPORT_INTERVAL_SECONDS && !finished) {
     return;
   }
@@ -884,42 +969,20 @@ function onTimeUpdate(): void {
 }
 
 function onPause(): void {
+  isPaused.value = true;
   void flushProgressFromVideo(false);
 }
 
 function onEnded(): void {
+  isPaused.value = true;
   void flushProgressFromVideo(true);
-}
-
-/**
- * Phase 2.5: HTML5 `<video>` metadata loaded — seek to the saved resume
- * position (if any) before the user sees playback start from 0. Mirrors the
- * native `onFileLoaded` resume path so the fallback UX matches native.
- */
-function onLoadedMetadata(): void {
-  if (resumePosition.value <= 0) return;
-
-  const video = videoRef.value;
-  if (!video) return;
-
-  const pos = resumePosition.value;
-  resumePosition.value = 0;
-
-  try {
-    video.currentTime = pos;
-    lastReportedPosition.value = Math.floor(pos);
-  } catch {
-    // Some streams reject seeking before playback starts — ignore + play from 0.
-  }
 }
 
 async function flushProgressFromVideo(finished: boolean): Promise<void> {
   const video = videoRef.value;
+
   if (!video) return;
 
-  // Phase 2.5: a `false` flush (pause / unmount) still marks the item finished
-  // when the position has crossed the 90% threshold, so pausing near the end
-  // credits counts as watched.
   const effectiveFinished =
     finished || historyComposable.isFinished(video.currentTime, video.duration || 0);
 
@@ -931,11 +994,6 @@ async function flushProgressFromVideo(finished: boolean): Promise<void> {
   await reportProgress(payload);
 }
 
-/**
- * Phase 2.5: native mpv progress flush. Reads the `currentTime` / `duration`
- * reactive refs (driven by `fyom://mpv/time-pos` + `fyom://mpv/duration`) —
- * these are the source of truth in native mode (`videoRef` is null there).
- */
 async function flushProgressFromMpv(finished: boolean): Promise<void> {
   if (!isNativeReady.value) return;
 
@@ -950,12 +1008,6 @@ async function flushProgressFromMpv(finished: boolean): Promise<void> {
   await reportProgress(payload);
 }
 
-/**
- * Phase 2.5: 10s-throttled progress report for native playback, invoked from
- * the `onTimePos` mpv event handler. Mirrors the HTML5 `onTimeUpdate` path:
- * throttle by `PROGRESS_REPORT_INTERVAL_SECONDS`, but force a report when the
- * finish threshold is crossed so the watched status lands promptly.
- */
 function maybeReportNativeProgress(): void {
   if (!mediaId.value || !isNativeReady.value) return;
 
@@ -977,12 +1029,59 @@ function maybeReportNativeProgress(): void {
 }
 
 function onVideoError(): void {
-  if (isNativeFailed.value || isNativeUnavailable.value || isNativeIdle.value) {
-    error.value = t('player.browserPlaybackFailed');
+  const video = videoRef.value;
+
+  if (!video) {
     return;
   }
 
-  error.value = t('player.playbackFailed');
+  browserLoading.value = false;
+  browserPlaybackBlocked.value = false;
+
+  const details = getVideoErrorDetails(video);
+
+  // Don't show error for autoplay block - that's handled by browserPlaybackBlocked
+  if (video.error?.code === MediaError.MEDIA_ERR_ABORTED) {
+    return;
+  }
+
+  // More specific error messages for debugging
+  const prefix =
+    isNativeAvailable.value && isNativeReady.value
+      ? t('player.nativePlaybackFailed')
+      : t('player.browserPlaybackFailed');
+
+  error.value = details ? `${prefix}: ${details}` : prefix;
+}
+
+function getVideoErrorDetails(video: HTMLVideoElement): string {
+  const mediaError = video.error;
+
+  if (!mediaError) {
+    return '';
+  }
+
+  const codeLabel = (() => {
+    switch (mediaError.code) {
+      case MediaError.MEDIA_ERR_ABORTED:
+        return 'MEDIA_ERR_ABORTED';
+      case MediaError.MEDIA_ERR_NETWORK:
+        return 'MEDIA_ERR_NETWORK (check CORS, URL, or network connectivity)';
+      case MediaError.MEDIA_ERR_DECODE:
+        return 'MEDIA_ERR_DECODE (check codec support or file corruption)';
+      case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+        return 'MEDIA_ERR_SRC_NOT_SUPPORTED (check MIME type or URL format)';
+      default:
+        return `UNKNOWN_${mediaError.code}`;
+    }
+  })();
+
+  const message = mediaError.message ? `, message="${mediaError.message}"` : '';
+  const currentSrc = video.currentSrc ? `, src="${video.currentSrc}"` : '';
+  const readyState = `, readyState=${video.readyState}`;
+  const networkState = `, networkState=${video.networkState}`;
+
+  return `${codeLabel}${message}${currentSrc}${readyState}${networkState}`;
 }
 
 async function teardownCurrentPlayback(): Promise<void> {
@@ -995,12 +1094,16 @@ async function teardownCurrentPlayback(): Promise<void> {
   if (video) {
     try {
       video.pause();
+      // Keep video element mounted, just clear the source
       video.removeAttribute('src');
       video.load();
     } catch {
       // Ignore browser cleanup failures.
     }
   }
+
+  browserLoading.value = false;
+  browserPlaybackBlocked.value = false;
 }
 
 async function stopNativePlayer(): Promise<void> {
@@ -1040,22 +1143,6 @@ function getTauriInvoke(): TauriInvokeApi['invoke'] | null {
   background: #000;
 }
 
-/**
- * Phase 2.3: `.video-mode` — when active, the player-view's background goes transparent
- * so the native mpv GL layer (rendered behind the webview by `attach_render_surface`)
- * shows through. This is soia's z-order trick, render-backend-agnostic — it worked for
- * soia's Vulkan layer underneath, and it works identically for fyom's OpenGL layer.
- *
- * PORTED_FROM_SOIA `src/styles/app-shell.css::video-mode` (verbatim):
- *   .video-mode {
- *       background-color: transparent !important;
- *       background-image: none !important;
- *       box-shadow: none !important;
- *   }
- *
- * HTML controls (`.native-surface`, `.fallback-banner`, `.error-state`, etc.) keep their
- * own opaque backgrounds so they remain readable on top of the video.
- */
 .player-view.video-mode {
   background-color: transparent !important;
   background-image: none !important;
@@ -1077,17 +1164,83 @@ function getTauriInvoke(): TauriInvokeApi['invoke'] | null {
 .player-surface {
   width: 100%;
   flex: 1;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
+  background: #000;
+}
+
+.browser-player-shell {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  min-height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
 }
 
 .video-player {
   width: 100%;
+  height: 100%;
   max-width: 100vw;
   max-height: 100vh;
   display: block;
+  object-fit: contain;
   background: #000;
+}
+
+.player-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  color: #cfcfff;
+  background: rgba(0, 0, 0, 0.68);
+  gap: 14px;
+  text-align: center;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.player-overlay-action {
+  background: rgba(0, 0, 0, 0.82);
+}
+
+.overlay-title {
+  margin: 0;
+  color: #f0f0ff;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.overlay-subtitle {
+  max-width: 520px;
+  margin: 0;
+  color: #aaaacc;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.overlay-btn {
+  min-height: 40px;
+  padding: 9px 16px;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  background: #6c63ff;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.overlay-btn:hover {
+  background: #5a52e0;
 }
 
 .native-surface {
@@ -1147,11 +1300,12 @@ function getTauriInvoke(): TauriInvokeApi['invoke'] | null {
 }
 
 .error-state p {
-  max-width: 520px;
+  max-width: 760px;
   margin: 0;
   color: #aaaacc;
   font-size: 14px;
   line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .error-actions {
@@ -1213,6 +1367,14 @@ function getTauriInvoke(): TauriInvokeApi['invoke'] | null {
   .error-link {
     width: 100%;
   }
+
+  .overlay-title {
+    font-size: 16px;
+  }
+
+  .overlay-subtitle {
+    font-size: 13px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1221,7 +1383,8 @@ function getTauriInvoke(): TauriInvokeApi['invoke'] | null {
   }
 
   .error-btn,
-  .error-link {
+  .error-link,
+  .overlay-btn {
     transition: none;
   }
 }
