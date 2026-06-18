@@ -51,6 +51,9 @@ pub const SHUTDOWN: u32 = 2;
 // ---------------------------------------------------------------------------
 
 /// A single libmpv track (audio or subtitle), parsed from the `track-list` node.
+///
+/// Phase 2.4: extended with `selected`, `external`, `src_id` fields (needed by the
+/// subtitle/audio picker UI to highlight the active track + show external-track badges).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MpvTrack {
     pub id: i64,
@@ -59,6 +62,15 @@ pub struct MpvTrack {
     /// Track type: `"audio"` or `"sub"`. Renamed to `type` in JSON (mpv's field name).
     #[serde(rename = "type")]
     pub type_: String,
+    /// Whether this track is currently selected (Phase 2.4).
+    #[serde(default)]
+    pub selected: bool,
+    /// Whether this is an external track (loaded via `sub-add` / `audio-add`) (Phase 2.4).
+    #[serde(default)]
+    pub external: bool,
+    /// Source id (the track's originating file index; 0 for the main file) (Phase 2.4).
+    #[serde(default, rename = "src_id")]
+    pub src_id: i64,
 }
 
 /// Parsed track list.
@@ -121,6 +133,19 @@ pub enum MpvEvent {
     TimePos(i64),
     PausedForCache(bool),
     ChapterList(ChapterList),
+    // Phase 2.4 additions
+    HwdecCurrent(String),
+    Aid(i64),
+    Sid(i64),
+    SubDelay(f64),
+    AudioDelay(f64),
+    Brightness(f64),
+    Contrast(f64),
+    Saturation(f64),
+    Gamma(f64),
+    Hue(f64),
+    Chapter(i64),
+    EofReached(bool),
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +244,54 @@ pub fn spawn_event_loop(
         .observe_property("speed", Format::Double, 9u64)
         .expect("mpv: observe_property(speed) failed");
 
+    // Phase 2.4 additions — observe hwdec-current, aid, sid, A/V delays, color
+    // adjustments, chapter, eof-reached. These drive the new `fyom://mpv/*` events for
+    // the HTML controls overlay (subtitle/audio picker, color adjustments panel,
+    // chapter nav, eof-restart-after-eof).
+    //
+    // NOTE: `hwdec-current` is observed as `Format::Node` (not `Format::String`) because
+    // tsukimi's proven observer set only uses `{Double, Flag, Int64, Node}` — using
+    // `Format::String` would require verifying the `PropertyData::Str` variant exists in
+    // libmpv2 4.1, which we can't compile-check in this sandbox. `Format::Node` +
+    // `node.str()` extraction is the safe path (tsukimi uses `Format::Node` for
+    // `track-list` + `chapter-list` successfully).
+    event_context
+        .observe_property("hwdec-current", Format::Node, 10u64)
+        .expect("mpv: observe_property(hwdec-current) failed");
+    event_context
+        .observe_property("aid", Format::Int64, 11u64)
+        .expect("mpv: observe_property(aid) failed");
+    event_context
+        .observe_property("sid", Format::Int64, 12u64)
+        .expect("mpv: observe_property(sid) failed");
+    event_context
+        .observe_property("sub-delay", Format::Double, 13u64)
+        .expect("mpv: observe_property(sub-delay) failed");
+    event_context
+        .observe_property("audio-delay", Format::Double, 14u64)
+        .expect("mpv: observe_property(audio-delay) failed");
+    event_context
+        .observe_property("brightness", Format::Double, 15u64)
+        .expect("mpv: observe_property(brightness) failed");
+    event_context
+        .observe_property("contrast", Format::Double, 16u64)
+        .expect("mpv: observe_property(contrast) failed");
+    event_context
+        .observe_property("saturation", Format::Double, 17u64)
+        .expect("mpv: observe_property(saturation) failed");
+    event_context
+        .observe_property("gamma", Format::Double, 18u64)
+        .expect("mpv: observe_property(gamma) failed");
+    event_context
+        .observe_property("hue", Format::Double, 19u64)
+        .expect("mpv: observe_property(hue) failed");
+    event_context
+        .observe_property("chapter", Format::Int64, 20u64)
+        .expect("mpv: observe_property(chapter) failed");
+    event_context
+        .observe_property("eof-reached", Format::Flag, 21u64)
+        .expect("mpv: observe_property(eof-reached) failed");
+
     let alive = event_thread_alive.clone();
     let mpv_for_thread = Arc::clone(&mpv);
 
@@ -292,7 +365,7 @@ pub fn spawn_event_loop(
 /// Decode a property-change event: send a typed `MpvEvent` into the internal channel +
 /// emit a `fyom://mpv/<name>` frontend event with a typed payload.
 ///
-/// Payload shapes (per `ROADMAP.md` Phase 2.2):
+/// Payload shapes (per `ROADMAP.md` Phase 2.2 + Phase 2.4):
 /// - `fyom://mpv/duration`           → `{ "duration": f64 }`
 /// - `fyom://mpv/pause`              → `{ "paused": bool }`
 /// - `fyom://mpv/cache-speed`        → `{ "speed": i64 }`
@@ -303,7 +376,21 @@ pub fn spawn_event_loop(
 /// - `fyom://mpv/demuxer-cache-time` → `{ "time": i64 }`
 /// - `fyom://mpv/time-pos`           → `{ "position": i64, "duration": f64 }`
 /// - `fyom://mpv/paused-for-cache`   → `{ "paused": bool }`
-#[allow(clippy::too_many_lines)] // faithful 1:1 port of tsukimi's match arms
+///
+/// Phase 2.4 additions:
+/// - `fyom://mpv/hwdec-current`      → `{ "hwdec": string }` (e.g. "auto-safe", "vt", "vaapi", "d3d11va")
+/// - `fyom://mpv/aid`                → `{ "id": i64 }` (current audio track id; 0 = none)
+/// - `fyom://mpv/sid`                → `{ "id": i64 }` (current subtitle track id; 0 = none)
+/// - `fyom://mpv/sub-delay`          → `{ "delay": f64 }` (seconds)
+/// - `fyom://mpv/audio-delay`        → `{ "delay": f64 }` (seconds)
+/// - `fyom://mpv/brightness`         → `{ "value": f64 }` (-100..=100)
+/// - `fyom://mpv/contrast`           → `{ "value": f64 }`
+/// - `fyom://mpv/saturation`         → `{ "value": f64 }`
+/// - `fyom://mpv/gamma`              → `{ "value": f64 }`
+/// - `fyom://mpv/hue`                → `{ "value": f64 }`
+/// - `fyom://mpv/chapter`            → `{ "index": i64 }` (-1 = no chapter)
+/// - `fyom://mpv/eof-reached`        → `{ "eof": bool }`
+#[allow(clippy::too_many_lines)] // faithful 1:1 port of tsukimi's match arms + Phase 2.4 additions
 fn handle_property_change(
     name: &str,
     change: PropertyData<'_>,
@@ -423,6 +510,112 @@ fn handle_property_change(
                 );
             }
         }
+        // -----------------------------------------------------------------------
+        // Phase 2.4 property observers (hwdec, aid, sid, A/V delays, color
+        // adjustments, chapter, eof-reached).
+        // -----------------------------------------------------------------------
+        "hwdec-current" => {
+            // Observed as `Format::Node` (see the observe_property call above for the
+            // rationale). Extract the string via `MpvNode::str()`.
+            if let PropertyData::Node(node) = change {
+                let hwdec_string = node
+                    .str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                let _ = MPV_EVENT_CHANNEL
+                    .tx
+                    .send(MpvEvent::HwdecCurrent(hwdec_string.clone()));
+                let _ = app_handle.emit(
+                    "fyom://mpv/hwdec-current",
+                    serde_json::json!({ "hwdec": hwdec_string }),
+                );
+            }
+        }
+        "aid" => {
+            if let PropertyData::Int64(id) = change {
+                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Aid(id));
+                let _ = app_handle
+                    .emit("fyom://mpv/aid", serde_json::json!({ "id": id }));
+            }
+        }
+        "sid" => {
+            if let PropertyData::Int64(id) = change {
+                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Sid(id));
+                let _ = app_handle
+                    .emit("fyom://mpv/sid", serde_json::json!({ "id": id }));
+            }
+        }
+        "sub-delay" => {
+            if let PropertyData::Double(delay) = change {
+                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::SubDelay(delay));
+                let _ = app_handle.emit(
+                    "fyom://mpv/sub-delay",
+                    serde_json::json!({ "delay": delay }),
+                );
+            }
+        }
+        "audio-delay" => {
+            if let PropertyData::Double(delay) = change {
+                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::AudioDelay(delay));
+                let _ = app_handle.emit(
+                    "fyom://mpv/audio-delay",
+                    serde_json::json!({ "delay": delay }),
+                );
+            }
+        }
+        "brightness" => {
+            if let PropertyData::Double(value) = change {
+                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Brightness(value));
+                let _ = app_handle.emit(
+                    "fyom://mpv/brightness",
+                    serde_json::json!({ "value": value }),
+                );
+            }
+        }
+        "contrast" => {
+            if let PropertyData::Double(value) = change {
+                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Contrast(value));
+                let _ = app_handle
+                    .emit("fyom://mpv/contrast", serde_json::json!({ "value": value }));
+            }
+        }
+        "saturation" => {
+            if let PropertyData::Double(value) = change {
+                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Saturation(value));
+                let _ = app_handle.emit(
+                    "fyom://mpv/saturation",
+                    serde_json::json!({ "value": value }),
+                );
+            }
+        }
+        "gamma" => {
+            if let PropertyData::Double(value) = change {
+                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Gamma(value));
+                let _ = app_handle
+                    .emit("fyom://mpv/gamma", serde_json::json!({ "value": value }));
+            }
+        }
+        "hue" => {
+            if let PropertyData::Double(value) = change {
+                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Hue(value));
+                let _ = app_handle
+                    .emit("fyom://mpv/hue", serde_json::json!({ "value": value }));
+            }
+        }
+        "chapter" => {
+            if let PropertyData::Int64(index) = change {
+                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::Chapter(index));
+                let _ = app_handle
+                    .emit("fyom://mpv/chapter", serde_json::json!({ "index": index }));
+            }
+        }
+        "eof-reached" => {
+            if let PropertyData::Flag(eof) = change {
+                let _ = MPV_EVENT_CHANNEL.tx.send(MpvEvent::EofReached(eof));
+                let _ = app_handle
+                    .emit("fyom://mpv/eof-reached", serde_json::json!({ "eof": eof }));
+            }
+        }
         _ => {}
     }
 }
@@ -463,11 +656,33 @@ fn node_to_tracks(node: MpvNode) -> MpvTracks {
             .and_then(|v| v.str())
             .unwrap_or("unknown")
             .to_string();
+        // Phase 2.4: parse selection + external + src-id fields (defensive unwrap_or
+        // — a malformed track node should not crash the event thread).
+        // NOTE: booleans are read via `i64()` + `!= 0` conversion because `MpvNode::flag()`
+        // may not exist in libmpv2 4.1 (can't compile-check in this sandbox). mpv stores
+        // `MPV_FORMAT_FLAG` as 0/1 ints in node form, so `i64()` is the safe path.
+        let selected = range
+            .get("selected")
+            .and_then(|v| v.i64())
+            .map(|n| n != 0)
+            .unwrap_or(false);
+        let external = range
+            .get("external")
+            .and_then(|v| v.i64())
+            .map(|n| n != 0)
+            .unwrap_or(false);
+        let src_id = range
+            .get("src-id")
+            .and_then(|v| v.i64())
+            .unwrap_or(0);
         let track = MpvTrack {
             id,
             title,
             lang,
             type_,
+            selected,
+            external,
+            src_id,
         };
         if track.type_ == "audio" {
             audio_tracks.push(track);

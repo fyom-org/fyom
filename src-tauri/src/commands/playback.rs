@@ -497,3 +497,316 @@ pub async fn get_api_base_url(
         .get_api_base_url()
         .map_err(|e| e.to_string())
 }
+
+// ---------------------------------------------------------------------------
+// Phase 2.4: subtitle / audio track management + color adjustments + generic
+// property get/set (port soia's `commands/playback.rs` subtitle + adjustment
+// surface, reimplemented on fyom's `MpvInstance`).
+// ---------------------------------------------------------------------------
+
+/// Find external subtitle files matching a LOCAL media file (fuzzy match by name,
+/// episode key, year). Returns absolute filesystem paths sorted by match score.
+///
+/// LOCAL-only: returns an empty list for remote (presigned URL / network) media. The
+/// frontend calls this on `file-loaded` when the media is a local file.
+#[tauri::command]
+pub async fn find_external_subtitles(
+    _mpv_state: State<'_, MpvState>,
+    media_path: String,
+    media_title: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let payload = crate::subtitles::ExternalSubtitleMatchesPayloadResolved {
+        media_path,
+        media_title,
+    };
+    // Delegate to the subtitles module's command via a thin adapter (the subtitles
+    // command takes a payload struct; we expose it here with positional args for the
+    // frontend's invoke convenience).
+    let matches = crate::subtitles::find_external_subtitles_impl(payload).await?;
+    Ok(json!({ "success": true, "matches": matches }))
+}
+
+/// Add an external subtitle file to the current playback (`sub-add` mpv command).
+///
+/// - `mode`: `"select"` (activate immediately) or `"auto"` (add but don't activate).
+/// - `title`: optional display title (shown in track list + subtitle picker).
+/// - `lang`: optional ISO 639-1 language code (e.g. "en", "zh").
+#[tauri::command]
+pub async fn sub_add(
+    mpv_state: State<'_, MpvState>,
+    path: String,
+    mode: Option<String>,
+    title: Option<String>,
+    lang: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let Some(instance) = mpv_state.instance.get() else {
+        return Ok(no_instance_error(&mpv_state));
+    };
+    let instance: &MpvInstance = instance;
+    let mode = mode.as_deref().unwrap_or("select");
+    match instance.sub_add(&path, mode, title.as_deref(), lang.as_deref()) {
+        Ok(()) => Ok(ok()),
+        Err(e) => Ok(err(e)),
+    }
+}
+
+/// Remove an external subtitle track by id (`sub-remove` mpv command).
+#[tauri::command]
+pub async fn sub_remove(
+    mpv_state: State<'_, MpvState>,
+    track_id: i64,
+) -> Result<serde_json::Value, String> {
+    let Some(instance) = mpv_state.instance.get() else {
+        return Ok(no_instance_error(&mpv_state));
+    };
+    let instance: &MpvInstance = instance;
+    match instance.sub_remove(track_id) {
+        Ok(()) => Ok(ok()),
+        Err(e) => Ok(err(e)),
+    }
+}
+
+/// Reload a subtitle track by id (`sub-reload` mpv command). Useful after editing an
+/// external .srt.
+#[tauri::command]
+pub async fn sub_reload(
+    mpv_state: State<'_, MpvState>,
+    track_id: i64,
+) -> Result<serde_json::Value, String> {
+    let Some(instance) = mpv_state.instance.get() else {
+        return Ok(no_instance_error(&mpv_state));
+    };
+    let instance: &MpvInstance = instance;
+    match instance.sub_reload(track_id) {
+        Ok(()) => Ok(ok()),
+        Err(e) => Ok(err(e)),
+    }
+}
+
+/// Add an external audio track (`audio-add` mpv command).
+#[tauri::command]
+pub async fn audio_add(
+    mpv_state: State<'_, MpvState>,
+    path: String,
+    mode: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let Some(instance) = mpv_state.instance.get() else {
+        return Ok(no_instance_error(&mpv_state));
+    };
+    let instance: &MpvInstance = instance;
+    let mode = mode.as_deref().unwrap_or("select");
+    match instance.audio_add(&path, mode) {
+        Ok(()) => Ok(ok()),
+        Err(e) => Ok(err(e)),
+    }
+}
+
+/// Set the subtitle delay (seconds; negative = earlier, positive = later).
+#[tauri::command]
+pub async fn set_sub_delay(
+    mpv_state: State<'_, MpvState>,
+    seconds: f64,
+) -> Result<serde_json::Value, String> {
+    let Some(instance) = mpv_state.instance.get() else {
+        return Ok(no_instance_error(&mpv_state));
+    };
+    let instance: &MpvInstance = instance;
+    match instance.set_sub_delay(seconds) {
+        Ok(()) => Ok(ok()),
+        Err(e) => Ok(err(e)),
+    }
+}
+
+/// Set the audio delay (seconds; negative = earlier, positive = later).
+#[tauri::command]
+pub async fn set_audio_delay(
+    mpv_state: State<'_, MpvState>,
+    seconds: f64,
+) -> Result<serde_json::Value, String> {
+    let Some(instance) = mpv_state.instance.get() else {
+        return Ok(no_instance_error(&mpv_state));
+    };
+    let instance: &MpvInstance = instance;
+    match instance.set_audio_delay(seconds) {
+        Ok(()) => Ok(ok()),
+        Err(e) => Ok(err(e)),
+    }
+}
+
+/// Set the subtitle font scale (1.0 = default).
+#[tauri::command]
+pub async fn set_sub_scale(
+    mpv_state: State<'_, MpvState>,
+    scale: f64,
+) -> Result<serde_json::Value, String> {
+    let Some(instance) = mpv_state.instance.get() else {
+        return Ok(no_instance_error(&mpv_state));
+    };
+    let instance: &MpvInstance = instance;
+    match instance.set_sub_scale(scale) {
+        Ok(()) => Ok(ok()),
+        Err(e) => Ok(err(e)),
+    }
+}
+
+/// Set a color adjustment (`brightness` / `contrast` / `saturation` / `gamma` / `hue`).
+/// Range: -100..=100 (0 = default).
+#[tauri::command]
+pub async fn set_color_adjustment(
+    mpv_state: State<'_, MpvState>,
+    name: String,
+    value: f64,
+) -> Result<serde_json::Value, String> {
+    let Some(instance) = mpv_state.instance.get() else {
+        return Ok(no_instance_error(&mpv_state));
+    };
+    let instance: &MpvInstance = instance;
+    let result = match name.as_str() {
+        "brightness" => instance.set_brightness(value),
+        "contrast" => instance.set_contrast(value),
+        "saturation" => instance.set_saturation(value),
+        "gamma" => instance.set_gamma(value),
+        "hue" => instance.set_hue(value),
+        other => Err(format!("unknown color adjustment: {other}")),
+    };
+    match result {
+        Ok(()) => Ok(ok()),
+        Err(e) => Ok(err(e)),
+    }
+}
+
+/// Generic mpv option-string setter (power-user surface — port soia's
+/// `mpv_set_option_string`). Prefer the typed commands above when possible.
+#[tauri::command]
+pub async fn mpv_set_option_string(
+    mpv_state: State<'_, MpvState>,
+    name: String,
+    value: String,
+) -> Result<serde_json::Value, String> {
+    let Some(instance) = mpv_state.instance.get() else {
+        return Ok(no_instance_error(&mpv_state));
+    };
+    let instance: &MpvInstance = instance;
+    match instance.set_option_string(&name, &value) {
+        Ok(()) => Ok(ok()),
+        Err(e) => Ok(err(e)),
+    }
+}
+
+/// Get the current track list (audio + sub) as a typed JSON object. Cheaper than
+/// subscribing to `fyom://mpv/track-list` events for a one-shot read (e.g. when opening
+/// the subtitle picker).
+#[tauri::command]
+pub async fn get_track_list(
+    mpv_state: State<'_, MpvState>,
+) -> Result<serde_json::Value, String> {
+    let Some(instance) = mpv_state.instance.get() else {
+        return Ok(no_instance_error(&mpv_state));
+    };
+    let instance: &MpvInstance = instance;
+    // mpv's `track-list` is a node property; libmpv2 exposes it via `get_property::<MpvNode>`.
+    // For simplicity + to avoid a generic node-to-json walker, we read the count + each
+    // track's typed fields via individual get_property calls (cheap; mpv_get_property is
+    // a fast C call). This matches the per-track shape the event_loop emits.
+    let count: i64 = instance.get_property("track-list/count").unwrap_or(0);
+    let mut audio_tracks: Vec<serde_json::Value> = Vec::new();
+    let mut sub_tracks: Vec<serde_json::Value> = Vec::new();
+    for i in 0..count {
+        let id: i64 = instance
+            .get_property(&format!("track-list/{i}/id"))
+            .unwrap_or(0);
+        let title: String = instance
+            .get_property(&format!("track-list/{i}/title"))
+            .unwrap_or_default();
+        let lang: String = instance
+            .get_property(&format!("track-list/{i}/lang"))
+            .unwrap_or_default();
+        let type_: String = instance
+            .get_property(&format!("track-list/{i}/type"))
+            .unwrap_or_default();
+        let selected: bool = instance
+            .get_property(&format!("track-list/{i}/selected"))
+            .unwrap_or(false);
+        let external: bool = instance
+            .get_property(&format!("track-list/{i}/external"))
+            .unwrap_or(false);
+        let src_id: i64 = instance
+            .get_property(&format!("track-list/{i}/src-id"))
+            .unwrap_or(0);
+        let track = json!({
+            "id": id,
+            "title": title,
+            "lang": lang,
+            "type": type_,
+            "selected": selected,
+            "external": external,
+            "src_id": src_id,
+        });
+        if type_ == "audio" {
+            audio_tracks.push(track);
+        } else if type_ == "sub" {
+            sub_tracks.push(track);
+        }
+    }
+    Ok(json!({
+        "success": true,
+        "audio_tracks": audio_tracks,
+        "sub_tracks": sub_tracks,
+    }))
+}
+
+/// Get the chapter list (one-shot read for the chapter picker).
+#[tauri::command]
+pub async fn get_chapter_list(
+    mpv_state: State<'_, MpvState>,
+) -> Result<serde_json::Value, String> {
+    let Some(instance) = mpv_state.instance.get() else {
+        return Ok(no_instance_error(&mpv_state));
+    };
+    let instance: &MpvInstance = instance;
+    let count: i64 = instance.get_property("chapter-list/count").unwrap_or(0);
+    let mut chapters: Vec<serde_json::Value> = Vec::new();
+    for i in 0..count {
+        let title: String = instance
+            .get_property(&format!("chapter-list/{i}/title"))
+            .unwrap_or_default();
+        let time: f64 = instance
+            .get_property(&format!("chapter-list/{i}/time"))
+            .unwrap_or(0.0);
+        chapters.push(json!({ "title": title, "time": time }));
+    }
+    Ok(json!({ "success": true, "chapters": chapters }))
+}
+
+/// Navigate to a chapter by index.
+#[tauri::command]
+pub async fn set_chapter(
+    mpv_state: State<'_, MpvState>,
+    index: i64,
+) -> Result<serde_json::Value, String> {
+    let Some(instance) = mpv_state.instance.get() else {
+        return Ok(no_instance_error(&mpv_state));
+    };
+    let instance: &MpvInstance = instance;
+    match instance.set_chapter(index) {
+        Ok(()) => Ok(ok()),
+        Err(e) => Ok(err(e)),
+    }
+}
+
+/// Generic mpv property getter (string-valued — for the frontend to read one-off
+/// properties like `time-pos`, `duration`, `volume`, `pause`, `eof-reached`).
+#[tauri::command]
+pub async fn get_property(
+    mpv_state: State<'_, MpvState>,
+    name: String,
+) -> Result<serde_json::Value, String> {
+    let Some(instance) = mpv_state.instance.get() else {
+        return Ok(no_instance_error(&mpv_state));
+    };
+    let instance: &MpvInstance = instance;
+    match instance.get_property::<String>(&name) {
+        Ok(v) => Ok(json!({ "success": true, "value": v })),
+        Err(e) => Ok(err(e)),
+    }
+}

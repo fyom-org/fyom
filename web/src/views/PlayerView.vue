@@ -50,8 +50,30 @@
              The `.video-mode` class on `.player-view` sets `background: transparent !important`
              so the native NSOpenGL / WGL / GLX layer (created by `attach_render_surface`)
              shows through. HTML controls overlay on top with their own opaque backgrounds. -->
-        <span class="native-status">{{ $t('player.nativeActive') }}</span>
-        <span class="native-subtitle"> {{ $t('player.nativeRunning') }} </span>
+        <span v-if="!isVideoModeActive" class="native-status">{{ $t('player.nativeActive') }}</span>
+        <span v-if="!isVideoModeActive" class="native-subtitle"> {{ $t('player.nativeRunning') }} </span>
+
+        <!-- Phase 2.4: HTML controls overlay on top of the transparent webview.
+             Only shown when video-mode is active (the GL layer is visible). -->
+        <PlayerControls
+          v-if="isVideoModeActive"
+          :state="controlsState"
+          @toggle-pause="onTogglePause"
+          @seek="onSeek"
+          @seek-relative="onSeekRelative"
+          @set-volume="onSetVolume"
+          @set-speed="onSetSpeed"
+          @select-audio="onSelectAudio"
+          @select-sub="onSelectSub"
+          @set-color-adjustment="onSetColorAdjustment"
+          @set-sub-delay="onSetSubDelay"
+          @set-audio-delay="onSetAudioDelay"
+          @set-sub-scale="onSetSubScale"
+          @set-global-color="onSetGlobalColor"
+          @set-chapter="onSetChapter"
+          @toggle-fullscreen="onToggleFullscreen"
+          @reset-adjustments="onResetAdjustments"
+        />
       </div>
 
       <div v-else class="loading">
@@ -73,9 +95,25 @@ import {
   isNativePlaybackRuntimeAvailable,
   resizeRenderSurface,
   setVideoMode,
+  subscribeMpvEvents,
   tryInitializeNativePlayer,
+  type MpvChapter,
   type NativePlayerState,
 } from '@/lib/player/native-player';
+import {
+  setAudioTrack as bridgeSetAudioTrack,
+  setChapter as bridgeSetChapter,
+  setSubtitleTrack as bridgeSetSubtitleTrack,
+  setVolume as bridgeSetVolume,
+  seek as bridgeSeek,
+  seekRelative as bridgeSeekRelative,
+  togglePause as bridgeTogglePause,
+  mpvKeypress as bridgeMpvKeypress,
+} from '@/lib/player/native-player';
+import { useMediaTracks } from '@/composables/useMediaTracks';
+import { usePlaybackAdjustments } from '@/composables/usePlaybackAdjustments';
+import { usePlaybackSpeed } from '@/composables/usePlaybackSpeed';
+import PlayerControls, { type PlayerControlsState } from '@/components/PlayerControls.vue';
 import PlayerFallbackNotice from '@/components/PlayerFallbackNotice.vue';
 
 interface ProgressPayload {
@@ -115,6 +153,7 @@ const pendingProgressPayload = ref<ProgressPayload | null>(null);
 
 let loadGeneration = 0;
 let disposed = false;
+let mpvEventsUnlisten: (() => void) | null = null;
 
 const mediaId = computed(() => {
   const id = route.params.id;
@@ -177,6 +216,325 @@ const isVideoModeActive = computed(() => {
 // so we don't re-attach on every `mediaId` watch).
 const renderSurfaceAttached = ref(false);
 
+// ---------------------------------------------------------------------------
+// Phase 2.4: mpv event-driven playback state + composable instances.
+//
+// The mpv event subscription (`subscribeMpvEvents`) drives all native playback state:
+// `isPaused`, `currentTime`, `duration`, `volume`, `speed`, `audioTracks`, `subTracks`,
+// `currentAudioId`, `currentSubId`, `chapters`, `currentChapter`, `hwdec`, and the
+// color-adjustment / A/V-delay values. The HTML controls (PlayerControls.vue) render
+// this state + emit user actions, which the handlers below translate back into mpv
+// commands via the `native-player.ts` bridge.
+// ---------------------------------------------------------------------------
+
+const isPaused = ref(true);
+const currentTime = ref(0);
+const duration = ref(0);
+const volume = ref(80);
+const currentAudioId = ref(0);
+const currentSubId = ref(0);
+const chapters = ref<MpvChapter[]>([]);
+const currentChapter = ref(-1);
+const hwdec = ref('');
+const isBuffering = ref(false);
+
+// Composable instances (track management + adjustments + speed).
+const tracksComposable = useMediaTracks(() => streamUrl.value);
+const adjustmentsComposable = usePlaybackAdjustments();
+const speedComposable = usePlaybackSpeed();
+
+/**
+ * The full playback state rendered by PlayerControls. Computed from the reactive refs
+ * + composable state above. PlayerControls is a pure presentational component.
+ */
+const controlsState = computed<PlayerControlsState>(() => ({
+  isPaused: isPaused.value,
+  currentTime: currentTime.value,
+  duration: duration.value,
+  volume: volume.value,
+  speed: speedComposable.currentSpeed.value,
+  audioTracks: tracksComposable.audioTracks.value,
+  subTracks: tracksComposable.subTracks.value,
+  currentAudioId: currentAudioId.value,
+  currentSubId: currentSubId.value,
+  chapters: chapters.value,
+  currentChapter: currentChapter.value,
+  hwdec: hwdec.value,
+  brightness: adjustmentsComposable.brightness.value,
+  contrast: adjustmentsComposable.contrast.value,
+  saturation: adjustmentsComposable.saturation.value,
+  gamma: adjustmentsComposable.gamma.value,
+  hue: adjustmentsComposable.hue.value,
+  subDelay: adjustmentsComposable.subDelay.value,
+  audioDelay: adjustmentsComposable.audioDelay.value,
+  subScale: adjustmentsComposable.subScale.value,
+  globalColorAdjustmentsEnabled: adjustmentsComposable.globalColorAdjustmentsEnabled.value,
+  isBuffering: isBuffering.value,
+}));
+
+/**
+ * Subscribe to `fyom://mpv/*` events. Called once on mount when native playback is
+ * available. The unlisten function is stored for `onBeforeUnmount` cleanup.
+ */
+async function setupMpvEventSubscription(): Promise<void> {
+  if (mpvEventsUnlisten) return;
+  if (!isNativePlaybackRuntimeAvailable()) return;
+
+  mpvEventsUnlisten = await subscribeMpvEvents({
+    onTimePos: ({ position, duration: dur }) => {
+      currentTime.value = position;
+      if (dur > 0) duration.value = dur;
+    },
+    onDuration: ({ duration: dur }) => {
+      duration.value = dur;
+    },
+    onPause: ({ paused }) => {
+      isPaused.value = paused;
+    },
+    onVolume: ({ volume: vol }) => {
+      volume.value = vol;
+    },
+    onSpeed: ({ speed }) => {
+      speedComposable.reconcileSpeed(speed);
+    },
+    onTrackList: (e) => {
+      // The Phase 2.4 event payload includes `selected`/`external`/`src_id` (the
+      // `MpvTrack` type was extended). Feed the composable + reconcile current track ids.
+      const payload = {
+        audio_tracks: e.audio_tracks,
+        sub_tracks: e.sub_tracks,
+      };
+      tracksComposable.handleTracksUpdate(payload);
+      // Reconcile current track ids from the selected flags.
+      const selectedAudio = payload.audio_tracks.find((t) => t.selected);
+      currentAudioId.value = selectedAudio ? selectedAudio.id : 0;
+      const selectedSub = payload.sub_tracks.find((t) => t.selected);
+      currentSubId.value = selectedSub ? selectedSub.id : 0;
+    },
+    onChapterList: ({ chapters: chs }) => {
+      chapters.value = chs;
+    },
+    onChapter: ({ index }) => {
+      currentChapter.value = index;
+    },
+    onHwdecCurrent: ({ hwdec: hw }) => {
+      hwdec.value = hw;
+    },
+    onAid: ({ id }) => {
+      currentAudioId.value = id;
+    },
+    onSid: ({ id }) => {
+      currentSubId.value = id;
+    },
+    onSubDelay: ({ delay }) => {
+      adjustmentsComposable.reconcileFromMpv({ subDelay: delay });
+    },
+    onAudioDelay: ({ delay }) => {
+      adjustmentsComposable.reconcileFromMpv({ audioDelay: delay });
+    },
+    onBrightness: ({ value }) => {
+      adjustmentsComposable.reconcileFromMpv({ brightness: value });
+    },
+    onContrast: ({ value }) => {
+      adjustmentsComposable.reconcileFromMpv({ contrast: value });
+    },
+    onSaturation: ({ value }) => {
+      adjustmentsComposable.reconcileFromMpv({ saturation: value });
+    },
+    onGamma: ({ value }) => {
+      adjustmentsComposable.reconcileFromMpv({ gamma: value });
+    },
+    onHue: ({ value }) => {
+      adjustmentsComposable.reconcileFromMpv({ hue: value });
+    },
+    onPausedForCache: ({ paused }) => {
+      isBuffering.value = paused;
+    },
+    onFileLoaded: ({ path }) => {
+      // Phase 2.4: on file-loaded, apply per-media color adjustments + auto-discover
+      // external subtitles (LOCAL-only — `findExternalSubtitles` returns [] for remote).
+      void adjustmentsComposable.applyColorAdjustmentsForMedia(path || streamUrl.value);
+      if (path) {
+        void tracksComposable.applyExternalSubtitlesForUrl(path);
+      }
+    },
+    onEndFile: ({ reason }) => {
+      // Phase 2.5 will wire EOF → watched-status. For now, just reset state + report
+      // progress as finished if reason=0 (eof).
+      if (reason === 0) {
+        void flushProgressFromVideo(true);
+      }
+      tracksComposable.resetTracks();
+      currentTime.value = 0;
+      currentChapter.value = -1;
+      chapters.value = [];
+    },
+    onPlaybackRestart: () => {
+      // Seek completed — mpv is rendering again.
+      isBuffering.value = false;
+    },
+    onError: ({ message }) => {
+      console.warn('[fyom] mpv error:', message);
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2.4: PlayerControls event handlers (translate UI actions → mpv commands).
+// ---------------------------------------------------------------------------
+
+const onTogglePause = (): void => {
+  void bridgeTogglePause();
+};
+
+const onSeek = (position: number): void => {
+  void bridgeSeek(position).then((ok) => {
+    if (ok) currentTime.value = position;
+  });
+};
+
+const onSeekRelative = (delta: number): void => {
+  void bridgeSeekRelative(delta);
+};
+
+const onSetVolume = (vol: number): void => {
+  void bridgeSetVolume(vol);
+  volume.value = vol;
+};
+
+const onSetSpeed = (speed: number): void => {
+  void speedComposable.setSpeed(speed);
+};
+
+const onSelectAudio = (trackId: number): void => {
+  void bridgeSetAudioTrack(trackId);
+  currentAudioId.value = trackId;
+};
+
+const onSelectSub = (trackId: number): void => {
+  if (trackId === 0) {
+    void bridgeSetSubtitleTrack(null);
+  } else {
+    void bridgeSetSubtitleTrack(trackId);
+  }
+  currentSubId.value = trackId;
+};
+
+const onSetColorAdjustment = (
+  name: 'brightness' | 'contrast' | 'saturation' | 'gamma' | 'hue',
+  value: number,
+): void => {
+  // Dispatch to the composable (which calls the bridge + persists if global is on).
+  switch (name) {
+    case 'brightness':
+      void adjustmentsComposable.setBrightness(value);
+      break;
+    case 'contrast':
+      void adjustmentsComposable.setContrast(value);
+      break;
+    case 'saturation':
+      void adjustmentsComposable.setSaturation(value);
+      break;
+    case 'gamma':
+      void adjustmentsComposable.setGamma(value);
+      break;
+    case 'hue':
+      void adjustmentsComposable.setHue(value);
+      break;
+  }
+};
+
+const onSetSubDelay = (seconds: number): void => {
+  void adjustmentsComposable.setSubDelay(seconds);
+};
+
+const onSetAudioDelay = (seconds: number): void => {
+  void adjustmentsComposable.setAudioDelay(seconds);
+};
+
+const onSetSubScale = (scale: number): void => {
+  void adjustmentsComposable.setSubScale(scale);
+};
+
+const onSetGlobalColor = (enabled: boolean): void => {
+  void adjustmentsComposable.setGlobalColorAdjustmentsEnabled(enabled);
+};
+
+const onSetChapter = (index: number): void => {
+  void bridgeSetChapter(index);
+};
+
+const onResetAdjustments = (): void => {
+  void adjustmentsComposable.setBrightness(0);
+  void adjustmentsComposable.setContrast(0);
+  void adjustmentsComposable.setSaturation(0);
+  void adjustmentsComposable.setGamma(0);
+  void adjustmentsComposable.setHue(0);
+  void adjustmentsComposable.setSubDelay(0);
+  void adjustmentsComposable.setAudioDelay(0);
+  void adjustmentsComposable.setSubScale(1.0);
+};
+
+const onToggleFullscreen = (): void => {
+  // Toggle the browser fullscreen (works in both Tauri + plain browser).
+  if (document.fullscreenElement) {
+    void document.exitFullscreen();
+  } else {
+    void document.documentElement.requestFullscreen();
+  }
+};
+
+// Keyboard shortcuts (ported from soia's `usePlaybackShortcuts`, simplified).
+const onKeyDown = (event: KeyboardEvent): void => {
+  if (!isNativeReady.value) return;
+  // Don't intercept when the user is typing in an input/textarea.
+  const target = event.target as HTMLElement | null;
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+    return;
+  }
+
+  switch (event.key) {
+    case ' ':
+    case 'k':
+      event.preventDefault();
+      onTogglePause();
+      break;
+    case 'ArrowLeft':
+      event.preventDefault();
+      onSeekRelative(-5);
+      break;
+    case 'ArrowRight':
+      event.preventDefault();
+      onSeekRelative(5);
+      break;
+    case 'ArrowUp':
+      event.preventDefault();
+      onSetVolume(Math.min(100, volume.value + 5));
+      break;
+    case 'ArrowDown':
+      event.preventDefault();
+      onSetVolume(Math.max(0, volume.value - 5));
+      break;
+    case 'f':
+      event.preventDefault();
+      onToggleFullscreen();
+      break;
+    case 'm':
+      event.preventDefault();
+      onSetVolume(volume.value > 0 ? 0 : 80);
+      break;
+    default:
+      // Forward other keys to mpv (mpv keystr format — e.g. "Space", "Ctrl+Right").
+      // This lets power-user mpv bindings work (e.g. "j" for subtitle cycle, "#" for
+      // audio cycle). The frontend assembles the keystr.
+      if (event.key.length === 1 || event.key.startsWith('Arrow') === false) {
+        const keystr = event.key === ' ' ? 'Space' : event.key;
+        void bridgeMpvKeypress(keystr);
+      }
+      break;
+  }
+};
+
 // Phase 2.3: window resize listener (notifies backend to update the GL drawable).
 const handleWindowResize = (): void => {
   const w = window.innerWidth;
@@ -187,6 +545,11 @@ const handleWindowResize = (): void => {
 
 onMounted(() => {
   window.addEventListener('resize', handleWindowResize, { passive: true });
+  window.addEventListener('keydown', onKeyDown);
+  // Phase 2.4: subscribe to mpv events early (the subscription is a no-op outside
+  // Tauri, so it's safe to call before native init completes — the events will start
+  // flowing once `play_media` succeeds).
+  void setupMpvEventSubscription();
   void reloadCurrentMedia();
 });
 
@@ -209,9 +572,16 @@ watch(isVideoModeActive, (active) => {
 onBeforeUnmount(() => {
   disposed = true;
   window.removeEventListener('resize', handleWindowResize);
+  window.removeEventListener('keydown', onKeyDown);
   // Phase 2.3: ensure `.video-mode` is disabled when leaving the player view (so the
   // webview root goes back to opaque for the rest of the app).
   void setVideoMode(false);
+  // Phase 2.4: reset track state + tear down mpv event subscription.
+  tracksComposable.resetTracks();
+  if (mpvEventsUnlisten) {
+    mpvEventsUnlisten();
+    mpvEventsUnlisten = null;
+  }
   void flushProgressFromVideo(false);
   void teardownCurrentPlayback();
 });
@@ -234,6 +604,18 @@ function resetViewState(): void {
   lastReportedPosition.value = 0;
   progressRequestInFlight.value = false;
   pendingProgressPayload.value = null;
+  // Phase 2.4: reset playback state + tracks + chapters.
+  isPaused.value = true;
+  currentTime.value = 0;
+  duration.value = 0;
+  volume.value = 80;
+  currentAudioId.value = 0;
+  currentSubId.value = 0;
+  chapters.value = [];
+  currentChapter.value = -1;
+  hwdec.value = '';
+  isBuffering.value = false;
+  tracksComposable.resetTracks();
 }
 
 async function loadMedia(id: string): Promise<void> {

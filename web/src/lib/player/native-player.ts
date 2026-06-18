@@ -200,6 +200,12 @@ export interface MpvTrack {
   title: string;
   lang: string;
   type: string;
+  /** Whether this track is currently selected (Phase 2.4). */
+  selected?: boolean;
+  /** Whether this is an external track (loaded via `sub-add` / `audio-add`) (Phase 2.4). */
+  external?: boolean;
+  /** Source id (the track's originating file index; 0 for the main file) (Phase 2.4). */
+  src_id?: number;
 }
 
 export interface MpvChapter {
@@ -252,6 +258,80 @@ export interface MpvErrorEvent {
   message: string;
 }
 
+// Phase 2.4 additions — typed payloads for the new `fyom://mpv/*` events emitted by
+// the extended `event_loop.rs` observer set (hwdec-current, aid, sid, A/V delays, color
+// adjustments, chapter, eof-reached).
+export interface MpvHwdecCurrentEvent {
+  /** Active hwdec backend (e.g. "auto-safe", "vt", "vaapi", "d3d11va", "nv"). */
+  hwdec: string;
+}
+export interface MpvAidEvent {
+  /** Current audio track id (0 = none / disabled). */
+  id: number;
+}
+export interface MpvSidEvent {
+  /** Current subtitle track id (0 = none / disabled). */
+  id: number;
+}
+export interface MpvSubDelayEvent {
+  /** Subtitle delay in seconds (negative = earlier, positive = later). */
+  delay: number;
+}
+export interface MpvAudioDelayEvent {
+  /** Audio delay in seconds (negative = earlier, positive = later). */
+  delay: number;
+}
+export interface MpvColorAdjustmentEvent {
+  /** Adjustment value in -100..=100 (0 = default). */
+  value: number;
+}
+export interface MpvChapterEvent {
+  /** Current chapter index (-1 = no chapter). */
+  index: number;
+}
+export interface MpvEofReachedEvent {
+  /** Whether playback has reached end of file. */
+  eof: boolean;
+}
+
+/**
+ * Extended track shape — now identical to `MpvTrack` (Phase 2.4 extended the event
+ * payload to include `selected`, `external`, `src_id`). Kept as an alias for backward
+ * compatibility with code that references `MpvTrackFull` explicitly.
+ */
+export type MpvTrackFull = MpvTrack;
+
+/** Response shape from `get_track_list` invoke. */
+export interface MpvTrackListResponse {
+  success: boolean;
+  error?: string;
+  audio_tracks: MpvTrackFull[];
+  sub_tracks: MpvTrackFull[];
+}
+
+/** Response shape from `get_chapter_list` invoke. */
+export interface MpvChapterListResponse {
+  success: boolean;
+  error?: string;
+  chapters: MpvChapter[];
+}
+
+/** Response shape from `find_external_subtitles` invoke. */
+export interface ExternalSubtitleMatch {
+  /** Absolute filesystem path to the subtitle file. */
+  path: string;
+  /** Match score 0.0–100.0 (higher = better). */
+  score: number;
+  /** Display name (file stem) for the subtitle. */
+  label: string;
+}
+
+export interface FindExternalSubtitlesResponse {
+  success: boolean;
+  error?: string;
+  matches: ExternalSubtitleMatch[];
+}
+
 /**
  * Handler callbacks for each `fyom://mpv/*` event. Only wire the ones you care about;
  * unset handlers are skipped.
@@ -273,6 +353,19 @@ export interface MpvEventHandlers {
   onPlaybackRestart?: () => void;
   onShutdown?: () => void;
   onError?: (e: MpvErrorEvent) => void;
+  // Phase 2.4 additions
+  onHwdecCurrent?: (e: MpvHwdecCurrentEvent) => void;
+  onAid?: (e: MpvAidEvent) => void;
+  onSid?: (e: MpvSidEvent) => void;
+  onSubDelay?: (e: MpvSubDelayEvent) => void;
+  onAudioDelay?: (e: MpvAudioDelayEvent) => void;
+  onBrightness?: (e: MpvColorAdjustmentEvent) => void;
+  onContrast?: (e: MpvColorAdjustmentEvent) => void;
+  onSaturation?: (e: MpvColorAdjustmentEvent) => void;
+  onGamma?: (e: MpvColorAdjustmentEvent) => void;
+  onHue?: (e: MpvColorAdjustmentEvent) => void;
+  onChapter?: (e: MpvChapterEvent) => void;
+  onEofReached?: (e: MpvEofReachedEvent) => void;
 }
 
 /**
@@ -339,6 +432,44 @@ export async function subscribeMpvEvents(
   }
   if (handlers.onError) {
     unlistens.push(await listen<MpvErrorEvent>('fyom://mpv/error', (e) => handlers.onError?.(e.payload)));
+  }
+
+  // Phase 2.4 property-change events.
+  if (handlers.onHwdecCurrent) {
+    unlistens.push(await listen<MpvHwdecCurrentEvent>('fyom://mpv/hwdec-current', (e) => handlers.onHwdecCurrent?.(e.payload)));
+  }
+  if (handlers.onAid) {
+    unlistens.push(await listen<MpvAidEvent>('fyom://mpv/aid', (e) => handlers.onAid?.(e.payload)));
+  }
+  if (handlers.onSid) {
+    unlistens.push(await listen<MpvSidEvent>('fyom://mpv/sid', (e) => handlers.onSid?.(e.payload)));
+  }
+  if (handlers.onSubDelay) {
+    unlistens.push(await listen<MpvSubDelayEvent>('fyom://mpv/sub-delay', (e) => handlers.onSubDelay?.(e.payload)));
+  }
+  if (handlers.onAudioDelay) {
+    unlistens.push(await listen<MpvAudioDelayEvent>('fyom://mpv/audio-delay', (e) => handlers.onAudioDelay?.(e.payload)));
+  }
+  if (handlers.onBrightness) {
+    unlistens.push(await listen<MpvColorAdjustmentEvent>('fyom://mpv/brightness', (e) => handlers.onBrightness?.(e.payload)));
+  }
+  if (handlers.onContrast) {
+    unlistens.push(await listen<MpvColorAdjustmentEvent>('fyom://mpv/contrast', (e) => handlers.onContrast?.(e.payload)));
+  }
+  if (handlers.onSaturation) {
+    unlistens.push(await listen<MpvColorAdjustmentEvent>('fyom://mpv/saturation', (e) => handlers.onSaturation?.(e.payload)));
+  }
+  if (handlers.onGamma) {
+    unlistens.push(await listen<MpvColorAdjustmentEvent>('fyom://mpv/gamma', (e) => handlers.onGamma?.(e.payload)));
+  }
+  if (handlers.onHue) {
+    unlistens.push(await listen<MpvColorAdjustmentEvent>('fyom://mpv/hue', (e) => handlers.onHue?.(e.payload)));
+  }
+  if (handlers.onChapter) {
+    unlistens.push(await listen<MpvChapterEvent>('fyom://mpv/chapter', (e) => handlers.onChapter?.(e.payload)));
+  }
+  if (handlers.onEofReached) {
+    unlistens.push(await listen<MpvEofReachedEvent>('fyom://mpv/eof-reached', (e) => handlers.onEofReached?.(e.payload)));
   }
 
   // Void events (no payload).
@@ -469,5 +600,415 @@ export async function resizeRenderSurface(
     await invoke('resize_render_surface', { width, height, scaleFactor });
   } catch {
     // Best-effort — ignore errors (the render loop polls dimensions anyway).
+  }
+}
+
+/* ── Phase 2.4: playback feature bridge (subtitles, audio tracks, color
+ *    adjustments, chapter nav, generic property get/set). PORTED_FROM_SOIA
+ *    `commands/playback.rs` + `useMediaTracks.ts` + `usePlaybackAdjustments.ts`
+ *    invoke surface, reimplemented on fyom's `MpvInstance` (soia's
+ *    `mpv_run_command`/`mpv_set_option_string` map to fyom's typed commands). ──── */
+
+/**
+ * Get the Tauri invoke function, or null outside the Tauri runtime.
+ *
+ * Internal helper — the Phase 2.4 bridge functions use this to avoid repeating the
+ * `__TAURI_INTERNALS__` dance. Returns null in a plain browser (the `<video>` fallback
+ * owns playback; the bridge functions return safe defaults).
+ */
+function getTauriInvoke(): ((command: string, args?: Record<string, unknown>) => Promise<unknown>) | null {
+  if (!isNativePlaybackRuntimeAvailable()) {
+    return null;
+  }
+  try {
+    // @ts-expect-error — __TAURI_INTERNALS__ exists in Tauri runtime
+    const { invoke } = window.__TAURI_INTERNALS__.tauri;
+    return typeof invoke === 'function' ? invoke : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Phase 2.4: find external subtitle files matching a LOCAL media file (fuzzy match by
+ * name, episode key, year). Returns absolute filesystem paths sorted by match score.
+ *
+ * LOCAL-only: returns an empty list for remote (presigned URL / network) media.
+ */
+export async function findExternalSubtitles(
+  mediaPath: string,
+  mediaTitle?: string,
+): Promise<ExternalSubtitleMatch[]> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return [];
+
+  try {
+    const result = await invoke<FindExternalSubtitlesResponse>('find_external_subtitles', {
+      mediaPath,
+      mediaTitle: mediaTitle ?? null,
+    });
+    if (result && result.success) {
+      return result.matches;
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Phase 2.4: add an external subtitle file to the current playback.
+ *
+ * @param path Absolute filesystem path to the subtitle file.
+ * @param mode `"select"` (activate immediately) or `"auto"` (add but don't activate).
+ * @param title Optional display title (shown in track list + subtitle picker).
+ * @param lang Optional ISO 639-1 language code (e.g. "en", "zh").
+ */
+export async function subAdd(
+  path: string,
+  mode: 'select' | 'auto' = 'select',
+  title?: string,
+  lang?: string,
+): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('sub_add', {
+      path,
+      mode,
+      title: title ?? null,
+      lang: lang ?? null,
+    });
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Remove an external subtitle track by id. */
+export async function subRemove(trackId: number): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('sub_remove', {
+      trackId,
+    });
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Reload a subtitle track by id (useful after editing an external .srt). */
+export async function subReload(trackId: number): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('sub_reload', {
+      trackId,
+    });
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Add an external audio track. */
+export async function audioAdd(
+  path: string,
+  mode: 'select' | 'auto' = 'select',
+): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('audio_add', {
+      path,
+      mode,
+    });
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Set the subtitle delay (seconds; negative = earlier, positive = later). */
+export async function setSubDelay(seconds: number): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('set_sub_delay', {
+      seconds,
+    });
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Set the audio delay (seconds; negative = earlier, positive = later). */
+export async function setAudioDelay(seconds: number): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('set_audio_delay', {
+      seconds,
+    });
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Set the subtitle font scale (1.0 = default). */
+export async function setSubScale(scale: number): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('set_sub_scale', {
+      scale,
+    });
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Set a color adjustment (`brightness` / `contrast` / `saturation` / `gamma` / `hue`). Range: -100..=100. */
+export async function setColorAdjustment(
+  name: 'brightness' | 'contrast' | 'saturation' | 'gamma' | 'hue',
+  value: number,
+): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('set_color_adjustment', {
+      name,
+      value,
+    });
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Generic mpv option-string setter (power-user surface — prefer typed commands above). */
+export async function mpvSetOptionString(name: string, value: string | number | boolean): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('mpv_set_option_string', {
+      name,
+      value: String(value),
+    });
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Get the current track list (audio + sub) as a typed object. One-shot read. */
+export async function getTrackList(): Promise<MpvTrackListResponse | null> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return null;
+
+  try {
+    return await invoke<MpvTrackListResponse>('get_track_list');
+  } catch {
+    return null;
+  }
+}
+
+/** Get the chapter list (one-shot read). */
+export async function getChapterList(): Promise<MpvChapterListResponse | null> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return null;
+
+  try {
+    return await invoke<MpvChapterListResponse>('get_chapter_list');
+  } catch {
+    return null;
+  }
+}
+
+/** Navigate to a chapter by index. */
+export async function setChapter(index: number): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('set_chapter', {
+      index,
+    });
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Generic string-valued property getter (one-shot read). */
+export async function getProperty(name: string): Promise<string | null> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return null;
+
+  try {
+    const result = await invoke<{ success: boolean; value?: string; error?: string }>('get_property', {
+      name,
+    });
+    if (result && result.success) {
+      return result.value ?? null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/* ── Phase 2.4: typed wrappers for the Phase 2.2 commands (seek, volume, speed,
+ *    pause, track selection, keypress, generic command). These existed as Tauri
+ *    commands since Phase 2.2 but had no TS bridge — the PlayerView controls now
+ *    need them. ───────────────────────────────────────────────────────────── */
+
+/** Seek to an absolute position (seconds). */
+export async function seek(position: number): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('seek', { position });
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Seek by a relative offset (seconds; negative = backward). */
+export async function seekRelative(seconds: number): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('seek_relative', {
+      seconds,
+    });
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Toggle play/pause. */
+export async function togglePause(): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('toggle_pause');
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Explicitly set the pause state (`true` = paused, `false` = playing). */
+export async function setPause(paused: boolean): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('set_pause', { paused });
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Set the volume (0–100). */
+export async function setVolume(volume: number): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('set_volume', { volume });
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Set the playback speed (1.0 = normal). */
+export async function setSpeed(speed: number): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('set_speed', { speed });
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Select the audio track (`null` to disable audio). */
+export async function setAudioTrack(trackId: number | null): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('set_audio_track', {
+      trackId,
+    });
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Select the subtitle track (`null` to disable subtitles). */
+export async function setSubtitleTrack(trackId: number | null): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('set_subtitle_track', {
+      trackId,
+    });
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Forward a keypress to mpv (mpv keystr format, e.g. "Space", "Ctrl+Right", "Volume+"). */
+export async function mpvKeypress(key: string): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('mpv_keypress', { key });
+    return Boolean(result && result.success);
+  } catch {
+    return false;
+  }
+}
+
+/** Stop playback + clear the playlist. */
+export async function stopMedia(): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return false;
+
+  try {
+    const result = await invoke<{ success: boolean; error?: string }>('stop_media');
+    return Boolean(result && result.success);
+  } catch {
+    return false;
   }
 }

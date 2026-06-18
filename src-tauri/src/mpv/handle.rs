@@ -335,6 +335,146 @@ impl MpvInstance {
             .get_property(property)
             .map_err(|e| format!("mpv get_property '{}' failed: {}", property, e))
     }
+
+    /// Set an option string (synchronous). Ported from soia's `mpv_set_option_string`
+    /// surface — used for runtime-tunable mpv options like `aid`, `sid`, `sub-delay`,
+    /// `audio-delay`, `brightness`, `contrast`, `saturation`, `gamma`, `hue`, `speed`,
+    /// `sub-scale`, `secondary-sub-delay`.
+    ///
+    /// Prefer the typed `set_property` facade when the value is a known primitive (bool,
+    /// i64, f64, String); this method is for the power-user surface where the frontend
+    /// passes the option name + stringified value directly.
+    pub fn set_option_string(&self, name: &str, value: &str) -> Result<(), String> {
+        self.mpv
+            .set_property(name, value)
+            .map_err(|e| format!("mpv set_option_string '{}'='{}' failed: {}", name, value, e))
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2.4: subtitle / audio track management (port soia's sub-add /
+    // sub-remove / sub-reload + audio-add / audio-remove command surface).
+    // -----------------------------------------------------------------------
+
+    /// Add an external subtitle file (`sub-add` command). Ported from soia's
+    /// `mpv_run_command(["sub-add", path, mode])`.
+    ///
+    /// - `mode = "select"`: select the subtitle immediately (the user picked it).
+    /// - `mode = "auto"`: add but don't select (auto-discovered subs; mpv picks based on
+    ///   `--subs-with-matching-audio` + `--slang`).
+    /// - `title`: optional display title (shown in mpv's track list + fyom's subtitle picker).
+    /// - `lang`: optional ISO 639-1 language code (e.g. "en", "zh").
+    pub fn sub_add(
+        &self,
+        path: &str,
+        mode: &str,
+        title: Option<&str>,
+        lang: Option<&str>,
+    ) -> Result<(), String> {
+        // mpv's `sub-add` command takes args: <url> [<flags> [<title> [<lang>]]].
+        // `flags` is "select" (activate) or "auto" (don't activate).
+        // The command name ("sub-add") is the first arg to `mpv.command()`; the slice
+        // is the remaining args (no command name in the slice).
+        let mut args: Vec<&str> = vec![path, mode];
+        if let Some(t) = title {
+            args.push(t);
+        } else {
+            args.push("");
+        }
+        if let Some(l) = lang {
+            args.push(l);
+        }
+        self.mpv
+            .command("sub-add", &args)
+            .map_err(|e| format!("mpv sub-add failed: {}", e))
+    }
+
+    /// Remove an external subtitle track by id (`sub-remove` command).
+    pub fn sub_remove(&self, track_id: i64) -> Result<(), String> {
+        let id_str = track_id.to_string();
+        self.mpv
+            .command("sub-remove", &[&id_str])
+            .map_err(|e| format!("mpv sub-remove failed: {}", e))
+    }
+
+    /// Reload a subtitle track by id (`sub-reload` command). Useful after the user edits
+    /// an external .srt file.
+    pub fn sub_reload(&self, track_id: i64) -> Result<(), String> {
+        let id_str = track_id.to_string();
+        self.mpv
+            .command("sub-reload", &[&id_str])
+            .map_err(|e| format!("mpv sub-reload failed: {}", e))
+    }
+
+    /// Add an external audio track (`audio-add` command). Ported from soia's
+    /// `mpv_run_command(["audio-add", path, mode])`.
+    pub fn audio_add(&self, path: &str, mode: &str) -> Result<(), String> {
+        self.mpv
+            .command("audio-add", &[path, mode])
+            .map_err(|e| format!("mpv audio-add failed: {}", e))
+    }
+
+    /// Remove an audio track by id (`audio-remove` command).
+    pub fn audio_remove(&self, track_id: i64) -> Result<(), String> {
+        let id_str = track_id.to_string();
+        self.mpv
+            .command("audio-remove", &[&id_str])
+            .map_err(|e| format!("mpv audio-remove failed: {}", e))
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2.4: convenience setters for color adjustments + A/V delays
+    // (ported from soia's `usePlaybackAdjustments.ts` invoke surface).
+    // -----------------------------------------------------------------------
+
+    /// Set subtitle delay (seconds; negative = earlier, positive = later).
+    pub fn set_sub_delay(&self, seconds: f64) -> Result<(), String> {
+        self.set_property("sub-delay", seconds)
+    }
+
+    /// Set secondary subtitle delay (seconds; for dual-sub mode).
+    pub fn set_secondary_sub_delay(&self, seconds: f64) -> Result<(), String> {
+        self.set_property("secondary-sub-delay", seconds)
+    }
+
+    /// Set audio delay (seconds; negative = earlier, positive = later).
+    pub fn set_audio_delay(&self, seconds: f64) -> Result<(), String> {
+        self.set_property("audio-delay", seconds)
+    }
+
+    /// Set subtitle scale (font size multiplier; 1.0 = default).
+    pub fn set_sub_scale(&self, scale: f64) -> Result<(), String> {
+        self.set_property("sub-scale", scale)
+    }
+
+    /// Set brightness (-100..=100; 0 = default).
+    pub fn set_brightness(&self, value: f64) -> Result<(), String> {
+        self.set_property("brightness", value)
+    }
+
+    /// Set contrast (-100..=100; 0 = default).
+    pub fn set_contrast(&self, value: f64) -> Result<(), String> {
+        self.set_property("contrast", value)
+    }
+
+    /// Set saturation (-100..=100; 0 = default).
+    pub fn set_saturation(&self, value: f64) -> Result<(), String> {
+        self.set_property("saturation", value)
+    }
+
+    /// Set gamma (-100..=100; 0 = default).
+    pub fn set_gamma(&self, value: f64) -> Result<(), String> {
+        self.set_property("gamma", value)
+    }
+
+    /// Set hue (-100..=100; 0 = default).
+    pub fn set_hue(&self, value: f64) -> Result<(), String> {
+        self.set_property("hue", value)
+    }
+
+    /// Navigate to a chapter by index (`set_property("chapter", n)`).
+    pub fn set_chapter(&self, index: i64) -> Result<(), String> {
+        self.set_property("chapter", index)
+    }
 }
 
 impl Default for MpvInstance {

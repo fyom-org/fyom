@@ -5,6 +5,7 @@ mod mpv;
 mod platform;
 mod sidecar;
 mod state;
+mod subtitles;
 mod tray;
 mod window;
 
@@ -145,6 +146,22 @@ pub fn run() {
             commands::playback::attach_render_surface,
             commands::playback::set_video_mode,
             commands::playback::resize_render_surface,
+            // Phase 2.4 playback features (subtitles, audio tracks, color adjustments,
+            // generic property get/set, chapter nav — port soia's command surface).
+            commands::playback::find_external_subtitles,
+            commands::playback::sub_add,
+            commands::playback::sub_remove,
+            commands::playback::sub_reload,
+            commands::playback::audio_add,
+            commands::playback::set_sub_delay,
+            commands::playback::set_audio_delay,
+            commands::playback::set_sub_scale,
+            commands::playback::set_color_adjustment,
+            commands::playback::mpv_set_option_string,
+            commands::playback::get_track_list,
+            commands::playback::get_chapter_list,
+            commands::playback::set_chapter,
+            commands::playback::get_property,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
