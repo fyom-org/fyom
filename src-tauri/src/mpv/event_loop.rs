@@ -71,22 +71,6 @@ pub struct Chapter {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChapterList(pub Vec<Chapter>);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "value")]
-pub enum TrackSelection {
-    Track(i64),
-    None,
-}
-
-impl std::fmt::Display for TrackSelection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Track(id) => write!(f, "{id}"),
-            Self::None => write!(f, "no"),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", content = "data")]
 #[allow(clippy::large_enum_variant)]
@@ -95,6 +79,7 @@ pub enum MpvEvent {
     PlaybackRestart,
     EndFile(u32),
     FileLoaded,
+
     Duration(f64),
     Pause(bool),
     CacheSpeed(i64),
@@ -160,8 +145,8 @@ pub fn spawn_event_loop(
 }
 
 fn configure_event_context(event_context: &mut EventContext) {
-    if let Err(e) = event_context.disable_deprecated_events() {
-        warn!("[mpv/event] disable_deprecated_events failed: {e}");
+    if let Err(error) = event_context.disable_deprecated_events() {
+        warn!("[mpv/event] disable_deprecated_events failed: {error}");
     }
 
     const OBSERVED_PROPERTIES: &[(&str, Format, u64)] = &[
@@ -217,7 +202,7 @@ fn run_event_loop(
 
         match event_context.wait_event(EVENT_WAIT_SECS) {
             Some(Ok(event)) => handle_event(event, &mpv, &app_handle),
-            Some(Err(e)) => emit_error(&app_handle, e.to_string()),
+            Some(Err(error)) => emit_error(&app_handle, error.to_string()),
             None => {}
         }
     }
@@ -234,14 +219,17 @@ fn handle_event(event: Event, mpv: &Mpv, app_handle: &AppHandle) {
         Event::PropertyChange { name, change, .. } => {
             handle_property_change(name, change, mpv, app_handle);
         }
+
         Event::Seek { .. } => {
             send_internal(MpvEvent::Seek);
             emit_void(app_handle, "fyom://mpv/seek");
         }
+
         Event::PlaybackRestart { .. } => {
             send_internal(MpvEvent::PlaybackRestart);
             emit_void(app_handle, "fyom://mpv/playback-restart");
         }
+
         Event::EndFile(reason) => {
             send_internal(MpvEvent::EndFile(reason));
             emit_payload(
@@ -253,6 +241,7 @@ fn handle_event(event: Event, mpv: &Mpv, app_handle: &AppHandle) {
                 }),
             );
         }
+
         Event::FileLoaded => {
             send_internal(MpvEvent::FileLoaded);
 
@@ -266,10 +255,12 @@ fn handle_event(event: Event, mpv: &Mpv, app_handle: &AppHandle) {
                 }),
             );
         }
+
         Event::Shutdown => {
             send_internal(MpvEvent::Shutdown);
             emit_void(app_handle, "fyom://mpv/shutdown");
         }
+
         _ => {}
     }
 }
@@ -579,6 +570,7 @@ fn node_to_tracks(node: MpvNode) -> MpvTracks {
         let fields: HashMap<String, MpvNode> = map.collect();
 
         let type_ = node_string(&fields, "type", "");
+
         if type_ != "audio" && type_ != "sub" {
             continue;
         }
@@ -663,14 +655,14 @@ fn observe_property(
     format: Format,
     reply_userdata: u64,
 ) {
-    if let Err(e) = event_context.observe_property(name, format, reply_userdata) {
-        warn!("[mpv/event] observe_property({name}) failed: {e}");
+    if let Err(error) = event_context.observe_property(name, format, reply_userdata) {
+        warn!("[mpv/event] observe_property({name}) failed: {error}");
     }
 }
 
 fn send_internal(event: MpvEvent) {
-    if let Err(e) = MPV_EVENT_CHANNEL.tx.try_send(event) {
-        debug!("[mpv/event] internal event dropped: {e}");
+    if let Err(error) = MPV_EVENT_CHANNEL.tx.try_send(event) {
+        debug!("[mpv/event] internal event dropped: {error}");
     }
 }
 
@@ -678,14 +670,14 @@ fn emit_payload<T>(app_handle: &AppHandle, event_name: &str, payload: T)
 where
     T: Serialize + Clone,
 {
-    if let Err(e) = app_handle.emit(event_name, payload) {
-        debug!("[mpv/event] emit {event_name} failed: {e}");
+    if let Err(error) = app_handle.emit(event_name, payload) {
+        debug!("[mpv/event] emit {event_name} failed: {error}");
     }
 }
 
 fn emit_void(app_handle: &AppHandle, event_name: &str) {
-    if let Err(e) = app_handle.emit(event_name, ()) {
-        debug!("[mpv/event] emit {event_name} failed: {e}");
+    if let Err(error) = app_handle.emit(event_name, ()) {
+        debug!("[mpv/event] emit {event_name} failed: {error}");
     }
 }
 
