@@ -1,20 +1,39 @@
-//! Sidecar state management
+//! Application state.
+//!
+//! This module owns:
+//! - sidecar runtime state
+//! - native libmpv playback state
 
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use crate::mpv::MpvInstance;
+use crate::{SidecarStatus, SIDECAR_STARTUP_TIMEOUT_SECS};
 
-use crate::{SIDECAR_STARTUP_TIMEOUT_SECS, SidecarStatus};
+// -----------------------------------------------------------------------------
+// Sidecar state
+// -----------------------------------------------------------------------------
 
-#[derive(Default)]
+#[derive(Debug)]
 pub struct SidecarState {
     status: Mutex<SidecarStatus>,
     api_base_url: Mutex<Option<String>>,
     child_pid: Mutex<Option<u32>>,
-    startup_timeout: AtomicU64,
+    startup_deadline: Mutex<Option<Instant>>,
     ready_received: AtomicBool,
+}
+
+impl Default for SidecarState {
+    fn default() -> Self {
+        Self {
+            status: Mutex::new(SidecarStatus::Stopped),
+            api_base_url: Mutex::new(None),
+            child_pid: Mutex::new(None),
+            startup_deadline: Mutex::new(None),
+            ready_received: AtomicBool::new(false),
+        }
+    }
 }
 
 impl SidecarState {
@@ -23,102 +42,238 @@ impl SidecarState {
     }
 
     pub fn get_status(&self) -> SidecarStatus {
-        self.status.lock().unwrap().clone()
+        match self.status.lock() {
+            Ok(status) => status.clone(),
+            Err(error) => {
+                tracing::error!("[sidecar/state] status mutex poisoned: {error}");
+                SidecarStatus::Error {
+                    message: "sidecar status unavailable".to_string(),
+                }
+            }
+        }
     }
 
     pub fn get_api_base_url(&self) -> Result<String, String> {
-        let url = self.api_base_url.lock().unwrap();
-        url.clone().ok_or_else(|| "Sidecar not ready".to_string())
+        let url = self
+            .api_base_url
+            .lock()
+            .map_err(|error| format!("sidecar api_base_url mutex poisoned: {error}"))?;
+
+        url.clone()
+            .ok_or_else(|| "sidecar is not ready".to_string())
     }
 
     pub fn set_starting(&self) {
-        *self.status.lock().unwrap() = SidecarStatus::Starting;
+        let deadline = Instant::now() + Duration::from_secs(SIDECAR_STARTUP_TIMEOUT_SECS);
+
+        if let Ok(mut status) = self.status.lock() {
+            *status = SidecarStatus::Starting;
+        } else {
+            tracing::error!("[sidecar/state] failed to set status=Starting");
+        }
+
+        if let Ok(mut url) = self.api_base_url.lock() {
+            *url = None;
+        } else {
+            tracing::error!("[sidecar/state] failed to clear api_base_url");
+        }
+
+        if let Ok(mut startup_deadline) = self.startup_deadline.lock() {
+            *startup_deadline = Some(deadline);
+        } else {
+            tracing::error!("[sidecar/state] failed to set startup deadline");
+        }
+
         self.ready_received.store(false, Ordering::SeqCst);
-        self.startup_timeout.store(
-            (Instant::now() + Duration::from_secs(SIDECAR_STARTUP_TIMEOUT_SECS))
-                .elapsed()
-                .as_millis() as u64,
-            Ordering::SeqCst,
-        );
     }
 
     pub fn set_ready(&self, api_base_url: String) {
-        *self.status.lock().unwrap() = SidecarStatus::Ready {
-            api_base_url: api_base_url.clone(),
-        };
-        *self.api_base_url.lock().unwrap() = Some(api_base_url);
+        if let Ok(mut status) = self.status.lock() {
+            *status = SidecarStatus::Ready {
+                api_base_url: api_base_url.clone(),
+            };
+        } else {
+            tracing::error!("[sidecar/state] failed to set status=Ready");
+        }
+
+        if let Ok(mut url) = self.api_base_url.lock() {
+            *url = Some(api_base_url);
+        } else {
+            tracing::error!("[sidecar/state] failed to set api_base_url");
+        }
+
+        if let Ok(mut startup_deadline) = self.startup_deadline.lock() {
+            *startup_deadline = None;
+        } else {
+            tracing::error!("[sidecar/state] failed to clear startup deadline");
+        }
+
         self.ready_received.store(true, Ordering::SeqCst);
     }
 
     pub fn set_error(&self, message: String) {
-        *self.status.lock().unwrap() = SidecarStatus::Error { message };
+        if let Ok(mut status) = self.status.lock() {
+            *status = SidecarStatus::Error { message };
+        } else {
+            tracing::error!("[sidecar/state] failed to set status=Error");
+        }
+
+        if let Ok(mut url) = self.api_base_url.lock() {
+            *url = None;
+        } else {
+            tracing::error!("[sidecar/state] failed to clear api_base_url after error");
+        }
+
+        if let Ok(mut startup_deadline) = self.startup_deadline.lock() {
+            *startup_deadline = None;
+        } else {
+            tracing::error!("[sidecar/state] failed to clear startup deadline after error");
+        }
+
+        self.ready_received.store(false, Ordering::SeqCst);
+    }
+
+    pub fn set_stopped(&self) {
+        if let Ok(mut status) = self.status.lock() {
+            *status = SidecarStatus::Stopped;
+        } else {
+            tracing::error!("[sidecar/state] failed to set status=Stopped");
+        }
+
+        if let Ok(mut url) = self.api_base_url.lock() {
+            *url = None;
+        } else {
+            tracing::error!("[sidecar/state] failed to clear api_base_url after stop");
+        }
+
+        if let Ok(mut pid) = self.child_pid.lock() {
+            *pid = None;
+        } else {
+            tracing::error!("[sidecar/state] failed to clear child pid after stop");
+        }
+
+        if let Ok(mut startup_deadline) = self.startup_deadline.lock() {
+            *startup_deadline = None;
+        } else {
+            tracing::error!("[sidecar/state] failed to clear startup deadline after stop");
+        }
+
+        self.ready_received.store(false, Ordering::SeqCst);
     }
 
     pub fn set_child_pid(&self, pid: u32) {
-        *self.child_pid.lock().unwrap() = Some(pid);
+        if let Ok(mut child_pid) = self.child_pid.lock() {
+            *child_pid = Some(pid);
+        } else {
+            tracing::error!("[sidecar/state] failed to set child pid");
+        }
+    }
+
+    pub fn clear_child_pid(&self) {
+        if let Ok(mut child_pid) = self.child_pid.lock() {
+            *child_pid = None;
+        } else {
+            tracing::error!("[sidecar/state] failed to clear child pid");
+        }
     }
 
     pub fn get_child_pid(&self) -> Option<u32> {
-        *self.child_pid.lock().unwrap()
+        match self.child_pid.lock() {
+            Ok(child_pid) => *child_pid,
+            Err(error) => {
+                tracing::error!("[sidecar/state] child_pid mutex poisoned: {error}");
+                None
+            }
+        }
     }
 
     pub fn is_ready(&self) -> bool {
         self.ready_received.load(Ordering::SeqCst)
     }
 
+    pub fn is_starting(&self) -> bool {
+        matches!(self.get_status(), SidecarStatus::Starting)
+    }
+
     pub fn is_startup_timeout(&self) -> bool {
-        let timeout_ms = self.startup_timeout.load(Ordering::SeqCst);
-        if timeout_ms == 0 {
-            return false;
+        let deadline = match self.startup_deadline.lock() {
+            Ok(deadline) => *deadline,
+            Err(error) => {
+                tracing::error!("[sidecar/state] startup_deadline mutex poisoned: {error}");
+                return false;
+            }
+        };
+
+        match deadline {
+            Some(deadline) => !self.is_ready() && Instant::now() >= deadline,
+            None => false,
         }
-        // This is a simplified check - in reality we'd store the absolute deadline
-        false // We'll handle timeout in the bootstrap function
+    }
+
+    pub fn reset(&self) {
+        self.set_stopped();
     }
 }
 
-// ---------------------------------------------------------------------------
-// Phase 2: libmpv native playback state.
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// libmpv native playback state
+// -----------------------------------------------------------------------------
 
-use std::sync::OnceLock;
-
-use crate::mpv::MpvInstance;
-
-/// Tauri-managed state holding the libmpv instance (if initialization succeeded) or
-/// the initialization error (if it failed).
-///
-/// Created once in the Tauri `setup` hook and shared across all playback commands via
-/// `State<'_, MpvState>`. If `instance` is `None`, native playback is off and the
-/// frontend's browser `<video>` fallback takes over (the Phase 9.7 guardrail).
 pub struct MpvState {
-    /// The libmpv instance, set once on successful init. `None` if init failed.
     pub instance: OnceLock<MpvInstance>,
-    /// The init error, if `MpvInstance::new()` failed. `None` on success.
     pub init_error: Option<String>,
 }
 
 impl MpvState {
-    /// Attempt to create + initialize the libmpv instance. On failure, the error is
-    /// captured in `init_error` and `instance` stays unset — the app still boots; the
-    /// frontend falls back to `<video>`.
     pub fn new() -> Self {
+        let instance = OnceLock::new();
+
         match MpvInstance::new() {
             Ok(mpv) => {
-                let state = Self {
-                    instance: OnceLock::new(),
-                    init_error: None,
-                };
-                let _ = state.instance.set(mpv);
-                state
-            }
-            Err(e) => {
-                tracing::error!("[mpv] instance init failed (native playback disabled, <video> fallback active): {}", e);
+                if instance.set(mpv).is_err() {
+                    let message = "failed to store MpvInstance in OnceLock".to_string();
+
+                    tracing::error!("[mpv/state] {message}");
+
+                    return Self {
+                        instance: OnceLock::new(),
+                        init_error: Some(message),
+                    };
+                }
+
+                tracing::info!("[mpv/state] native playback initialized");
+
                 Self {
-                    instance: OnceLock::new(),
-                    init_error: Some(e),
+                    instance,
+                    init_error: None,
+                }
+            }
+            Err(error) => {
+                tracing::error!(
+                    "[mpv/state] native playback disabled; mpv init failed: {}",
+                    error
+                );
+
+                Self {
+                    instance,
+                    init_error: Some(error),
                 }
             }
         }
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.instance.get().is_some()
+    }
+
+    pub fn get_instance(&self) -> Result<&MpvInstance, String> {
+        self.instance
+            .get()
+            .ok_or_else(|| {
+                self.init_error
+                    .clone()
+                    .unwrap_or_else(|| "libmpv not initialized".to_string())
+            })
     }
 }
 
