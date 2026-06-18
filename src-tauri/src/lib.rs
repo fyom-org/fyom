@@ -13,13 +13,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::state::{MpvState, SidecarState};
-use tauri::Emitter;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 pub const MAIN_WINDOW_LABEL: &str = "main";
 pub const SIDECAR_READY_EVENT: &str = "fyom-sidecar-ready";
 pub const SIDECAR_ERROR_EVENT: &str = "fyom-sidecar-error";
-const SIDECAR_STARTUP_TIMEOUT_SECS: u64 = 30;
+
+pub(crate) const SIDECAR_STARTUP_TIMEOUT_SECS: u64 = 30;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -49,9 +49,6 @@ impl AppState {
         self.shutdown_started.load(Ordering::SeqCst)
     }
 
-    /// Mark that the user intentionally wants to quit the app
-    /// (e.g. tray Quit menu). This distinguishes real exit from
-    /// window close (hide-to-tray).
     pub fn mark_exit_intent(&self) {
         self.exit_intent.store(true, Ordering::SeqCst);
     }
@@ -62,18 +59,16 @@ impl AppState {
 }
 
 pub fn run() {
-    // Initialize tracing
-    tracing_subscriber::fmt()
+    let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+        .try_init();
 
     let mut app_state = AppState::default();
 
-    // Resolve the desktop DB path from the main app executable directory.
-    // This must be done early, before the sidecar is spawned.
     let exe_path = std::env::current_exe().unwrap_or_default();
     let exe_dir = exe_path.parent().unwrap_or(std::path::Path::new("."));
     let desktop_db_path = exe_dir.join("fyom.db").to_string_lossy().to_string();
+
     app_state.desktop_db_path = Arc::new(desktop_db_path.clone());
 
     tracing::info!("Desktop environment:");
@@ -84,38 +79,32 @@ pub fn run() {
     let app = tauri::Builder::default()
         .manage(app_state.clone())
         .setup(move |app| {
-            // Setup sidecar
-            let app_handle = app.handle().clone();
-            let state = app_state.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = sidecar::bootstrap_sidecar(&app_handle, &state).await {
-                    tracing::error!("Sidecar bootstrap failed: {}", e);
-                    let _ = app_handle.emit(SIDECAR_ERROR_EVENT, e.to_string());
-                }
-            });
-
-            // Setup tray
             tray::setup_tray(app)?;
-
-            // Setup window
             window::setup_main_window(app)?;
 
-            // Phase 2: initialize the libmpv native-playback state. On failure the
-            // instance stays unset and the frontend's browser `<video>` fallback is
-            // used (the 9.7 guardrail). The MpvState is managed so playback commands
-            // can access it via `State<'_, MpvState>`.
             let mpv_state = MpvState::new();
+
             if let Some(instance) = mpv_state.instance.get() {
-                tracing::info!("[mpv] native playback ready (libmpv) — spawning event loop");
-                // Phase 2.2: spawn the event-pump thread (observes 10 properties + emits
-                // `fyom://mpv/*` to the frontend). The thread owns its own `Arc<Mpv>` +
-                // `AppHandle` clone, so it's independent of the `MpvState` we're about to
-                // move into `app.manage`.
+                tracing::info!("[mpv] native playback ready; spawning event loop");
                 instance.spawn_event_loop(app.handle().clone());
-            } else if let Some(e) = &mpv_state.init_error {
-                tracing::warn!("[mpv] native playback disabled: {}", e);
+            } else if let Some(error) = &mpv_state.init_error {
+                tracing::warn!("[mpv] native playback disabled: {}", error);
             }
+
             app.manage(mpv_state);
+
+            let app_handle = app.handle().clone();
+            let state = app_state.clone();
+
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = sidecar::bootstrap_sidecar(&app_handle, &state).await {
+                    tracing::error!("[sidecar] bootstrap failed: {}", error);
+
+                    state.sidecar_state.set_error(error.to_string());
+
+                    let _ = app_handle.emit(SIDECAR_ERROR_EVENT, error.to_string());
+                }
+            });
 
             Ok(())
         })
@@ -131,7 +120,6 @@ pub fn run() {
             commands::playback::play_media,
             commands::playback::stop_media,
             commands::playback::play_test_media,
-            // Phase 2.2 command surface (ported from soia, reimplemented on libmpv2).
             commands::playback::seek,
             commands::playback::seek_relative,
             commands::playback::toggle_pause,
@@ -142,18 +130,17 @@ pub fn run() {
             commands::playback::set_subtitle_track,
             commands::playback::mpv_keypress,
             commands::playback::mpv_command,
-            // Phase 2.3 render surface commands (transparent overlay + GL context attach).
             commands::playback::attach_render_surface,
             commands::playback::set_video_mode,
             commands::playback::resize_render_surface,
-            // Phase 2.4 playback features (subtitles, audio tracks, color adjustments,
-            // generic property get/set, chapter nav — port soia's command surface).
             commands::playback::find_external_subtitles,
             commands::playback::sub_add,
             commands::playback::sub_remove,
             commands::playback::sub_reload,
             commands::playback::audio_add,
+            commands::playback::audio_remove,
             commands::playback::set_sub_delay,
+            commands::playback::set_secondary_sub_delay,
             commands::playback::set_audio_delay,
             commands::playback::set_sub_scale,
             commands::playback::set_color_adjustment,
@@ -166,41 +153,38 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    // Handle app run events
-    app.run(|app_handle, event| {
-        match event {
-            tauri::RunEvent::ExitRequested { api, .. } => {
-                let has_exit_intent = app_handle
-                    .try_state::<AppState>()
-                    .map(|s| s.has_exit_intent())
-                    .unwrap_or(false);
-                if has_exit_intent {
-                    // Real exit (e.g. tray Quit): sidecar shutdown was already
-                    // initiated by the tray handler; just allow the exit.
-                    tracing::info!("App exit requested (intent=true)");
-                } else {
-                    // Window close without exit intent: hide to tray.
-                    api.prevent_exit();
-                    tracing::debug!("Window close intercepted, hiding to tray");
-                }
+    app.run(|app_handle, event| match event {
+        tauri::RunEvent::ExitRequested { api, .. } => {
+            let has_exit_intent = app_handle
+                .try_state::<AppState>()
+                .map(|state| state.has_exit_intent())
+                .unwrap_or(false);
+
+            if has_exit_intent {
+                tracing::info!("[app] exit requested with explicit exit intent");
+            } else {
+                api.prevent_exit();
+                tracing::debug!("[app] close intercepted; hiding to tray");
             }
-            tauri::RunEvent::Exit => {
-                // Phase 2.3: shut down the render thread FIRST (so the RenderContext is
-                // destroyed before the mpv instance — mpv_render_context_free must run
-                // while the mpv instance is alive).
-                if let Some(mpv_state) = app_handle.try_state::<MpvState>() {
-                    if let Some(instance) = mpv_state.instance.get() {
-                        instance.shutdown_render_thread();
-                        // Phase 2.2: shut down the mpv event-pump thread before exit so it
-                        // doesn't outlive the libmpv instance (the thread holds an `Arc<Mpv>`;
-                        // joining here guarantees a clean teardown).
-                        instance.shutdown_event_loop();
-                    }
-                }
-                tracing::info!("App exited");
-            }
-            _ => {}
         }
+
+        tauri::RunEvent::Exit => {
+            if let Some(app_state) = app_handle.try_state::<AppState>() {
+                app_state.mark_shutdown();
+                app_state.sidecar_state.set_stopped();
+            }
+
+            if let Some(mpv_state) = app_handle.try_state::<MpvState>() {
+                if let Some(instance) = mpv_state.instance.get() {
+                    instance.shutdown_render_thread();
+                    instance.shutdown_event_loop();
+                }
+            }
+
+            tracing::info!("[app] exited");
+        }
+
+        _ => {}
     });
 }
 
@@ -208,10 +192,14 @@ pub fn run() {
 #[serde(tag = "status", content = "data")]
 pub enum SidecarStatus {
     #[default]
+    Stopped,
+
     Starting,
+
     Ready {
         api_base_url: String,
     },
+
     Error {
         message: String,
     },
