@@ -1,19 +1,19 @@
 use std::ffi::c_void;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use flume::{Receiver, RecvTimeoutError, Sender};
+use flume::{Receiver, RecvTimeoutError, Sender, bounded};
 use glow::HasContext;
-use libmpv2::render::{OpenGLInitParams, RenderContext, RenderParam, RenderParamApiType};
 use libmpv2::Mpv;
+use libmpv2::render::{OpenGLInitParams, RenderContext, RenderParam, RenderParamApiType};
 use tracing::{debug, error, info, warn};
 
 use crate::mpv::event_loop::SHUTDOWN;
 
 // -----------------------------------------------------------------------------
-// RenderSurface trait (no change).
+// RenderSurface
 // -----------------------------------------------------------------------------
 
 pub trait RenderSurface: Send + 'static {
@@ -24,7 +24,7 @@ pub trait RenderSurface: Send + 'static {
 }
 
 // -----------------------------------------------------------------------------
-// Thread-local surface pointer.
+// Thread-local surface pointer
 // -----------------------------------------------------------------------------
 
 thread_local! {
@@ -39,6 +39,7 @@ impl SurfaceGuard {
         CURRENT_SURFACE.with(|slot| {
             *slot.borrow_mut() = Some(surface as *const _);
         });
+
         Self
     }
 }
@@ -53,34 +54,19 @@ impl Drop for SurfaceGuard {
 
 fn get_proc_address(name: &str) -> *mut c_void {
     CURRENT_SURFACE.with(|slot| {
-        if let Some(ptr) = *slot.borrow() {
-            unsafe { (&*ptr).get_proc_address(name) }
-        } else {
-            std::ptr::null_mut()
-        }
+        let Some(ptr) = *slot.borrow() else {
+            return std::ptr::null_mut();
+        };
+
+        // SAFETY:
+        // The pointer is installed by `SurfaceGuard` on the render thread and remains
+        // valid until the render context is dropped and the guard is cleared.
+        unsafe { (&*ptr).get_proc_address(name) }
     })
 }
 
 fn get_proc_address_thunk(_ctx: &(), name: &str) -> *mut c_void {
     get_proc_address(name)
-}
-
-// -----------------------------------------------------------------------------
-// RenderThreadState.
-// -----------------------------------------------------------------------------
-
-pub struct RenderThreadState {
-    pub handle: Mutex<Option<JoinHandle<()>>>,
-    pub shutdown: Arc<AtomicU32>,
-}
-
-impl RenderThreadState {
-    pub fn new() -> Self {
-        Self {
-            handle: Mutex::new(None),
-            shutdown: Arc::new(AtomicU32::new(0)),
-        }
-    }
 }
 
 // -----------------------------------------------------------------------------
@@ -95,35 +81,27 @@ pub fn spawn_render_thread(
     std::thread::Builder::new()
         .name("fyom-mpv-render".into())
         .spawn(move || run_render_loop(mpv, surface, shutdown))
-        .map_err(|e| format!("render thread spawn failed: {e}"))
+        .map_err(|error| format!("render thread spawn failed: {error}"))
 }
 
 // -----------------------------------------------------------------------------
 // Core loop
 // -----------------------------------------------------------------------------
 
-fn run_render_loop(
-    mpv: Arc<Mpv>,
-    surface: Box<dyn RenderSurface>,
-    shutdown: Arc<AtomicU32>,
-) {
-    // --- early exit ---
+fn run_render_loop(mpv: Arc<Mpv>, surface: Box<dyn RenderSurface>, shutdown: Arc<AtomicU32>) {
     if shutdown.load(Ordering::SeqCst) == SHUTDOWN {
         return;
     }
 
-    // --- make GL current ---
-    if let Err(e) = surface.make_current() {
-        error!("[render] make_current failed: {e}");
+    if let Err(error) = surface.make_current() {
+        error!("[render] make_current failed: {error}");
         return;
     }
 
     info!("[render] GL context ready");
 
-    // --- thread-local binding ---
-    let _guard = SurfaceGuard::install(&*surface);
+    let _surface_guard = SurfaceGuard::install(&*surface);
 
-    // --- build render ctx ---
     let params = vec![
         RenderParam::ApiType(RenderParamApiType::OpenGl),
         RenderParam::InitParams(OpenGLInitParams {
@@ -136,22 +114,27 @@ fn run_render_loop(
 
     let mut render_ctx = match unsafe { RenderContext::new(handle.as_mut(), params) } {
         Ok(ctx) => ctx,
-        Err(e) => {
-            error!("[render] RenderContext init failed: {e}");
+        Err(error) => {
+            error!("[render] RenderContext init failed: {error}");
             return;
         }
     };
 
     info!("[render] mpv RenderContext created");
 
-    // --- private channel (CRITICAL FIX) ---
-    let (tx, rx): (Sender<()>, Receiver<()>) = flume::unbounded();
+    // Keep only one pending render wake.
+    //
+    // mpv can emit update callbacks faster than we render. A bounded(1) channel coalesces
+    // redundant wakeups and prevents unbounded memory growth. The callback must never block.
+    let (tx, rx): (Sender<()>, Receiver<()>) = bounded(1);
 
     render_ctx.set_update_callback(move || {
-        let _ = tx.send(());
+        let _ = tx.try_send(());
     });
 
-    // --- glow ctx ---
+    // SAFETY:
+    // The GL context is current on this render thread. glow only stores function pointers
+    // resolved through the current platform surface.
     let gl = unsafe {
         glow::Context::from_loader_function(|name| get_proc_address(name) as *const c_void)
     };
@@ -163,54 +146,46 @@ fn run_render_loop(
             break;
         }
 
-        // --- wait frame ---
         match rx.recv_timeout(Duration::from_millis(200)) {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(RecvTimeoutError::Timeout) => continue,
-            Err(_) => break,
+            Err(RecvTimeoutError::Disconnected) => break,
         }
 
         if shutdown.load(Ordering::SeqCst) == SHUTDOWN {
             break;
         }
 
-        // --- size ---
-        let (w, h) = surface.drawable_size();
-        if w <= 0 || h <= 0 {
+        let (width, height) = surface.drawable_size();
+
+        if width <= 0 || height <= 0 {
+            debug!("[render] skip frame with invalid drawable size: {width}x{height}");
             continue;
         }
 
-        // --- fbo ---
+        // SAFETY:
+        // The GL context is current on this render thread.
         let fbo = unsafe { gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING) };
 
-        // --- render ---
-        match unsafe { render_ctx.render::<()>(fbo, w, h, true) } {
-            Ok(_) => {
+        match render_ctx.render::<()>(fbo, width, height, true) {
+            Ok(()) => {
                 surface.swap_buffers();
 
-                frames += 1;
+                frames = frames.saturating_add(1);
 
                 if frames == 1 {
-                    info!("[render] first frame {}x{}", w, h);
+                    info!("[render] first frame {width}x{height}");
                 } else if frames % 300 == 0 {
-                    debug!("[render] frame {} {}x{}", frames, w, h);
+                    debug!("[render] frame {frames} {width}x{height}");
                 }
             }
-            Err(e) => {
-                warn!("[render] frame failed: {e}");
+            Err(error) => {
+                warn!("[render] frame failed: {error}");
             }
         }
     }
 
     drop(render_ctx);
 
-    info!("[render] exit, total frames={}", frames);
-}
-
-// -----------------------------------------------------------------------------
-// Shutdown helper
-// -----------------------------------------------------------------------------
-
-pub fn wake_render_thread() {
-    // no-op now (channel is private)
+    info!("[render] exit, total frames={frames}");
 }
