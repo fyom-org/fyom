@@ -1,4 +1,15 @@
-use std::sync::atomic::{AtomicU32, Ordering};use std::JoinHandle;
+//! Thread-safe libmpv facade.
+//!
+//! This module owns:
+//! - the shared `libmpv2::Mpv` handle
+//! - the mpv event thread lifecycle
+//! - the mpv render thread lifecycle
+//!
+//! Command handlers must talk to mpv through `MpvInstance` only.
+
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
 use libmpv2::{GetData, Mpv, SetData};
 use tauri::AppHandle;
@@ -7,87 +18,101 @@ use tracing::{debug, error, info, warn};
 use crate::mpv::event_loop::{self, ACTIVE, SHUTDOWN};
 use crate::mpv::render::{self, RenderSurface};
 
-// ----------------------------------------------------------------------------
-// Constants
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// Defaults
+// -----------------------------------------------------------------------------
 
 const MAX_VOLUME: i64 = 100;
 const DEFAULT_VOLUME: i64 = 80;
 const DEFAULT_CACHE_MIB: u64 = 256;
 const DEFAULT_CACHE_SECS: i64 = 10;
 
-// ----------------------------------------------------------------------------
-// Internal states
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// Internal thread state
+// -----------------------------------------------------------------------------
 
 struct RenderThread {
     handle: JoinHandle<()>,
     shutdown: Arc<AtomicU32>,
 }
 
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 // MpvInstance
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 
 pub struct MpvInstance {
+    /// Shared libmpv handle.
     pub mpv: Arc<Mpv>,
 
+    /// Event thread shutdown flag.
     event_alive: Arc<AtomicU32>,
+
+    /// Event thread handle.
     event_thread: Mutex<Option<JoinHandle<()>>>,
 
+    /// Render thread handle + shutdown flag.
     render_thread: Mutex<Option<RenderThread>>,
 }
 
 impl std::fmt::Debug for MpvInstance {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let event = self
+        let event_thread_alive = self
             .event_thread
             .lock()
-            .map(|x| x.is_some())
+            .map(|guard| guard.is_some())
             .unwrap_or(false);
 
-        let render = self
+        let render_thread_alive = self
             .render_thread
             .lock()
-            .map(|x| x.is_some())
+            .map(|guard| guard.is_some())
             .unwrap_or(false);
 
         f.debug_struct("MpvInstance")
-            .field("event_thread_alive", &event)
-            .field("render_thread_alive", &render)
+            .field("event_thread_alive", &event_thread_alive)
+            .field("render_thread_alive", &render_thread_alive)
             .finish()
     }
 }
 
 impl MpvInstance {
-    // ------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
     // Init
-    // ------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
 
     pub fn new() -> Result<Self, String> {
         set_c_numeric_locale();
 
         let mpv = Mpv::with_initializer(|init| {
+            // Render API output. The real GL surface is attached later.
             init.set_property("vo", "libmpv")?;
+
+            // UI disabled; frontend owns controls.
             init.set_property("osc", false)?;
             init.set_property("osd-level", 0)?;
+
+            // Conservative hardware decode.
             init.set_property("hwdec", "auto-safe")?;
 
+            // Playback/cache defaults.
             init.set_property("video-sync", "audio")?;
             init.set_property("demuxer-max-bytes", format!("{}MiB", DEFAULT_CACHE_MIB))?;
             init.set_property("cache-secs", DEFAULT_CACHE_SECS)?;
 
+            // Audio defaults.
             init.set_property("volume-max", MAX_VOLUME)?;
             init.set_property("volume", DEFAULT_VOLUME)?;
 
+            // Input defaults.
             init.set_property("input-default-bindings", true)?;
             init.set_property("input-vo-keyboard", true)?;
 
+            // No implicit loop.
             init.set_property("loop", "no")?;
 
             Ok(())
         })
-        .map_err(|e| format!("mpv init failed: {e}"))?;
+        .map_err(|error| format!("mpv init failed: {error}"))?;
 
         info!("[mpv] instance created");
 
@@ -99,15 +124,15 @@ impl MpvInstance {
         })
     }
 
-    // ------------------------------------------------------------------------
-    // Event loop
-    // ------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Event thread lifecycle
+    // -------------------------------------------------------------------------
 
     pub fn spawn_event_loop(&self, app: AppHandle) {
         let mut guard = match self.event_thread.lock() {
-            Ok(g) => g,
-            Err(e) => {
-                error!("[mpv] event mutex poisoned: {e}");
+            Ok(guard) => guard,
+            Err(error) => {
+                error!("[mpv] event_thread mutex poisoned: {error}");
                 return;
             }
         };
@@ -134,34 +159,36 @@ impl MpvInstance {
         self.event_alive.store(SHUTDOWN, Ordering::SeqCst);
 
         let handle = match self.event_thread.lock() {
-            Ok(mut g) => g.take(),
-            Err(_) => None,
+            Ok(mut guard) => guard.take(),
+            Err(error) => {
+                warn!("[mpv] event_thread mutex poisoned during shutdown: {error}");
+                None
+            }
         };
 
-        if let Some(h) = handle {
-            if h.join().is_err() {
-                warn!("[mpv] event thread panic");
-            } else {
-                info!("[mpv] event thread joined");
-            }
+        let Some(handle) = handle else {
+            return;
+        };
+
+        if handle.join().is_err() {
+            warn!("[mpv] event thread panicked during join");
+        } else {
+            info!("[mpv] event thread joined");
         }
     }
 
-    // ------------------------------------------------------------------------
-    // Render loop
-    // ------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Render thread lifecycle
+    // -------------------------------------------------------------------------
 
-    pub fn spawn_render_thread(
-        &self,
-        surface: Box<dyn RenderSurface>,
-    ) -> Result<(), String> {
+    pub fn spawn_render_thread(&self, surface: Box<dyn RenderSurface>) -> Result<(), String> {
         let mut guard = self
             .render_thread
             .lock()
-            .map_err(|e| format!("render mutex poisoned: {e}"))?;
+            .map_err(|error| format!("render_thread mutex poisoned: {error}"))?;
 
         if guard.is_some() {
-            warn!("[mpv] render already running");
+            debug!("[mpv] render thread already running");
             return Ok(());
         }
 
@@ -181,83 +208,252 @@ impl MpvInstance {
     }
 
     pub fn shutdown_render_thread(&self) {
-        let thread = match self.render_thread.lock() {
-            Ok(mut g) => g.take(),
-            Err(_) => None,
+        let render_thread = match self.render_thread.lock() {
+            Ok(mut guard) => guard.take(),
+            Err(error) => {
+                warn!("[mpv] render_thread mutex poisoned during shutdown: {error}");
+                None
+            }
         };
 
-        let Some(thread) = thread else { return };
+        let Some(render_thread) = render_thread else {
+            return;
+        };
 
-        thread.shutdown.store(SHUTDOWN, Ordering::SeqCst);
+        render_thread.shutdown.store(SHUTDOWN, Ordering::SeqCst);
 
-        // no wake needed anymore
-
-        if thread.handle.join().is_err() {
-            warn!("[mpv] render thread panic");
+        if render_thread.handle.join().is_err() {
+            warn!("[mpv] render thread panicked during join");
         } else {
             info!("[mpv] render thread joined");
         }
     }
 
-    // ------------------------------------------------------------------------
-    // Playback
-    // ------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Core playback
+    // -------------------------------------------------------------------------
 
     pub fn loadfile(&self, url: &str) -> Result<(), String> {
-        info!("[mpv] loadfile: {}", url);
+        if url.trim().is_empty() {
+            return Err("loadfile url must not be empty".to_string());
+        }
 
-        self.mpv
-            .command("loadfile", &[url, "replace"])
-            .map_err(|e| format!("loadfile failed: {e}"))
+        info!("[mpv] loadfile: {url}");
+
+        self.command("loadfile", &[url, "replace"])
     }
 
     pub fn stop(&self) -> Result<(), String> {
-        self.mpv
-            .command("stop", &[])
-            .map_err(|e| format!("stop failed: {e}"))
+        info!("[mpv] stop");
+        self.command("stop", &[])
     }
 
-    pub fn set_pause(&self, v: bool) -> Result<(), String> {
-        self.set_property("pause", v)
+    pub fn set_pause(&self, paused: bool) -> Result<(), String> {
+        self.set_property("pause", paused)
     }
 
-    pub fn seek(&self, sec: f64) -> Result<(), String> {
-        self.mpv
-            .command("seek", &[&sec.to_string(), "absolute"])
-            .map_err(|e| format!("seek failed: {e}"))
+    pub fn cycle_pause(&self) -> Result<(), String> {
+        self.command("cycle", &["pause"])
     }
 
-    // ------------------------------------------------------------------------
-    // Generic
-    // ------------------------------------------------------------------------
+    pub fn seek(&self, seconds: f64) -> Result<(), String> {
+        self.seek_absolute(seconds)
+    }
+
+    pub fn seek_absolute(&self, seconds: f64) -> Result<(), String> {
+        if !seconds.is_finite() {
+            return Err("seek_absolute seconds must be finite".to_string());
+        }
+
+        let seconds = seconds.to_string();
+        self.command("seek", &[seconds.as_str(), "absolute"])
+    }
+
+    pub fn seek_relative(&self, seconds: f64) -> Result<(), String> {
+        if !seconds.is_finite() {
+            return Err("seek_relative seconds must be finite".to_string());
+        }
+
+        let seconds = seconds.to_string();
+        self.command("seek", &[seconds.as_str(), "relative"])
+    }
+
+    pub fn mpv_keypress(&self, key: &str) -> Result<(), String> {
+        if key.trim().is_empty() {
+            return Err("keypress key must not be empty".to_string());
+        }
+
+        self.command("keypress", &[key])
+    }
+
+    // -------------------------------------------------------------------------
+    // Subtitle/audio helpers
+    // -------------------------------------------------------------------------
+
+    pub fn sub_add(
+        &self,
+        path: &str,
+        mode: &str,
+        title: Option<&str>,
+        lang: Option<&str>,
+    ) -> Result<(), String> {
+        if path.trim().is_empty() {
+            return Err("subtitle path must not be empty".to_string());
+        }
+
+        let mut args = vec![path, mode];
+
+        if title.is_some() || lang.is_some() {
+            args.push(title.unwrap_or(""));
+        }
+
+        if let Some(lang) = lang {
+            args.push(lang);
+        }
+
+        self.command("sub-add", &args)
+    }
+
+    pub fn sub_remove(&self, track_id: i64) -> Result<(), String> {
+        let id = track_id.to_string();
+        self.command("sub-remove", &[id.as_str()])
+    }
+
+    pub fn sub_reload(&self, track_id: i64) -> Result<(), String> {
+        let id = track_id.to_string();
+        self.command("sub-reload", &[id.as_str()])
+    }
+
+    pub fn audio_add(&self, path: &str, mode: &str) -> Result<(), String> {
+        if path.trim().is_empty() {
+            return Err("audio path must not be empty".to_string());
+        }
+
+        self.command("audio-add", &[path, mode])
+    }
+
+    pub fn audio_remove(&self, track_id: i64) -> Result<(), String> {
+        let id = track_id.to_string();
+        self.command("audio-remove", &[id.as_str()])
+    }
+
+    // -------------------------------------------------------------------------
+    // Playback adjustments
+    // -------------------------------------------------------------------------
+
+    pub fn set_sub_delay(&self, seconds: f64) -> Result<(), String> {
+        self.ensure_finite("sub-delay", seconds)?;
+        self.set_property("sub-delay", seconds)
+    }
+
+    pub fn set_secondary_sub_delay(&self, seconds: f64) -> Result<(), String> {
+        self.ensure_finite("secondary-sub-delay", seconds)?;
+        self.set_property("secondary-sub-delay", seconds)
+    }
+
+    pub fn set_audio_delay(&self, seconds: f64) -> Result<(), String> {
+        self.ensure_finite("audio-delay", seconds)?;
+        self.set_property("audio-delay", seconds)
+    }
+
+    pub fn set_sub_scale(&self, scale: f64) -> Result<(), String> {
+        self.ensure_finite("sub-scale", scale)?;
+
+        if scale <= 0.0 {
+            return Err("sub-scale must be greater than 0".to_string());
+        }
+
+        self.set_property("sub-scale", scale)
+    }
+
+    pub fn set_brightness(&self, value: f64) -> Result<(), String> {
+        self.ensure_finite("brightness", value)?;
+        self.set_property("brightness", value)
+    }
+
+    pub fn set_contrast(&self, value: f64) -> Result<(), String> {
+        self.ensure_finite("contrast", value)?;
+        self.set_property("contrast", value)
+    }
+
+    pub fn set_saturation(&self, value: f64) -> Result<(), String> {
+        self.ensure_finite("saturation", value)?;
+        self.set_property("saturation", value)
+    }
+
+    pub fn set_gamma(&self, value: f64) -> Result<(), String> {
+        self.ensure_finite("gamma", value)?;
+        self.set_property("gamma", value)
+    }
+
+    pub fn set_hue(&self, value: f64) -> Result<(), String> {
+        self.ensure_finite("hue", value)?;
+        self.set_property("hue", value)
+    }
+
+    pub fn set_chapter(&self, index: i64) -> Result<(), String> {
+        self.set_property("chapter", index)
+    }
+
+    // -------------------------------------------------------------------------
+    // Generic mpv facade
+    // -------------------------------------------------------------------------
 
     pub fn command(&self, cmd: &str, args: &[&str]) -> Result<(), String> {
+        if cmd.trim().is_empty() {
+            return Err("mpv command must not be empty".to_string());
+        }
+
         self.mpv
             .command(cmd, args)
-            .map_err(|e| format!("{cmd} failed: {e}"))
+            .map_err(|error| format!("mpv command `{cmd}` failed: {error}"))
     }
 
-    pub fn set_property<V: SetData>(&self, key: &str, val: V) -> Result<(), String> {
+    pub fn set_property<V>(&self, key: &str, value: V) -> Result<(), String>
+    where
+        V: SetData,
+    {
+        if key.trim().is_empty() {
+            return Err("mpv property name must not be empty".to_string());
+        }
+
         self.mpv
-            .set_property(key, val)
-            .map_err(|e| format!("set_property {key} failed: {e}"))
+            .set_property(key, value)
+            .map_err(|error| format!("mpv set_property `{key}` failed: {error}"))
     }
 
-    pub fn get_property<V: GetData>(&self, key: &str) -> Result<V, String> {
+    pub fn get_property<V>(&self, key: &str) -> Result<V, String>
+    where
+        V: GetData,
+    {
+        if key.trim().is_empty() {
+            return Err("mpv property name must not be empty".to_string());
+        }
+
         self.mpv
             .get_property(key)
-            .map_err(|e| format!("get_property {key} failed: {e}"))
+            .map_err(|error| format!("mpv get_property `{key}` failed: {error}"))
+    }
+
+    pub fn set_option_string(&self, key: &str, value: &str) -> Result<(), String> {
+        self.set_property(key, value)
+    }
+
+    fn ensure_finite(&self, name: &str, value: f64) -> Result<(), String> {
+        if value.is_finite() {
+            Ok(())
+        } else {
+            Err(format!("{name} must be finite"))
+        }
     }
 }
 
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 // Drop
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 
 impl Drop for MpvInstance {
     fn drop(&mut self) {
-        // strict order
-
         self.shutdown_render_thread();
         self.shutdown_event_loop();
     }
@@ -269,21 +465,26 @@ impl Default for MpvInstance {
     }
 }
 
-// ----------------------------------------------------------------------------
-// Locale fix
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// Locale
+// -----------------------------------------------------------------------------
 
 fn set_c_numeric_locale() {
+    // SAFETY:
+    // mpv expects LC_NUMERIC=C so decimal parsing is stable.
     unsafe {
-        use libc::{setlocale, LC_NUMERIC};
-        setlocale(LC_NUMERIC, b"C\0".as_ptr() as _);
+        use libc::{LC_NUMERIC, setlocale};
+
+        setlocale(LC_NUMERIC, c"C".as_ptr());
     }
 }
 
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 // Safety
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 
+// SAFETY:
+// mpv client API is documented as thread-safe for command/property access.
+// Event/render contexts are confined to their own threads.
 unsafe impl Send for MpvInstance {}
 unsafe impl Sync for MpvInstance {}
-use std::sync::{Arc, Mutex};
