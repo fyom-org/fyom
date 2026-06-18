@@ -3,96 +3,133 @@
 //! PORTED_FROM_SOIA `src-tauri/src/platform/macos.rs` (direction only — soia uses
 //! `libsoia_utils`'s closed-source Metal-layer surface; fyom writes the open NSOpenGL
 //! path. The window-lifecycle / transparency logic direction is ported; the Metal-layer
-//! surface code (~400 LOC in soia) is replaced with the simpler NSOpenGL path here.)
+//! surface code is replaced with the simpler NSOpenGL path here.)
 //!
 //! ## Architecture
 //! Tauri's main window on macOS contains an `NSView` content view hosting a `WKWebView`.
-//! fyom creates a child `NSOpenGLView` (with a legacy NSOpenGLContext, not Metal) that
-//! sits **behind** the `WKWebView` in the layer order. When the webview's root CSS goes
-//! `background: transparent !important` (the `.video-mode` class, ported from soia), the
-//! mpv GL render shows through.
+//! fyom creates a child `NSOpenGLView` with a legacy `NSOpenGLContext` that sits behind
+//! the webview. When the webview root becomes transparent via `.video-mode`, the mpv GL
+//! render shows through.
 //!
 //! The `NSOpenGLContext` is made current on the render thread via `makeCurrentContext`.
-//! `get_proc_address` resolves GL function pointers via `dlsym` to the OpenGL framework
-//! (`/System/Library/Frameworks/OpenGL.framework/OpenGL`).
+//! `get_proc_address` resolves GL symbols via `dlsym` from:
 //!
-//! ## Why NSOpenGL (not Metal)?
-//! - `mpv_render_context_create(MPV_RENDER_API_TYPE_OPENGL)` is the standard, mature path
-//!   (mpv's `render_gl.h`); Metal support in mpv is via a third-party fork (not upstream).
-//! - NSOpenGL is simpler than Metal for a transparent overlay (no `CAMetalLayer`
-//!   geometry sync, no `MTKView` boilerplate).
-//! - macOS still fully supports NSOpenGL (deprecated but not removed; the deprecation is
-//!   a forward-looking nudge toward Metal, not a functional limitation).
+//! `/System/Library/Frameworks/OpenGL.framework/OpenGL`
 //!
-//! ## Implementation note
-//! The NSOpenGL classes (`NSOpenGLContext`, `NSOpenGLView`, `NSOpenGLPixelFormat`) are
-//! accessed via `objc2::msg_send!` rather than the `objc2-app-kit` high-level wrappers,
-//! because the NSOpenGL wrappers in objc2-app-kit 0.3 are behind unstable feature flags
-//! that may differ across patch versions. The raw `msg_send!` calls match the Obj-C API
-//! exactly (see Apple's `NSOpenGL.h`) and are robust against objc2-app-kit API drift.
+//! ## objc2 compatibility notes
+//! This file intentionally uses raw `objc2::msg_send!` for NSOpenGL types because the
+//! high-level NSOpenGL wrappers in `objc2-app-kit` vary by feature set/version.
 //!
-//! See `docs/libmpv-assessment.md` §3.3 for the rationale + the soia-vs-fyom LOC comparison.
+//! With `objc2 0.6.x`:
+//! - Geometry types such as `NSRect` live in `objc2_foundation`, not `objc2_app_kit`.
+//! - Objective-C `nil` object arguments must be typed as `*mut AnyObject`, not `*const ()`.
+//! - Returning `Option<*mut AnyObject>` from `msg_send!` is invalid because raw pointers do
+//!   not implement `OptionEncode`; use raw `*mut AnyObject` and test for null.
 
 use std::ffi::{CString, c_void};
 use std::sync::Mutex;
 
+use objc2::runtime::AnyObject;
+use objc2_foundation::NSRect;
+
 use crate::mpv::render::RenderSurface;
 
 // ---------------------------------------------------------------------------
-// NSOpenGL attribute constants (from Apple's NSOpenGL.h).
+// NSOpenGL attribute constants.
 // ---------------------------------------------------------------------------
 
-/// OpenGL Profile selector (followed by the profile value).
+/// OpenGL profile selector, followed by the profile value.
 const NS_OPENGL_PFA_OPENGL_PROFILE: u32 = 99;
-/// Profile value: OpenGL 3.2 Core (modern, supports shaders + FBOs).
+
+/// Profile value: OpenGL 3.2 Core.
 const NS_OPENGL_PROFILE_VERSION_3_2_CORE: u32 = 0x3200;
-/// Color buffer size (followed by the bit depth).
+
+/// Color buffer size, followed by bit depth.
 const NS_OPENGL_PFA_COLOR_SIZE: u32 = 8;
-/// Alpha buffer size (followed by the bit depth).
+
+/// Alpha buffer size, followed by bit depth.
 const NS_OPENGL_PFA_ALPHA_SIZE: u32 = 11;
-/// Depth buffer size (followed by the bit depth).
+
+/// Depth buffer size, followed by bit depth.
 const NS_OPENGL_PFA_DEPTH_SIZE: u32 = 12;
-/// Double-buffered mode (no value).
+
+/// Double-buffered mode.
 const NS_OPENGL_PFA_DOUBLEBUFFER: u32 = 5;
-/// Hardware-accelerated renderer only (no value).
+
+/// Hardware-accelerated renderer only.
 const NS_OPENGL_PFA_ACCELERATED: u32 = 73;
+
 /// Attribute list terminator.
 const NS_OPENGL_ATTRIBUTE_LIST_TERMINATOR: u32 = 0;
 
-// NSWindowOrderingMode (from NSWindow.h) — used by addSubview:positioned:relativeTo:.
-const NS_WINDOW_BELOW: i64 = 1;
+/// `NSWindowBelow` / `NSWindowOrderingMode`.
+const NS_WINDOW_BELOW: isize = 1;
 
-// NSViewAutoresizing flags (from NSView.h).
-const NS_VIEW_WIDTH_SIZABLE: u64 = 2;
-const NS_VIEW_HEIGHT_SIZABLE: u64 = 16;
+/// `NSViewWidthSizable`.
+const NS_VIEW_WIDTH_SIZABLE: usize = 2;
+
+/// `NSViewHeightSizable`.
+const NS_VIEW_HEIGHT_SIZABLE: usize = 16;
 
 // ---------------------------------------------------------------------------
-// MacGlSurface — the RenderSurface impl.
+// Small Obj-C helpers.
 // ---------------------------------------------------------------------------
 
-/// The macOS GL surface: owns an `NSOpenGLContext` + child `NSOpenGLView` behind the
-/// `WKWebView`.
+#[inline]
+fn nil_object() -> *mut AnyObject {
+    std::ptr::null_mut::<AnyObject>()
+}
+
+#[inline]
+unsafe fn release_object(object: *mut AnyObject) {
+    if !object.is_null() {
+        // SAFETY: `object` is an Objective-C object retained/owned by this code path.
+        unsafe {
+            let _: () = objc2::msg_send![object, release];
+        }
+    }
+}
+
+#[inline]
+unsafe fn remove_from_superview(view: *mut AnyObject) {
+    if !view.is_null() {
+        // SAFETY: `view` is a valid NSView. `removeFromSuperview` is idempotent enough for
+        // our teardown path; if the view has no superview, AppKit simply does nothing.
+        unsafe {
+            let _: () = objc2::msg_send![view, removeFromSuperview];
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MacGlSurface.
+// ---------------------------------------------------------------------------
+
+/// macOS OpenGL render surface.
 ///
-/// `Send` because the Obj-C objects are reference-counted + AppKit's NSOpenGLContext /
-/// NSOpenGLView are documented thread-safe for the operations fyom uses
-/// (makeCurrentContext, setView, flushBuffer). The render thread is the sole GL consumer.
+/// Owns:
+/// - one retained `NSOpenGLContext`
+/// - one retained child `NSOpenGLView`
+/// - one `dlopen` handle for the OpenGL framework
+///
+/// The render thread is the sole GL consumer.
 pub struct MacGlSurface {
-    /// The NSOpenGLContext (retained). Made current on the render thread via
-    /// `makeCurrentContext`. Stored as a raw `*mut AnyObject` because objc2-app-kit's
-    /// high-level NSOpenGL wrappers are behind unstable feature flags.
-    context: *mut objc2::runtime::AnyObject,
-    /// The child NSOpenGLView (retained). Owned by the surface so it's released on drop.
-    view: *mut objc2::runtime::AnyObject,
-    /// The dlopen handle for the OpenGL framework (`RTLD_LAZY`). Used by `get_proc_address`.
+    /// Retained `NSOpenGLContext`.
+    context: *mut AnyObject,
+
+    /// Retained child `NSOpenGLView`.
+    view: *mut AnyObject,
+
+    /// `dlopen` handle for OpenGL.framework.
     gl_framework_handle: usize,
-    /// Cached current-context state (defensive — sole caller is the render thread).
+
+    /// Defensive current-context cache.
     make_current_called: Mutex<bool>,
 }
 
-// SAFETY: The Obj-C objects are reference-counted (retain/release); we retained them in
-// `create_surface` + release them in `Drop`. AppKit's NSOpenGLContext/NSOpenGLView are
-// documented thread-safe for the operations fyom uses. The render thread is the sole
-// consumer of all GL calls. The dlopen handle is process-global.
+// SAFETY: The Obj-C objects are reference-counted and retained by this struct. The render
+// thread is the sole GL consumer. AppKit view hierarchy mutation is done during creation
+// and teardown only; GL rendering itself is confined to the render thread.
 unsafe impl Send for MacGlSurface {}
 
 impl RenderSurface for MacGlSurface {
@@ -101,63 +138,74 @@ impl RenderSurface for MacGlSurface {
             .make_current_called
             .lock()
             .map_err(|e| format!("make_current mutex poisoned: {}", e))?;
+
         if *called {
             return Ok(());
         }
-        // SAFETY: `context` is a valid retained NSOpenGLContext. `makeCurrentContext` is
-        // the documented API; binds the context to the calling thread.
+
+        if self.context.is_null() {
+            return Err("NSOpenGLContext is null".to_string());
+        }
+
+        // SAFETY: `context` is a valid retained NSOpenGLContext. `makeCurrentContext`
+        // binds it to the calling render thread.
         unsafe {
             let _: () = objc2::msg_send![self.context, makeCurrentContext];
         }
+
         *called = true;
         Ok(())
     }
 
     fn get_proc_address(&self, name: &str) -> *mut c_void {
-        // dlsym the OpenGL framework. macOS GL function pointers are process-global once
-        // the framework is loaded (no per-context lookup needed for NSOpenGL, unlike WGL).
+        if self.gl_framework_handle == 0 {
+            return std::ptr::null_mut();
+        }
+
         let c_name = match CString::new(name) {
-            Ok(c) => c,
+            Ok(name) => name,
             Err(_) => return std::ptr::null_mut(),
         };
-        // SAFETY: `gl_framework_handle` was set by `dlopen` in `create_surface`; valid
-        // `RTLD_LAZY` handle. `dlsym(handle, name)` is thread-safe.
-        unsafe {
-            let handle = self.gl_framework_handle as *mut c_void;
-            libc::dlsym(handle, c_name.as_ptr())
-        }
+
+        // SAFETY: `gl_framework_handle` is a valid handle returned by `dlopen`.
+        unsafe { libc::dlsym(self.gl_framework_handle as *mut c_void, c_name.as_ptr()) }
     }
 
     fn drawable_size(&self) -> (i32, i32) {
-        // Read the NSOpenGLView's frame (in points) + multiply by the window's
-        // backingScaleFactor to get physical pixels.
+        if self.view.is_null() {
+            return (0, 0);
+        }
+
+        // Read the view frame in points, then multiply by the window backing scale.
         //
-        // PORTED_FROM_TSUKIMI pattern:
-        //   let factor = self.obj().scale_factor();
-        //   let width = self.obj().width() * factor;
-        //   let height = self.obj().height() * factor;
+        // objc2 0.6.x geometry types live in `objc2_foundation`, not `objc2_app_kit`.
         unsafe {
-            // frame → NSRect { origin: NSPoint, size: NSSize { width: f64, height: f64 } }
-            let frame: objc2_app_kit::NSRect =
-                objc2::msg_send![self.view, frame];
-            // window → NSWindow (optional)
-            let window: Option<*mut objc2::runtime::AnyObject> =
-                objc2::msg_send![self.view, window];
-            let scale: f64 = match window {
-                Some(w) if !w.is_null() => {
-                    objc2::msg_send![w, backingScaleFactor]
-                }
-                _ => 1.0,
+            let frame: NSRect = objc2::msg_send![self.view, frame];
+
+            // Return raw pointer. Do not use `Option<*mut AnyObject>` here: raw pointers do
+            // not implement `OptionEncode` in objc2 0.6.x.
+            let window: *mut AnyObject = objc2::msg_send![self.view, window];
+
+            let scale: f64 = if window.is_null() {
+                1.0
+            } else {
+                objc2::msg_send![window, backingScaleFactor]
             };
-            let width = (frame.size.width * scale) as i32;
-            let height = (frame.size.height * scale) as i32;
+
+            let width = (frame.size.width * scale).round() as i32;
+            let height = (frame.size.height * scale).round() as i32;
+
             (width.max(0), height.max(0))
         }
     }
 
     fn swap_buffers(&self) {
-        // NSOpenGLContext's flushBuffer swaps the back buffer to the front
-        // (double-buffered). SAFETY: documented API; context is current on this thread.
+        if self.context.is_null() {
+            return;
+        }
+
+        // SAFETY: `context` is a valid NSOpenGLContext. The render loop calls this after
+        // making the context current on the same thread.
         unsafe {
             let _: () = objc2::msg_send![self.context, flushBuffer];
         }
@@ -166,62 +214,69 @@ impl RenderSurface for MacGlSurface {
 
 impl Drop for MacGlSurface {
     fn drop(&mut self) {
-        // Clear the current context (so the render thread doesn't hold a dangling context).
         unsafe {
-            let cls = objc2::class!(NSOpenGLContext);
-            let _: () = objc2::msg_send![cls, clearCurrentContext];
-        }
-        // Release the retained Obj-C objects.
-        unsafe {
-            let _: () = objc2::msg_send![self.context, release];
-            let _: () = objc2::msg_send![self.view, release];
-        }
-        // Close the dlopen handle.
-        if self.gl_framework_handle != 0 {
-            unsafe {
+            if !self.context.is_null() {
+                // Detach drawable before tearing down the NSOpenGLView.
+                let _: () = objc2::msg_send![self.context, clearDrawable];
+
+                let cls = objc2::class!(NSOpenGLContext);
+                let _: () = objc2::msg_send![cls, clearCurrentContext];
+            }
+
+            // `addSubview:` retains the view. Remove it from the hierarchy before
+            // releasing our own retain.
+            remove_from_superview(self.view);
+
+            release_object(self.context);
+            release_object(self.view);
+
+            if self.gl_framework_handle != 0 {
                 let _ = libc::dlclose(self.gl_framework_handle as *mut c_void);
             }
         }
+
+        self.context = std::ptr::null_mut();
+        self.view = std::ptr::null_mut();
+        self.gl_framework_handle = 0;
     }
 }
 
 // ---------------------------------------------------------------------------
-// Factory — create the surface from a Tauri WebviewWindow.
+// Factory.
 // ---------------------------------------------------------------------------
 
 /// Create the macOS GL surface for the given Tauri window.
 ///
 /// Steps:
-/// 1. Get the window's NSView content view (via `raw_window_handle`).
-/// 2. Create an `NSOpenGLPixelFormat` with the profile + attributes (alpha, double-buffer,
-///    accelerated, color/depth sizes).
-/// 3. Create an `NSOpenGLContext` with the pixel format.
-/// 4. Create an `NSOpenGLView` with the pixel format, add it as a child of the NSView,
-///    order it **behind** the WKWebView (so the webview sits on top in the layer order).
-/// 5. Set the context's view to the NSOpenGLView.
-/// 6. dlopen the OpenGL framework for `get_proc_address`.
-///
-/// On any failure, returns `Err` — the caller logs + continues without GL rendering.
+/// 1. Get the Tauri window's AppKit `NSView`.
+/// 2. Create `NSOpenGLPixelFormat`.
+/// 3. Create `NSOpenGLContext`.
+/// 4. Create `NSOpenGLView`.
+/// 5. Add the GL view behind the webview.
+/// 6. Attach the context to the GL view.
+/// 7. `dlopen` OpenGL.framework for GL symbol resolution.
 pub fn create_surface(window: &tauri::WebviewWindow) -> Result<Box<dyn RenderSurface>, String> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-    // STEP 1: get the NSView content view from the Tauri window.
+    // STEP 1: get AppKit NSView from the raw window handle.
     let raw_handle = window
         .window_handle()
         .map_err(|e| format!("failed to get raw window handle: {}", e))?;
+
     let appkit_handle = match raw_handle.as_ref() {
-        RawWindowHandle::AppKit(h) => h,
+        RawWindowHandle::AppKit(handle) => handle,
         _ => return Err("expected AppKit raw window handle on macOS".to_string()),
     };
-    let ns_view_ptr = appkit_handle.ns_view.as_ptr() as *mut objc2::runtime::AnyObject;
+
+    let ns_view_ptr = appkit_handle.ns_view.as_ptr() as *mut AnyObject;
     if ns_view_ptr.is_null() {
-        return Err("ns_view is null".to_string());
+        return Err("AppKit ns_view is null".to_string());
     }
 
-    // STEP 2: create the NSOpenGLPixelFormat.
+    // STEP 2: create NSOpenGLPixelFormat.
     //
-    // Attributes: profile 3.2 Core (modern, supports OpenGL 3.2+), alpha size 8, double
-    // buffer, hardware accelerated, color size 24, depth size 24.
+    // The list is terminated by 0. The final extra zeros are harmless padding and match
+    // common Apple sample-code style.
     let attributes: [u32; 13] = [
         NS_OPENGL_PFA_OPENGL_PROFILE,
         NS_OPENGL_PROFILE_VERSION_3_2_CORE,
@@ -234,123 +289,148 @@ pub fn create_surface(window: &tauri::WebviewWindow) -> Result<Box<dyn RenderSur
         NS_OPENGL_PFA_DOUBLEBUFFER,
         NS_OPENGL_PFA_ACCELERATED,
         NS_OPENGL_ATTRIBUTE_LIST_TERMINATOR,
-        // Extra terminator padding (paranoid — some Apple docs show a 0,0 double-terminator).
         0,
         0,
     ];
 
-    // SAFETY: NSOpenGLPixelFormat alloc + initWithAttributes: is the documented API.
-    // The attribute list is a C array of NSOpenGLPixelFormatAttribute (u32) terminated by 0.
-    let pixel_format: *mut objc2::runtime::AnyObject = unsafe {
+    let pixel_format: *mut AnyObject = unsafe {
         let cls = objc2::class!(NSOpenGLPixelFormat);
-        let alloc: *mut objc2::runtime::AnyObject = objc2::msg_send![cls, alloc];
+        let alloc: *mut AnyObject = objc2::msg_send![cls, alloc];
+
         if alloc.is_null() {
             return Err("NSOpenGLPixelFormat alloc returned null".to_string());
         }
-        let pf: *mut objc2::runtime::AnyObject = objc2::msg_send![
+
+        let pixel_format: *mut AnyObject = objc2::msg_send![
             alloc,
             initWithAttributes: attributes.as_ptr()
         ];
-        if pf.is_null() {
-            let _: () = objc2::msg_send![alloc, release];
+
+        if pixel_format.is_null() {
+            release_object(alloc);
             return Err(
-                "NSOpenGLPixelFormat initWithAttributes returned null (no matching pixel format)"
+                "NSOpenGLPixelFormat initWithAttributes returned null; no matching pixel format"
                     .to_string(),
             );
         }
-        pf
+
+        pixel_format
     };
 
-    // STEP 3: create the NSOpenGLContext.
-    let context: *mut objc2::runtime::AnyObject = unsafe {
+    // STEP 3: create NSOpenGLContext.
+    let context: *mut AnyObject = unsafe {
         let cls = objc2::class!(NSOpenGLContext);
-        let alloc: *mut objc2::runtime::AnyObject = objc2::msg_send![cls, alloc];
+        let alloc: *mut AnyObject = objc2::msg_send![cls, alloc];
+
         if alloc.is_null() {
-            let _: () = objc2::msg_send![pixel_format, release];
+            release_object(pixel_format);
             return Err("NSOpenGLContext alloc returned null".to_string());
         }
-        let ctx: *mut objc2::runtime::AnyObject = objc2::msg_send![
+
+        // `shareContext:` takes an Objective-C object pointer or nil. Do not pass
+        // `std::ptr::null::<()>`; objc2 requires an Obj-C-encodable pointer type.
+        let context: *mut AnyObject = objc2::msg_send![
             alloc,
             initWithFormat: pixel_format,
-            shareContext: std::ptr::null::<()>()
+            shareContext: nil_object()
         ];
-        let _: () = objc2::msg_send![alloc, release];
-        if ctx.is_null() {
-            let _: () = objc2::msg_send![pixel_format, release];
+
+        release_object(alloc);
+
+        if context.is_null() {
+            release_object(pixel_format);
             return Err("NSOpenGLContext initWithFormat returned null".to_string());
         }
-        ctx
+
+        context
     };
-    // The pixel format is now retained by the context; release our extra retain.
-    unsafe {
-        let _: () = objc2::msg_send![pixel_format, release];
-    }
 
-    // STEP 4: create the NSOpenGLView + add it as a child of the NSView, behind the WKWebView.
-    let view_frame: objc2_app_kit::NSRect = unsafe { objc2::msg_send![ns_view_ptr, frame] };
+    // STEP 4: create NSOpenGLView.
+    let view_frame: NSRect = unsafe { objc2::msg_send![ns_view_ptr, frame] };
 
-    let gl_view: *mut objc2::runtime::AnyObject = unsafe {
+    let gl_view: *mut AnyObject = unsafe {
         let cls = objc2::class!(NSOpenGLView);
-        let alloc: *mut objc2::runtime::AnyObject = objc2::msg_send![cls, alloc];
+        let alloc: *mut AnyObject = objc2::msg_send![cls, alloc];
+
         if alloc.is_null() {
-            let _: () = objc2::msg_send![context, release];
+            release_object(context);
+            release_object(pixel_format);
             return Err("NSOpenGLView alloc returned null".to_string());
         }
-        let v: *mut objc2::runtime::AnyObject = objc2::msg_send![
+
+        let gl_view: *mut AnyObject = objc2::msg_send![
             alloc,
             initWithFrame: view_frame,
             pixelFormat: pixel_format
         ];
-        let _: () = objc2::msg_send![alloc, release];
-        if v.is_null() {
-            let _: () = objc2::msg_send![context, release];
-            return Err("NSOpenGLView initWithFrame returned null".to_string());
+
+        release_object(alloc);
+
+        if gl_view.is_null() {
+            release_object(context);
+            release_object(pixel_format);
+            return Err("NSOpenGLView initWithFrame:pixelFormat: returned null".to_string());
         }
-        v
+
+        gl_view
     };
 
-    // Add the GL view as a child of the NSView, behind the WKWebView (NSWindowBelow = 1).
-    // SAFETY: addSubview:positioned:relativeTo: is the documented NSView API.
+    // Pixel format is now retained by the context/view as needed. Release our ownership.
     unsafe {
+        release_object(pixel_format);
+    }
+
+    // STEP 5: add GL view behind the webview and configure resizing.
+    unsafe {
+        // `relativeTo:` takes an NSView object pointer or nil. Use typed nil.
         let _: () = objc2::msg_send![
             ns_view_ptr,
             addSubview: gl_view,
             positioned: NS_WINDOW_BELOW,
-            relativeTo: std::ptr::null::<()>()
+            relativeTo: nil_object()
         ];
-        // Enable autoresizing so the GL view resizes with the window.
+
+        let autoresizing_mask = NS_VIEW_WIDTH_SIZABLE | NS_VIEW_HEIGHT_SIZABLE;
+
         let _: () = objc2::msg_send![
             gl_view,
-            setAutoresizingMask: NS_VIEW_WIDTH_SIZABLE | NS_VIEW_HEIGHT_SIZABLE
+            setAutoresizingMask: autoresizing_mask
         ];
+
+        let _: () = objc2::msg_send![gl_view, setHidden: false];
     }
 
-    // STEP 5: set the context's view to the NSOpenGLView.
+    // STEP 6: attach context to the GL view.
     unsafe {
         let _: () = objc2::msg_send![context, setView: gl_view];
     }
 
-    // STEP 6: dlopen the OpenGL framework for `get_proc_address`.
-    let framework_path =
-        CString::new("/System/Library/Frameworks/OpenGL.framework/OpenGL").map_err(|e| {
-            // Clean up the Obj-C objects before returning.
+    // STEP 7: dlopen OpenGL.framework for GL proc lookup.
+    let framework_path = CString::new("/System/Library/Frameworks/OpenGL.framework/OpenGL")
+        .map_err(|e| {
             unsafe {
-                let _: () = objc2::msg_send![context, release];
-                let _: () = objc2::msg_send![gl_view, release];
+                remove_from_superview(gl_view);
+                release_object(context);
+                release_object(gl_view);
             }
-            format!("failed to build framework path CString: {}", e)
+            format!("failed to build OpenGL framework path CString: {}", e)
         })?;
+
     let gl_framework_handle = unsafe { libc::dlopen(framework_path.as_ptr(), libc::RTLD_LAZY) };
+
     if gl_framework_handle.is_null() {
         unsafe {
-            let _: () = objc2::msg_send![context, release];
-            let _: () = objc2::msg_send![gl_view, release];
+            remove_from_superview(gl_view);
+            release_object(context);
+            release_object(gl_view);
         }
-        return Err("failed to dlopen OpenGL framework".to_string());
+
+        return Err("failed to dlopen OpenGL.framework".to_string());
     }
 
     tracing::info!(
-        "[platform/macos] NSOpenGLContext + NSOpenGLView created behind WKWebView (OpenGL 3.2 Core, double-buffered, accelerated)"
+        "[platform/macos] NSOpenGLContext + NSOpenGLView created behind WKWebView \
+         (OpenGL 3.2 Core, double-buffered, accelerated)"
     );
 
     Ok(Box::new(MacGlSurface {
