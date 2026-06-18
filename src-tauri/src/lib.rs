@@ -103,8 +103,13 @@ pub fn run() {
             // used (the 9.7 guardrail). The MpvState is managed so playback commands
             // can access it via `State<'_, MpvState>`.
             let mpv_state = MpvState::new();
-            if mpv_state.instance.get().is_some() {
-                tracing::info!("[mpv] native playback ready (libmpv)");
+            if let Some(instance) = mpv_state.instance.get() {
+                tracing::info!("[mpv] native playback ready (libmpv) — spawning event loop");
+                // Phase 2.2: spawn the event-pump thread (observes 10 properties + emits
+                // `fyom://mpv/*` to the frontend). The thread owns its own `Arc<Mpv>` +
+                // `AppHandle` clone, so it's independent of the `MpvState` we're about to
+                // move into `app.manage`.
+                instance.spawn_event_loop(app.handle().clone());
             } else if let Some(e) = &mpv_state.init_error {
                 tracing::warn!("[mpv] native playback disabled: {}", e);
             }
@@ -124,6 +129,17 @@ pub fn run() {
             commands::playback::play_media,
             commands::playback::stop_media,
             commands::playback::play_test_media,
+            // Phase 2.2 command surface (ported from soia, reimplemented on libmpv2).
+            commands::playback::seek,
+            commands::playback::seek_relative,
+            commands::playback::toggle_pause,
+            commands::playback::set_pause,
+            commands::playback::set_volume,
+            commands::playback::set_speed,
+            commands::playback::set_audio_track,
+            commands::playback::set_subtitle_track,
+            commands::playback::mpv_keypress,
+            commands::playback::mpv_command,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -147,6 +163,14 @@ pub fn run() {
                 }
             }
             tauri::RunEvent::Exit => {
+                // Phase 2.2: shut down the mpv event-pump thread before exit so it
+                // doesn't outlive the libmpv instance (the thread holds an `Arc<Mpv>`;
+                // joining here guarantees a clean teardown).
+                if let Some(mpv_state) = app_handle.try_state::<MpvState>() {
+                    if let Some(instance) = mpv_state.instance.get() {
+                        instance.shutdown_event_loop();
+                    }
+                }
                 tracing::info!("App exited");
             }
             _ => {}

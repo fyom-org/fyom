@@ -11,6 +11,8 @@
  * contain low-level bridge invoke logic itself.
  */
 
+import { listen } from '@tauri-apps/api/event';
+
 import { isTauriEnvironment } from '@/lib/runtime/tauri';
 
 /* ── State model ──────────────────────────────────────────────────────── */
@@ -178,4 +180,185 @@ export async function tryInitializeNativePlayer(
       failure: mapNativePlayerInitError(err),
     };
   }
+}
+
+/* ── Phase 2.2: `fyom://mpv/*` event subscription (additive — no 9.7 change) ──── */
+
+/**
+ * The mpv event channel payload shapes (emitted by `src-tauri/src/mpv/event_loop.rs`).
+ *
+ * These are additive to the Phase 9.7 guardrail: the `invoke('play_media')` /
+ * `invoke('stop_media')` contract is unchanged; these events let the frontend observe
+ * playback state changes driven by libmpv (position, pause, volume, tracks, …).
+ *
+ * PORTED_FROM_SOIA `useAppPlaybackEvents.ts` event shapes (renamed `soia://` →
+ * `fyom://mpv/`); the orchestration logic (history/nowPlaying) is deferred to Phase 2.5.
+ */
+
+export interface MpvTrack {
+  id: number;
+  title: string;
+  lang: string;
+  type: string;
+}
+
+export interface MpvChapter {
+  title: string;
+  time: number;
+}
+
+export interface MpvTimePosEvent {
+  position: number;
+  duration: number;
+}
+export interface MpvPauseEvent {
+  paused: boolean;
+}
+export interface MpvEndFileEvent {
+  /** mpv EndFileReason code: 0=eof, 1=stop, 2=quit, 3=error, 4=redirect. */
+  reason: number;
+  reason_name: string;
+}
+export interface MpvFileLoadedEvent {
+  /** The path/URL mpv loaded (correlate with the pending play request). */
+  path: string | null;
+}
+export interface MpvTrackListEvent {
+  audio_tracks: MpvTrack[];
+  sub_tracks: MpvTrack[];
+}
+export interface MpvVolumeEvent {
+  volume: number;
+}
+export interface MpvDurationEvent {
+  duration: number;
+}
+export interface MpvSpeedEvent {
+  speed: number;
+}
+export interface MpvCacheSpeedEvent {
+  speed: number;
+}
+export interface MpvDemuxerCacheTimeEvent {
+  time: number;
+}
+export interface MpvPausedForCacheEvent {
+  paused: boolean;
+}
+export interface MpvChapterListEvent {
+  chapters: MpvChapter[];
+}
+export interface MpvErrorEvent {
+  message: string;
+}
+
+/**
+ * Handler callbacks for each `fyom://mpv/*` event. Only wire the ones you care about;
+ * unset handlers are skipped.
+ */
+export interface MpvEventHandlers {
+  onTimePos?: (e: MpvTimePosEvent) => void;
+  onPause?: (e: MpvPauseEvent) => void;
+  onEndFile?: (e: MpvEndFileEvent) => void;
+  onFileLoaded?: (e: MpvFileLoadedEvent) => void;
+  onTrackList?: (e: MpvTrackListEvent) => void;
+  onVolume?: (e: MpvVolumeEvent) => void;
+  onDuration?: (e: MpvDurationEvent) => void;
+  onSpeed?: (e: MpvSpeedEvent) => void;
+  onCacheSpeed?: (e: MpvCacheSpeedEvent) => void;
+  onDemuxerCacheTime?: (e: MpvDemuxerCacheTimeEvent) => void;
+  onPausedForCache?: (e: MpvPausedForCacheEvent) => void;
+  onChapterList?: (e: MpvChapterListEvent) => void;
+  onSeek?: () => void;
+  onPlaybackRestart?: () => void;
+  onShutdown?: () => void;
+  onError?: (e: MpvErrorEvent) => void;
+}
+
+/**
+ * Subscribe to all `fyom://mpv/*` events. Returns an `unlisten` function that tears
+ * down every listener.
+ *
+ * No-op (returns a no-op unlisten) outside the Tauri runtime — safe to call from code
+ * that also runs in a plain browser; the `<video>` fallback path is unaffected.
+ *
+ * @example
+ * const unlisten = await subscribeMpvEvents({
+ *   onTimePos: ({ position, duration }) => updateScrubber(position, duration),
+ *   onPause:   ({ paused }) => isPaused.value = paused,
+ * });
+ * // later:
+ * unlisten();
+ */
+export async function subscribeMpvEvents(
+  handlers: MpvEventHandlers,
+): Promise<() => void> {
+  if (!isNativePlaybackRuntimeAvailable()) {
+    // Not in Tauri — nothing to subscribe to (the `<video>` fallback owns playback).
+    return () => {};
+  }
+
+  const unlistens: Array<() => void> = [];
+
+  // Property-change events (payloads with a typed shape).
+  if (handlers.onTimePos) {
+    unlistens.push(await listen<MpvTimePosEvent>('fyom://mpv/time-pos', (e) => handlers.onTimePos?.(e.payload)));
+  }
+  if (handlers.onPause) {
+    unlistens.push(await listen<MpvPauseEvent>('fyom://mpv/pause', (e) => handlers.onPause?.(e.payload)));
+  }
+  if (handlers.onEndFile) {
+    unlistens.push(await listen<MpvEndFileEvent>('fyom://mpv/end-file', (e) => handlers.onEndFile?.(e.payload)));
+  }
+  if (handlers.onFileLoaded) {
+    unlistens.push(await listen<MpvFileLoadedEvent>('fyom://mpv/file-loaded', (e) => handlers.onFileLoaded?.(e.payload)));
+  }
+  if (handlers.onTrackList) {
+    unlistens.push(await listen<MpvTrackListEvent>('fyom://mpv/track-list', (e) => handlers.onTrackList?.(e.payload)));
+  }
+  if (handlers.onVolume) {
+    unlistens.push(await listen<MpvVolumeEvent>('fyom://mpv/volume', (e) => handlers.onVolume?.(e.payload)));
+  }
+  if (handlers.onDuration) {
+    unlistens.push(await listen<MpvDurationEvent>('fyom://mpv/duration', (e) => handlers.onDuration?.(e.payload)));
+  }
+  if (handlers.onSpeed) {
+    unlistens.push(await listen<MpvSpeedEvent>('fyom://mpv/speed', (e) => handlers.onSpeed?.(e.payload)));
+  }
+  if (handlers.onCacheSpeed) {
+    unlistens.push(await listen<MpvCacheSpeedEvent>('fyom://mpv/cache-speed', (e) => handlers.onCacheSpeed?.(e.payload)));
+  }
+  if (handlers.onDemuxerCacheTime) {
+    unlistens.push(await listen<MpvDemuxerCacheTimeEvent>('fyom://mpv/demuxer-cache-time', (e) => handlers.onDemuxerCacheTime?.(e.payload)));
+  }
+  if (handlers.onPausedForCache) {
+    unlistens.push(await listen<MpvPausedForCacheEvent>('fyom://mpv/paused-for-cache', (e) => handlers.onPausedForCache?.(e.payload)));
+  }
+  if (handlers.onChapterList) {
+    unlistens.push(await listen<MpvChapterListEvent>('fyom://mpv/chapter-list', (e) => handlers.onChapterList?.(e.payload)));
+  }
+  if (handlers.onError) {
+    unlistens.push(await listen<MpvErrorEvent>('fyom://mpv/error', (e) => handlers.onError?.(e.payload)));
+  }
+
+  // Void events (no payload).
+  if (handlers.onSeek) {
+    unlistens.push(await listen('fyom://mpv/seek', () => handlers.onSeek?.()));
+  }
+  if (handlers.onPlaybackRestart) {
+    unlistens.push(await listen('fyom://mpv/playback-restart', () => handlers.onPlaybackRestart?.()));
+  }
+  if (handlers.onShutdown) {
+    unlistens.push(await listen('fyom://mpv/shutdown', () => handlers.onShutdown?.()));
+  }
+
+  return () => {
+    for (const unlisten of unlistens) {
+      try {
+        unlisten();
+      } catch {
+        // ignore — best-effort teardown during component unmount
+      }
+    }
+  };
 }
