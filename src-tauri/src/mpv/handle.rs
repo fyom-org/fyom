@@ -1,11 +1,11 @@
-//! Thread-safe libmpv facade.
+//! Thread-safe libmpv facade.//! Thread
+//!
+//! Command handlers must talk to mpv through `MpvInstance` only.
 //!
 //! This module owns:
 //! - the shared `libmpv2::Mpv` handle
 //! - the mpv event thread lifecycle
-//! - the mpv render thread lifecycle
-//!
-//! Command handlers must talk to mpv through `MpvInstance` only.
+
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -44,7 +44,7 @@ pub struct MpvInstance {
     /// Shared libmpv handle.
     pub mpv: Arc<Mpv>,
 
-    /// Event thread shutdown flag.
+    /// Event thread state flag.
     event_alive: Arc<AtomicU32>,
 
     /// Event thread handle.
@@ -84,10 +84,10 @@ impl MpvInstance {
         set_c_numeric_locale();
 
         let mpv = Mpv::with_initializer(|init| {
-            // Render API output. The real GL surface is attached later.
+            // Render API output. The real GL surface is attached later by render.rs.
             init.set_property("vo", "libmpv")?;
 
-            // UI disabled; frontend owns controls.
+            // Frontend owns UI and controls.
             init.set_property("osc", false)?;
             init.set_property("osd-level", 0)?;
 
@@ -230,7 +230,7 @@ impl MpvInstance {
     }
 
     // -------------------------------------------------------------------------
-    // Core playback
+    // Core playback facade
     // -------------------------------------------------------------------------
 
     pub fn loadfile(&self, url: &str) -> Result<(), String> {
@@ -245,154 +245,12 @@ impl MpvInstance {
 
     pub fn stop(&self) -> Result<(), String> {
         info!("[mpv] stop");
+
         self.command("stop", &[])
     }
 
     pub fn set_pause(&self, paused: bool) -> Result<(), String> {
         self.set_property("pause", paused)
-    }
-
-    pub fn cycle_pause(&self) -> Result<(), String> {
-        self.command("cycle", &["pause"])
-    }
-
-    pub fn seek(&self, seconds: f64) -> Result<(), String> {
-        self.seek_absolute(seconds)
-    }
-
-    pub fn seek_absolute(&self, seconds: f64) -> Result<(), String> {
-        if !seconds.is_finite() {
-            return Err("seek_absolute seconds must be finite".to_string());
-        }
-
-        let seconds = seconds.to_string();
-        self.command("seek", &[seconds.as_str(), "absolute"])
-    }
-
-    pub fn seek_relative(&self, seconds: f64) -> Result<(), String> {
-        if !seconds.is_finite() {
-            return Err("seek_relative seconds must be finite".to_string());
-        }
-
-        let seconds = seconds.to_string();
-        self.command("seek", &[seconds.as_str(), "relative"])
-    }
-
-    pub fn mpv_keypress(&self, key: &str) -> Result<(), String> {
-        if key.trim().is_empty() {
-            return Err("keypress key must not be empty".to_string());
-        }
-
-        self.command("keypress", &[key])
-    }
-
-    // -------------------------------------------------------------------------
-    // Subtitle/audio helpers
-    // -------------------------------------------------------------------------
-
-    pub fn sub_add(
-        &self,
-        path: &str,
-        mode: &str,
-        title: Option<&str>,
-        lang: Option<&str>,
-    ) -> Result<(), String> {
-        if path.trim().is_empty() {
-            return Err("subtitle path must not be empty".to_string());
-        }
-
-        let mut args = vec![path, mode];
-
-        if title.is_some() || lang.is_some() {
-            args.push(title.unwrap_or(""));
-        }
-
-        if let Some(lang) = lang {
-            args.push(lang);
-        }
-
-        self.command("sub-add", &args)
-    }
-
-    pub fn sub_remove(&self, track_id: i64) -> Result<(), String> {
-        let id = track_id.to_string();
-        self.command("sub-remove", &[id.as_str()])
-    }
-
-    pub fn sub_reload(&self, track_id: i64) -> Result<(), String> {
-        let id = track_id.to_string();
-        self.command("sub-reload", &[id.as_str()])
-    }
-
-    pub fn audio_add(&self, path: &str, mode: &str) -> Result<(), String> {
-        if path.trim().is_empty() {
-            return Err("audio path must not be empty".to_string());
-        }
-
-        self.command("audio-add", &[path, mode])
-    }
-
-    pub fn audio_remove(&self, track_id: i64) -> Result<(), String> {
-        let id = track_id.to_string();
-        self.command("audio-remove", &[id.as_str()])
-    }
-
-    // -------------------------------------------------------------------------
-    // Playback adjustments
-    // -------------------------------------------------------------------------
-
-    pub fn set_sub_delay(&self, seconds: f64) -> Result<(), String> {
-        self.ensure_finite("sub-delay", seconds)?;
-        self.set_property("sub-delay", seconds)
-    }
-
-    pub fn set_secondary_sub_delay(&self, seconds: f64) -> Result<(), String> {
-        self.ensure_finite("secondary-sub-delay", seconds)?;
-        self.set_property("secondary-sub-delay", seconds)
-    }
-
-    pub fn set_audio_delay(&self, seconds: f64) -> Result<(), String> {
-        self.ensure_finite("audio-delay", seconds)?;
-        self.set_property("audio-delay", seconds)
-    }
-
-    pub fn set_sub_scale(&self, scale: f64) -> Result<(), String> {
-        self.ensure_finite("sub-scale", scale)?;
-
-        if scale <= 0.0 {
-            return Err("sub-scale must be greater than 0".to_string());
-        }
-
-        self.set_property("sub-scale", scale)
-    }
-
-    pub fn set_brightness(&self, value: f64) -> Result<(), String> {
-        self.ensure_finite("brightness", value)?;
-        self.set_property("brightness", value)
-    }
-
-    pub fn set_contrast(&self, value: f64) -> Result<(), String> {
-        self.ensure_finite("contrast", value)?;
-        self.set_property("contrast", value)
-    }
-
-    pub fn set_saturation(&self, value: f64) -> Result<(), String> {
-        self.ensure_finite("saturation", value)?;
-        self.set_property("saturation", value)
-    }
-
-    pub fn set_gamma(&self, value: f64) -> Result<(), String> {
-        self.ensure_finite("gamma", value)?;
-        self.set_property("gamma", value)
-    }
-
-    pub fn set_hue(&self, value: f64) -> Result<(), String> {
-        self.ensure_finite("hue", value)?;
-        self.set_property("hue", value)
-    }
-
-    pub fn set_chapter(&self, index: i64) -> Result<(), String> {
-        self.set_property("chapter", index)
     }
 
     // -------------------------------------------------------------------------
@@ -434,18 +292,6 @@ impl MpvInstance {
             .get_property(key)
             .map_err(|error| format!("mpv get_property `{key}` failed: {error}"))
     }
-
-    pub fn set_option_string(&self, key: &str, value: &str) -> Result<(), String> {
-        self.set_property(key, value)
-    }
-
-    fn ensure_finite(&self, name: &str, value: f64) -> Result<(), String> {
-        if value.is_finite() {
-            Ok(())
-        } else {
-            Err(format!("{name} must be finite"))
-        }
-    }
 }
 
 // -----------------------------------------------------------------------------
@@ -473,9 +319,10 @@ fn set_c_numeric_locale() {
     // SAFETY:
     // mpv expects LC_NUMERIC=C so decimal parsing is stable.
     unsafe {
-        use libc::{LC_NUMERIC, setlocale};
+        use libc::{setlocale, LC_NUMERIC};
 
-        setlocale(LC_NUMERIC, c"C".as_ptr());
+        let c_locale = b"C\0";
+        setlocale(LC_NUMERIC, c_locale.as_ptr() as *const _);
     }
 }
 
@@ -485,6 +332,6 @@ fn set_c_numeric_locale() {
 
 // SAFETY:
 // mpv client API is documented as thread-safe for command/property access.
-// Event/render contexts are confined to their own threads.
+// Event/render contexts are confined to dedicated threads.
 unsafe impl Send for MpvInstance {}
 unsafe impl Sync for MpvInstance {}
