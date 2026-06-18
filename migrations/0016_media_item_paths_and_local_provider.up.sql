@@ -1,18 +1,24 @@
 -- Migration 0016: Add media item path semantics and guarantee local provider.
 --
--- This migration introduces explicit path semantics for media_items and ensures
--- the built-in local provider exists before any runtime foreign key enforcement
+-- This migration and ensures
+-- the built-in local provider exists before runtime foreign key enforcement
 -- depends on provider_id = 'local'.
 --
--- Historical context:
--- Earlier migrations introduced libraries with provider_id = 'local' before the
--- local provider was guaranteed to exist. With PRAGMA foreign_keys = ON, fresh
--- databases and runtime inserts must have a valid providers row for 'local'.
+-- Scope:
+--   - Seed and normalize the built-in local provider.
+--   - Ensure the default library exists and points to the local provider.
+--   - Repair orphaned provider/library references on media_items and libraries.
+--   - Add root_path, primary_path, and nfo_path to media_items.
+--   - Backfill path columns from existing file_path and library source_path.
+--
+-- Important:
+--   Do not touch import_jobs.provider_id here. Historical schemas do not
+--   guarantee that import_jobs has a provider_id column at this point.
 
 -- Ensure the built-in local provider exists.
 --
--- Use INSERT OR IGNORE followed by UPDATE instead of a single UPSERT so this
--- migration remains conservative and works across older SQLite versions.
+-- Use INSERT OR IGNORE instead of UPSERT so this migration stays compatible
+-- with older SQLite versions.
 INSERT OR IGNORE INTO providers (
     id,
     type,
@@ -49,31 +55,6 @@ SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 WHERE id = 'local';
 
--- Ensure the default library exists.
---
--- Migration 0007 normally creates this row. This defensive insert makes the
--- empty-to-latest path and manually repaired development databases more robust.
-INSERT OR IGNORE INTO libraries (
-    id,
-    name,
-    type,
-    provider_id,
-    source_path,
-    metadata_source,
-    created_at,
-    updated_at
-)
-VALUES (
-    'default',
-    'Default Library',
-    'mixed',
-    'local',
-    '/',
-    'nfo',
-    datetime('now'),
-    datetime('now')
-);
-
 -- Normalize the default library so it points at the built-in local provider.
 UPDATE libraries
 SET
@@ -97,36 +78,30 @@ UPDATE libraries
 SET
     provider_id = 'local',
     updated_at = datetime('now')
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM providers
-    WHERE providers.id = libraries.provider_id
-);
+WHERE provider_id IS NULL
+   OR provider_id = ''
+   OR NOT EXISTS (
+        SELECT 1
+        FROM providers
+        WHERE providers.id = libraries.provider_id
+   );
 
 -- Repair historical provider references in media_items.
 --
 -- With runtime foreign key enforcement enabled, media_items.provider_id must
--- reference an existing providers.id. Any orphaned historical provider reference
--- is mapped to the built-in local provider.
+-- reference an existing providers.id. Any orphaned historical provider
+-- reference is mapped to the built-in local provider.
 UPDATE media_items
 SET
     provider_id = 'local',
     updated_at = datetime('now')
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM providers
-    WHERE providers.id = media_items.provider_id
-);
-
--- Repair historical provider references in import_jobs.
-UPDATE import_jobs
-SET
-    provider_id = 'local'
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM providers
-    WHERE providers.id = import_jobs.provider_id
-);
+WHERE provider_id IS NULL
+   OR provider_id = ''
+   OR NOT EXISTS (
+        SELECT 1
+        FROM providers
+        WHERE providers.id = media_items.provider_id
+   );
 
 -- Ensure every media item has a valid library.
 --
@@ -143,17 +118,6 @@ WHERE library_id IS NULL
         SELECT 1
         FROM libraries
         WHERE libraries.id = media_items.library_id
-   );
-
--- Ensure every import job has a valid library.
-UPDATE import_jobs
-SET library_id = 'default'
-WHERE library_id IS NULL
-   OR library_id = ''
-   OR NOT EXISTS (
-        SELECT 1
-        FROM libraries
-        WHERE libraries.id = import_jobs.library_id
    );
 
 -- Add new path columns to media_items for explicit path semantics.
@@ -209,10 +173,12 @@ SET
 WHERE root_path = ''
   AND library_id = 'default';
 
--- Keep NFO path empty for existing rows unless later migrations or scanners can
--- infer an exact sidecar metadata path. Guessing here would be unsafe.
+-- Keep NFO path empty for existing rows unless later scanners can infer an
+-- exact sidecar metadata path. Guessing here would be unsafe.
 UPDATE media_items
-SET nfo_path = ''
+SET
+    nfo_path = '',
+    updated_at = datetime('now')
 WHERE nfo_path IS NULL;
 
 -- Indexes for path-based lookups and scanner reconciliation.
@@ -227,7 +193,3 @@ ON media_items(nfo_path);
 
 CREATE INDEX IF NOT EXISTS idx_media_items_provider_library
 ON media_items(provider_id, library_id);
-
-CREATE INDEX IF NOT EXISTS idx_import_jobs_provider_library
-ON import_jobs(provider_id, library_id);
-``
