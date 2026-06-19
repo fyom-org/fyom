@@ -125,7 +125,30 @@ tasks:
       FYOM_BIN: "{{.ROOT_DIR}}/build/fyom"
       FYOM_DESKTOP_MODE: dev
       FYOM_USE_BUNDLED_RUNTIME: "0"
+    cmds:
+      - node scripts/run_tauri.mjs dev
+
+  dev:desktop-x11:
+    desc: "Run Tauri desktop dev mode (requires sidecar binary + setup:runtime-libs)"
+    deps: [sidecar]
+    env:
+      FYOM_BIN: "{{.ROOT_DIR}}/build/fyom"
+      FYOM_DESKTOP_MODE: dev
+      FYOM_USE_BUNDLED_RUNTIME: "0"
       GDK_BACKEND: "x11"
+      FYOM_LINUX_VIDEO_BACKEND: "x11"
+      WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+    cmds:
+      - node scripts/run_tauri.mjs dev
+
+  dev:desktop-wayland:
+    desc: "Run Tauri desktop dev mode (requires sidecar binary + setup:runtime-libs)"
+    deps: [sidecar]
+    env:
+      FYOM_BIN: "{{.ROOT_DIR}}/build/fyom"
+      FYOM_DESKTOP_MODE: dev
+      FYOM_USE_BUNDLED_RUNTIME: "0"
+      FYOM_LINUX_VIDEO_BACKEND: "wayland"
     cmds:
       - node scripts/run_tauri.mjs dev
 
