@@ -4,12 +4,22 @@
 //! mpv into the Tauri window.
 //!
 //! Launcher priority:
-//! 1. `FYOM_EXTERNAL_PLAYER`
-//! 2. `FYOM_MPV_BIN`
+//! 1. Environment variables:
+//!    - `FYOM_EXTERNAL_PLAYER`
+//!    - `FYOM_EXTERNAL_PLAYER_ARGS`
+//!    - `FYOM_MPV_BIN`
+//! 2. Desktop config:
+//!    - `configs/fyom-desktop.json`
+//!    - or `FYOM_DESKTOP_CONFIG`
 //! 3. OS default opener:
 //!    - macOS: `open`
 //!    - Linux: `xdg-open`
 //!    - Windows: `rundll32.exe url.dll,FileProtocolHandler`
+//!
+//! Important architecture boundary:
+//! - The Go backend does not know local player configuration.
+//! - Player executable paths are local desktop concerns only.
+//! - This command must never pass `--wid` or use native embedded rendering.
 
 use std::{
     path::Path,
@@ -19,7 +29,13 @@ use std::{
 use serde_json::{Value, json};
 use tauri::State;
 
-use crate::AppState;
+use crate::{
+    AppState,
+    desktop_config::{
+        ExternalPlayerConfig as DesktopExternalPlayerConfig,
+        ExternalPlayerKind as DesktopExternalPlayerKind,
+    },
+};
 
 // -----------------------------------------------------------------------------
 // Environment
@@ -53,14 +69,27 @@ enum ExternalPlayerKind {
     Mpv,
 }
 
-#[derive(Debug, Clone)]
-struct ExternalPlayerConfig {
-    program: String,
-    kind: ExternalPlayerKind,
-    source_env: &'static str,
+impl ExternalPlayerKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            ExternalPlayerKind::Generic => "custom",
+            ExternalPlayerKind::Mpv => "mpv",
+        }
+    }
 }
 
-fn configured_external_player() -> Option<ExternalPlayerConfig> {
+#[derive(Debug, Clone)]
+struct ResolvedExternalPlayerConfig {
+    program: String,
+    kind: ExternalPlayerKind,
+    source: String,
+    args: Vec<String>,
+    append_default_mpv_args: bool,
+}
+
+fn configured_external_player(
+    desktop_config: &DesktopExternalPlayerConfig,
+) -> Option<ResolvedExternalPlayerConfig> {
     if let Some(program) = non_empty_env(ENV_EXTERNAL_PLAYER) {
         let kind = if looks_like_mpv_binary(&program) {
             ExternalPlayerKind::Mpv
@@ -68,22 +97,64 @@ fn configured_external_player() -> Option<ExternalPlayerConfig> {
             ExternalPlayerKind::Generic
         };
 
-        return Some(ExternalPlayerConfig {
+        return Some(ResolvedExternalPlayerConfig {
             program,
             kind,
-            source_env: ENV_EXTERNAL_PLAYER,
+            source: ENV_EXTERNAL_PLAYER.to_string(),
+            args: parse_env_player_args(),
+            append_default_mpv_args: kind == ExternalPlayerKind::Mpv,
         });
     }
 
     if let Some(program) = non_empty_env(ENV_MPV_BIN) {
-        return Some(ExternalPlayerConfig {
+        return Some(ResolvedExternalPlayerConfig {
             program,
             kind: ExternalPlayerKind::Mpv,
-            source_env: ENV_MPV_BIN,
+            source: ENV_MPV_BIN.to_string(),
+            args: parse_env_player_args(),
+            append_default_mpv_args: true,
         });
     }
 
-    None
+    match desktop_config.kind {
+        DesktopExternalPlayerKind::System => None,
+
+        DesktopExternalPlayerKind::Mpv => {
+            let program = if desktop_config.program.trim().is_empty() {
+                "mpv".to_string()
+            } else {
+                desktop_config.program.trim().to_string()
+            };
+
+            Some(ResolvedExternalPlayerConfig {
+                program,
+                kind: ExternalPlayerKind::Mpv,
+                source: "desktop-config".to_string(),
+                args: desktop_config.args.clone(),
+                append_default_mpv_args: desktop_config.append_default_mpv_args,
+            })
+        }
+
+        DesktopExternalPlayerKind::Custom => {
+            let program = desktop_config.program.trim();
+
+            if program.is_empty() {
+                tracing::warn!(
+                    "[launcher] desktop external player kind=custom but program is empty; falling back to system opener"
+                );
+
+                return None;
+            }
+
+            Some(ResolvedExternalPlayerConfig {
+                program: program.to_string(),
+                kind: ExternalPlayerKind::Generic,
+                source: "desktop-config".to_string(),
+                args: desktop_config.args.clone(),
+                append_default_mpv_args: false,
+            })
+        }
+    }
 }
 
 fn non_empty_env(name: &str) -> Option<String> {
@@ -91,6 +162,31 @@ fn non_empty_env(name: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn parse_env_player_args() -> Vec<String> {
+    let Some(raw_args) = non_empty_env(ENV_EXTERNAL_PLAYER_ARGS) else {
+        return Vec::new();
+    };
+
+    // Intentionally simple: this is whitespace-based, not shell parsing.
+    //
+    // Examples:
+    //
+    // FYOM_EXTERNAL_PLAYER_ARGS="--profile=fyom {url}"
+    // FYOM_EXTERNAL_PLAYER_ARGS="--fullscreen --profile=fyom {url}"
+    //
+    // For arguments containing spaces, use `configs/fyom-desktop.json` instead:
+    //
+    // {
+    //   "externalPlayer": {
+    //     "args": ["--script-opts=foo=a b", "{url}"]
+    //   }
+    // }
+    raw_args
+        .split_whitespace()
+        .map(ToString::to_string)
+        .collect()
 }
 
 fn looks_like_mpv_binary(program: &str) -> bool {
@@ -103,16 +199,16 @@ fn looks_like_mpv_binary(program: &str) -> bool {
     file_name == "mpv" || file_name == "mpv.exe" || file_name.contains("mpv")
 }
 
-fn build_configured_player_args(config: &ExternalPlayerConfig, url: &str) -> Vec<String> {
+fn build_configured_player_args(config: &ResolvedExternalPlayerConfig, url: &str) -> Vec<String> {
     let mut args = Vec::new();
 
-    if config.kind == ExternalPlayerKind::Mpv {
+    if config.kind == ExternalPlayerKind::Mpv && config.append_default_mpv_args {
         args.extend(default_mpv_args());
     }
 
-    let url_inserted_by_env_args = append_env_player_args(&mut args, url);
+    let inserted_url = append_configured_args(&mut args, &config.args, url);
 
-    if !url_inserted_by_env_args {
+    if !inserted_url {
         if config.kind == ExternalPlayerKind::Mpv {
             args.push("--".to_string());
         }
@@ -123,19 +219,10 @@ fn build_configured_player_args(config: &ExternalPlayerConfig, url: &str) -> Vec
     args
 }
 
-fn append_env_player_args(args: &mut Vec<String>, url: &str) -> bool {
-    let Some(raw_args) = non_empty_env(ENV_EXTERNAL_PLAYER_ARGS) else {
-        return false;
-    };
-
+fn append_configured_args(args: &mut Vec<String>, configured_args: &[String], url: &str) -> bool {
     let mut inserted_url = false;
 
-    // Intentionally simple: this is whitespace-based, not shell parsing.
-    //
-    // If callers need custom URL placement, they can use:
-    //
-    // FYOM_EXTERNAL_PLAYER_ARGS="--profile=fyom {url}"
-    for arg in raw_args.split_whitespace() {
+    for arg in configured_args {
         if arg == URL_PLACEHOLDER {
             args.push(url.to_string());
             inserted_url = true;
@@ -248,8 +335,11 @@ fn is_existing_local_path(input: &str) -> bool {
 // Cross-platform external player launch
 // -----------------------------------------------------------------------------
 
-fn open_url_in_external_player(url: &str) -> Result<String, String> {
-    if let Some(config) = configured_external_player() {
+fn open_url_in_external_player(
+    desktop_config: &DesktopExternalPlayerConfig,
+    url: &str,
+) -> Result<String, String> {
+    if let Some(config) = configured_external_player(desktop_config) {
         return launch_configured_external_player(&config, url);
     }
 
@@ -257,14 +347,15 @@ fn open_url_in_external_player(url: &str) -> Result<String, String> {
 }
 
 fn launch_configured_external_player(
-    config: &ExternalPlayerConfig,
+    config: &ResolvedExternalPlayerConfig,
     url: &str,
 ) -> Result<String, String> {
     let args = build_configured_player_args(config, url);
 
     tracing::info!(
-        "[launcher] launching configured external player; source_env={}; program={}; args={:?}",
-        config.source_env,
+        "[launcher] launching configured external player; source={}; kind={}; program={}; args={:?}",
+        config.source,
+        config.kind.as_str(),
         config.program,
         args
     );
@@ -346,7 +437,8 @@ fn spawn_detached(mut command: Command, launcher_name: &str) -> Result<(), Strin
 ///
 /// - `FYOM_EXTERNAL_PLAYER` takes priority.
 /// - `FYOM_MPV_BIN` is used as an mpv-specific fallback.
-/// - If neither is set, the OS default opener is used.
+/// - `configs/fyom-desktop.json` is used when no environment override exists.
+/// - If no configured player is available, the OS default opener is used.
 #[tauri::command]
 pub async fn open_external_player(
     app_state: State<'_, AppState>,
@@ -360,9 +452,42 @@ pub async fn open_external_player(
         resolved_url
     );
 
-    let launcher = open_url_in_external_player(&resolved_url)?;
+    let launcher =
+        open_url_in_external_player(&app_state.desktop_config.external_player, &resolved_url)?;
 
     Ok(ok(&resolved_url, &launcher))
+}
+
+/// Return the effective external player configuration.
+///
+/// This is intended for the desktop settings UI and diagnostics.
+/// It does not query or depend on the Go backend.
+#[tauri::command]
+pub async fn get_external_player_config(app_state: State<'_, AppState>) -> Result<Value, String> {
+    let desktop_player = &app_state.desktop_config.external_player;
+
+    let value = match configured_external_player(desktop_player) {
+        Some(config) => json!({
+            "mode": "configured",
+            "source": config.source,
+            "kind": config.kind.as_str(),
+            "program": config.program,
+            "args": config.args,
+            "appendDefaultMpvArgs": config.append_default_mpv_args,
+            "urlPlaceholder": URL_PLACEHOLDER,
+        }),
+        None => json!({
+            "mode": "system",
+            "source": "system-default-opener",
+            "kind": "system",
+            "program": null,
+            "args": [],
+            "appendDefaultMpvArgs": false,
+            "urlPlaceholder": URL_PLACEHOLDER,
+        }),
+    };
+
+    Ok(value)
 }
 
 /// Get the sidecar API base URL for the current session.
