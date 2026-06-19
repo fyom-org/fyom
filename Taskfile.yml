@@ -125,6 +125,7 @@ tasks:
       FYOM_BIN: "{{.ROOT_DIR}}/build/fyom"
       FYOM_DESKTOP_MODE: dev
       FYOM_USE_BUNDLED_RUNTIME: "0"
+      GDK_BACKEND: "x11"
     cmds:
       - node scripts/run_tauri.mjs dev
 

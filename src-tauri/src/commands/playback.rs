@@ -7,7 +7,7 @@
 //! - call mpv facade
 //! - return stable JSON payloads
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tauri::State;
 
 use crate::mpv::MpvInstance;
@@ -112,9 +112,7 @@ fn command_result(result: Result<(), String>) -> Result<Value, String> {
 // -----------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn get_playback_backend_info(
-    mpv_state: State<'_, MpvState>,
-) -> Result<Value, String> {
+pub async fn get_playback_backend_info(mpv_state: State<'_, MpvState>) -> Result<Value, String> {
     let Ok(instance) = get_instance(&mpv_state) else {
         return Ok(json!({
             "backend": mpv_state
@@ -197,10 +195,7 @@ pub async fn stop_media(mpv_state: State<'_, MpvState>) -> Result<Value, String>
 // -----------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn seek(
-    mpv_state: State<'_, MpvState>,
-    position: f64,
-) -> Result<Value, String> {
+pub async fn seek(mpv_state: State<'_, MpvState>, position: f64) -> Result<Value, String> {
     if let Err(payload) = ensure_finite("position", position) {
         return Ok(payload);
     }
@@ -225,10 +220,7 @@ pub async fn seek(
 }
 
 #[tauri::command]
-pub async fn seek_relative(
-    mpv_state: State<'_, MpvState>,
-    seconds: f64,
-) -> Result<Value, String> {
+pub async fn seek_relative(mpv_state: State<'_, MpvState>, seconds: f64) -> Result<Value, String> {
     if let Err(payload) = ensure_finite("seconds", seconds) {
         return Ok(payload);
     }
@@ -258,10 +250,7 @@ pub async fn toggle_pause(mpv_state: State<'_, MpvState>) -> Result<Value, Strin
 }
 
 #[tauri::command]
-pub async fn set_pause(
-    mpv_state: State<'_, MpvState>,
-    paused: bool,
-) -> Result<Value, String> {
+pub async fn set_pause(mpv_state: State<'_, MpvState>, paused: bool) -> Result<Value, String> {
     let instance = match get_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
@@ -271,10 +260,7 @@ pub async fn set_pause(
 }
 
 #[tauri::command]
-pub async fn set_volume(
-    mpv_state: State<'_, MpvState>,
-    volume: i64,
-) -> Result<Value, String> {
+pub async fn set_volume(mpv_state: State<'_, MpvState>, volume: i64) -> Result<Value, String> {
     let instance = match get_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
@@ -286,10 +272,7 @@ pub async fn set_volume(
 }
 
 #[tauri::command]
-pub async fn set_speed(
-    mpv_state: State<'_, MpvState>,
-    speed: f64,
-) -> Result<Value, String> {
+pub async fn set_speed(mpv_state: State<'_, MpvState>, speed: f64) -> Result<Value, String> {
     if let Err(payload) = ensure_finite("speed", speed) {
         return Ok(payload);
     }
@@ -337,10 +320,7 @@ pub async fn set_subtitle_track(
 }
 
 #[tauri::command]
-pub async fn mpv_keypress(
-    mpv_state: State<'_, MpvState>,
-    key: String,
-) -> Result<Value, String> {
+pub async fn mpv_keypress(mpv_state: State<'_, MpvState>, key: String) -> Result<Value, String> {
     if let Err(payload) = ensure_non_empty("key", &key) {
         return Ok(payload);
     }
@@ -416,12 +396,22 @@ pub async fn attach_render_surface(
         return Ok(err("main window not found"));
     };
 
-    let surface = match crate::platform::create_platform_surface(&window) {
-        Ok(surface) => surface,
-        Err(error) => {
+    // UI operations must be performed on the main thread
+    let (tx, rx) = tokio::sync::oneshot::channel();
+
+    let _ = app_handle.run_on_main_thread(move || {
+        let result = crate::platform::create_platform_surface(&window);
+        let _ = tx.send(result);
+    });
+
+    // Wait for the main thread to finish executing and return a result
+    let surface = match rx.await {
+        Ok(Ok(surface)) => surface,
+        Ok(Err(error)) => {
             tracing::warn!("[mpv/playback] platform surface creation failed: {error}");
             return Ok(err(format!("platform surface creation failed: {error}")));
         }
+        Err(_) => return Ok(err("main thread task dropped")),
     };
 
     command_result(instance.spawn_render_thread(surface))
@@ -459,9 +449,7 @@ pub async fn resize_render_surface(
 }
 
 #[tauri::command]
-pub async fn get_api_base_url(
-    state: tauri::State<'_, crate::AppState>,
-) -> Result<String, String> {
+pub async fn get_api_base_url(state: tauri::State<'_, crate::AppState>) -> Result<String, String> {
     state
         .sidecar_state
         .get_api_base_url()
@@ -525,10 +513,7 @@ pub async fn sub_add(
 }
 
 #[tauri::command]
-pub async fn sub_remove(
-    mpv_state: State<'_, MpvState>,
-    track_id: i64,
-) -> Result<Value, String> {
+pub async fn sub_remove(mpv_state: State<'_, MpvState>, track_id: i64) -> Result<Value, String> {
     let instance = match get_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
@@ -540,10 +525,7 @@ pub async fn sub_remove(
 }
 
 #[tauri::command]
-pub async fn sub_reload(
-    mpv_state: State<'_, MpvState>,
-    track_id: i64,
-) -> Result<Value, String> {
+pub async fn sub_reload(mpv_state: State<'_, MpvState>, track_id: i64) -> Result<Value, String> {
     let instance = match get_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
@@ -575,10 +557,7 @@ pub async fn audio_add(
 }
 
 #[tauri::command]
-pub async fn audio_remove(
-    mpv_state: State<'_, MpvState>,
-    track_id: i64,
-) -> Result<Value, String> {
+pub async fn audio_remove(mpv_state: State<'_, MpvState>, track_id: i64) -> Result<Value, String> {
     let instance = match get_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
@@ -594,10 +573,7 @@ pub async fn audio_remove(
 // -----------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn set_sub_delay(
-    mpv_state: State<'_, MpvState>,
-    seconds: f64,
-) -> Result<Value, String> {
+pub async fn set_sub_delay(mpv_state: State<'_, MpvState>, seconds: f64) -> Result<Value, String> {
     if let Err(payload) = ensure_finite("seconds", seconds) {
         return Ok(payload);
     }
@@ -645,10 +621,7 @@ pub async fn set_audio_delay(
 }
 
 #[tauri::command]
-pub async fn set_sub_scale(
-    mpv_state: State<'_, MpvState>,
-    scale: f64,
-) -> Result<Value, String> {
+pub async fn set_sub_scale(mpv_state: State<'_, MpvState>, scale: f64) -> Result<Value, String> {
     if let Err(payload) = ensure_finite("scale", scale) {
         return Ok(payload);
     }
@@ -693,10 +666,7 @@ pub async fn set_color_adjustment(
 }
 
 #[tauri::command]
-pub async fn set_chapter(
-    mpv_state: State<'_, MpvState>,
-    index: i64,
-) -> Result<Value, String> {
+pub async fn set_chapter(mpv_state: State<'_, MpvState>, index: i64) -> Result<Value, String> {
     let instance = match get_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
@@ -728,10 +698,7 @@ pub async fn mpv_set_option_string(
 }
 
 #[tauri::command]
-pub async fn get_property(
-    mpv_state: State<'_, MpvState>,
-    name: String,
-) -> Result<Value, String> {
+pub async fn get_property(mpv_state: State<'_, MpvState>, name: String) -> Result<Value, String> {
     if let Err(payload) = ensure_non_empty("name", &name) {
         return Ok(payload);
     }
