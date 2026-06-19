@@ -1,7 +1,16 @@
 //! Tauri command handlers.
 //!
-//! This module contains application-level Tauri invoke handlers.
-//! Native playback commands live in `commands::playback`.
+//! This module owns application-level Tauri invoke handlers and exposes the
+//! native playback command namespace through `commands::playback`.
+//!
+//! Keep this module thin:
+//! - window visibility commands
+//! - application quit commands
+//! - sidecar status read model
+//!
+//! Do not initialize libmpv here.
+//! Do not create mpv render surfaces here.
+//! Native playback and mpv command handling belong in `commands::playback`.
 
 pub mod playback;
 
@@ -10,23 +19,39 @@ use tauri::{AppHandle, Manager, State};
 use crate::sidecar;
 use crate::{AppState, SidecarStatus};
 
+// -----------------------------------------------------------------------------
+// Window commands
+// -----------------------------------------------------------------------------
+
 /// Show the main window.
+///
+/// This is intentionally a thin command wrapper around `crate::window`.
 #[tauri::command]
 pub async fn show_window(app: AppHandle) -> Result<(), String> {
     crate::window::show_main_window(&app).map_err(|error| error.to_string())
 }
 
 /// Hide the main window to tray.
+///
+/// This is intentionally a thin command wrapper around `crate::window`.
 #[tauri::command]
 pub async fn hide_window(app: AppHandle) -> Result<(), String> {
     crate::window::hide_to_tray(&app).map_err(|error| error.to_string())
 }
 
+// -----------------------------------------------------------------------------
+// Quit flow
+// -----------------------------------------------------------------------------
+
 /// Request application quit.
 ///
 /// This function is intentionally idempotent:
-/// - only exits when `exit_intent` is set
-/// - only the first shutdown request performs sidecar shutdown
+/// - it only exits when `exit_intent` is set
+/// - it only starts shutdown once
+/// - it shuts down the sidecar before exiting the app process
+///
+/// This function is not marked as a Tauri command directly because callers should
+/// normally go through `quit_app`, which marks explicit exit intent first.
 pub async fn request_quit(app: AppHandle) -> Result<(), String> {
     let state: State<'_, AppState> = app.state();
 
@@ -42,9 +67,13 @@ pub async fn request_quit(app: AppHandle) -> Result<(), String> {
 
     state.mark_shutdown();
 
+    tracing::info!("[commands] shutdown started");
+
     sidecar::shutdown_sidecar(&state)
         .await
         .map_err(|error| error.to_string())?;
+
+    tracing::info!("[commands] sidecar shutdown complete; exiting app");
 
     app.exit(0);
 
@@ -57,12 +86,31 @@ pub async fn request_quit(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn quit_app(app: AppHandle) -> Result<(), String> {
     let state: State<'_, AppState> = app.state();
+
     state.mark_exit_intent();
 
     request_quit(app).await
 }
 
+// -----------------------------------------------------------------------------
+// Sidecar status
+// -----------------------------------------------------------------------------
+
 /// Get the sidecar status as a stable frontend payload.
+///
+/// Response shape:
+///
+/// ```json
+/// {
+///   "status": "stopped" | "starting" | "ready" | "error",
+///   "ready": true | false,
+///   "api_base_url": "...",
+///   "message": "...",
+///   "timeout": true | false
+/// }
+/// ```
+///
+/// Fields that are not meaningful for a status are omitted.
 #[tauri::command]
 pub async fn get_sidecar_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let status = state.sidecar_state.get_status();
