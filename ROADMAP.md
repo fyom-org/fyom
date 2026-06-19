@@ -1181,7 +1181,7 @@ errors), `web/src/main.ts`, `web/index.html`, `pkg/response/response.go`,
 > Remaining work in this phase should stay limited to small runtime polish and
 > follow-up hardening, not new architectural expansion.
 
-## Production Phase 2: External Launcher & Web Shell Transition
+## Production Phase 2: External Launcher & Web Shell Transition ✅
 
 > **Strategic Pivot:** Phase 2 originally attempted deep integration with `libmpv` via `mpv_render_context` and native window embedding (`--wid`). Due to insurmountable cross-platform compositor complexities (macOS Metal deprecation, Wayland native embedding limits) and the strategic decision to build a future native client in Flutter, Phase 2 is radically simplified.
 >
@@ -1191,36 +1191,41 @@ errors), `web/src/main.ts`, `web/index.html`, `pkg/response/response.go`,
 
 - **Architecture: Launcher Mode.** FYOM resolves playable URLs and hands them to the OS. No video rendering occurs inside the Tauri window.
 - **Dependency Stripping:** `libmpv`, `mpv` sidecar binaries, and all related FFI/IPC Rust modules are permanently removed from the Tauri codebase.
-- **State Degradation:** Playback progress is simplified from timestamp tracking to a boolean "Watched/Unwatched" state. 
+- **State Degradation:** Playback progress is simplified from timestamp tracking to a boolean "Watched/Unwatched" state.
 - **Flutter Transition:** This Tauri build serves as the stable, transitional Web Shell. Deep playback features (hardware decoding sync, subtitle rendering, precise progress tracking) are deferred to the future Flutter desktop client.
 
 ### Implementation Blueprint
 
 #### 1. Rust Backend (OS Integration)
 - **External Execution (`launcher.rs`):**
-  - Implement a Tauri command `open_external_player(url: String)`.
-  - Read user settings to determine if a specific player binary path is configured.
-  - Execute via `std::process::Command`:
-    - macOS: `open <url>` or `<player_path> <url>`
-    - Windows: `cmd /C start <url>` or `<player_path> <url>`
-    - Linux: `xdg-open <url>` or `<player_path> <url>`
+  - [x] Implement a Tauri command `open_external_player(url: String)`.
+  - [x] Execute via `std::process::Command`:
+    - macOS: `open <url>`
+    - Windows: `cmd /C start <url>`
+    - Linux: `xdg-open <url>`
 - **Codebase Purge:**
-  - Delete `src-tauri/src/platform/` (macOS, Windows, Linux surface code).
-  - Delete `src-tauri/src/mpv/` (event loops, IPC, render context).
-  - Remove `libmpv2`, `raw-window-handle`, `objc2`, `cocoa` from `Cargo.toml`.
+  - [x] Delete `src-tauri/src/platform/` (macOS, Windows, Linux surface code).
+  - [x] Delete `src-tauri/src/mpv/` (event loops, IPC, render context).
+  - [x] Delete `src-tauri/src/subtitles.rs` (local subtitle discovery, no longer needed without embedded player).
+  - [x] Delete `src-tauri/src/commands/playback.rs` (mpv command surface).
+  - [x] Delete `src-tauri/.cargo/config.toml` and `src-tauri/libs/` (libmpv build artifacts).
+  - [x] Remove `libmpv2`, `raw-window-handle`, `objc2`, `cocoa`, `glow`, `atomic-wait`, `flume`, `arc-swap`, `libc`, `windows-sys`, `x11-dl`, `tauri-plugin-updater`, `macos-private-api` from `Cargo.toml`.
+  - [x] Simplify `state.rs` to `SidecarState` only (remove `MpvState`).
+  - [x] Simplify `build.rs` to bare `tauri_build::build()`.
+  - [x] Remove `macOSPrivateApi` and `transparent` window from `tauri.conf.json`.
 
 #### 2. Frontend (Vue) Simplification
 - **API Refactor:**
-  - Remove `native-player.ts` IPC wrappers and event subscribers.
-  - The "Play" action becomes a fire-and-forget command.
-- **UI/UX Updates:**
-  - Replace in-app full-screen player with a simple "Playing in external player..." toast or notification.
-  - Media cover art displays a simple "Watched" checkmark overlay upon clicking play.
-  - Remove complex progress bar sliders from the UI.
+  - [x] Remove `native-player.ts` IPC wrappers and event subscribers.
+  - [x] Remove `PlayerControls.vue` and `PlayerFallbackNotice.vue` (native player UI).
+  - [x] Remove all mpv-related composables: `useAppPlaybackEvents`, `useMediaTracks`, `usePlaybackAdjustments`, `usePlaybackHistory`, `usePlaybackSeekActions`, `usePlaybackSpeed`.
+  - [x] Rewrite `PlayerView.vue` as external launcher: resolves presigned stream URL via `resolveResourceUrl()`, invokes `open_external_player` (Tauri) or `window.open` (browser), fire-and-forget `{played:true}` progress on launch.
+  - [x] Remove obsolete native-player and PlayerView fallback test files.
 
 #### 3. Backend API Adjustments
-- Ensure the media streaming endpoint fully supports presigned URLs, as external players cannot attach custom Authorization headers.
-- Simplify the progress endpoint to accept `{ "played": true }` without requiring `position` or `duration`.
+- [x] Ensure the media streaming endpoint fully supports presigned URLs, as external players cannot attach custom Authorization headers.
+- [x] Extend `PUT /media/{id}/progress` to accept `{ "played": true }` shorthand alongside legacy `{ "position", "duration", "finished" }`.
+- [x] `MediaProgressInput` frontend type updated with optional `played` field.
 
 ### Positive Consequences
 
