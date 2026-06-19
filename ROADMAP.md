@@ -1181,104 +1181,59 @@ errors), `web/src/main.ts`, `web/index.html`, `pkg/response/response.go`,
 > Remaining work in this phase should stay limited to small runtime polish and
 > follow-up hardening, not new architectural expansion.
 
-## Production Phase 2: Native Playback with libmpv
+## Production Phase 2: External Launcher & Web Shell Transition
 
-> **Deep-dive assessment:** see [`docs/libmpv-assessment.md`](docs/libmpv-assessment.md) for the full technical deconstruction of the `FengZeng/mpv` distribution repo (fyom's fork base), the soia + tsukimi code-reuse inventory (GPL-3.0 → GPL-3.0), the closed-source `libsoia_utils` gate (stripped in fyom's fork), the confirmed rendering architecture (`mpv_render_context` + OpenGL on a transparent Tauri overlay), the tsukimi event-pump port, and the complete CI/CD & release-distribution strategy.
+> **Strategic Pivot:** Phase 2 originally attempted deep integration with `libmpv` via `mpv_render_context` and native window embedding (`--wid`). Due to insurmountable cross-platform compositor complexities (macOS Metal deprecation, Wayland native embedding limits) and the strategic decision to build a future native client in Flutter, Phase 2 is radically simplified.
 >
-> **Licensing foundation (no licensing gate):** fyom = **GPL-3.0-only**, soia = **GPL-3.0-only**, tsukimi = **GPL-3.0-only**, `FengZeng/mpv` tarball = GPLv2+, `libmpv2`/`glow` crates = MIT OR Apache-2.0. All mutually compatible. This unlocks **combining soia's supply-chain + overlay essence with tsukimi's event-pump + binding essence**: ~2,000 LOC ported near-verbatim from tsukimi + ~3,200 LOC ported/adapted from soia + only ~2,000 LOC genuinely new.
->
-> **Headline decisions (confirmed):**
-> - **libmpv supply chain:** fyom owns **`fyom-org/fork-mpv`** (a fork of `FengZeng/mpv`). The fork strips `vendor/libsoia_utils.*` (6 closed binaries) + `vendor/config.data` (soia auth token) + reverts the `download.sh` Vulkan patch → produces **clean GPLv2+ libmpv tarballs** under fyom-controlled tags (`fyom-v0.41.0-r1`). fyom controls the supply chain end-to-end (no upstream silent-re-publish risk, independent release cadence, backport capability).
-> - **Rust binding:** the **`libmpv2` crate** (v4.1.0+, matching tsukimi) — safe, complete, idiomatic Rust. Supersedes both `libmpv-sys` and soia's hand-written `ffi.rs` (neither is ported). Chosen because tsukimi's event pump (which fyom ports verbatim) is built on `libmpv2`'s `EventContext` / `observe_property` / `MpvNode` API.
-> - **Rendering:** `mpv_render_context_create` + `MPV_RENDER_API_TYPE_OPENGL` on a transparent Tauri overlay (soia's `.video-mode` CSS z-order trick, render-backend-agnostic). NOT GTK texture sharing (tsukimi's `GLArea` is inseparable from GTK4); NOT Vulkan via `libsoia_utils` (closed-source, stripped in the fork). Per-platform GL context: macOS `NSOpenGLContext` / Windows WGL / Linux GLX+EGL, on a `RawWindowHandle` from Tauri.
-> - **State / event pump:** port **tsukimi's** `tsukimi_mpv.rs::process_events` + `ListenEvent` enum (→ `MpvEvent`) + `node_to_tracks` + `node_to_chapter_list` + `atomic_wait` PAUSED/ACTIVE/SHUTDOWN state machine near-verbatim (GPL-3.0, attributed). The dedicated Rust thread loops `mpv_wait_event` and emits `fyom://mpv/*` via `AppHandle::emit`. (soia's 1190-line `event_loop.rs` is NOT ported — tsukimi's ~270-LOC pump is cleaner and matches the `libmpv2` binding.)
-> - **Contract lock:** the Phase 9.7 guardrail (`invoke('play_media', {mediaUrl, posterUrl?}) → {success, error?}` + `invoke('stop_media')`) is honored unchanged; new `fyom://mpv/*` events are additive; the browser `<video>` fallback stays green end-to-end as the safety net.
-> - **Resolved questions (all adopt `Recommend`):** Q1 per-arch macOS installers for v1 · Q2 OpenGL for Phase 2 (Vulkan clean future addition — fork tarball retains MoltenVK) · Q3 direct presigned-URL `loadfile` for v1 (no `stream_proxy`) · Q4 supply-chain resilience — **upgraded** from a passive mirror to the active `fyom-org/fork-mpv` fork.
+> FYOM Desktop (Tauri) transitions to a **Launcher Architecture**. It acts purely as a metadata catalog and media launcher. Playback is delegated to the user's system default or configured external player.
 
-### Phase 2.0 — Fork Setup + Build-Infra Spike
+### Headline Decisions (Confirmed)
 
-> **Status (PART-B round 1):** code + supply-chain surgery complete; compile-verification + first tarball build deferred to a Rust-equipped environment. See `docs/libmpv-assessment.md` §3.8 "Phase 2.0 Decision-Gate Verdict".
+- **Architecture: Launcher Mode.** FYOM resolves playable URLs and hands them to the OS. No video rendering occurs inside the Tauri window.
+- **Dependency Stripping:** `libmpv`, `mpv` sidecar binaries, and all related FFI/IPC Rust modules are permanently removed from the Tauri codebase.
+- **State Degradation:** Playback progress is simplified from timestamp tracking to a boolean "Watched/Unwatched" state. 
+- **Flutter Transition:** This Tauri build serves as the stable, transitional Web Shell. Deep playback features (hardware decoding sync, subtitle rendering, precise progress tracking) are deferred to the future Flutter desktop client.
 
-- [x] Stand up **`fyom-org/fork-mpv`**: fork of `FengZeng/mpv` prepared locally at `/home/z/my-project/fork-mpv/` — `vendor/libsoia_utils/` (6 binaries) + `vendor/config.data` **deleted**; `download.sh` Vulkan patch (`ra_ctx_vulkan_soia` + `ra_vk_ctx_*` export) **reverted** (rewritten to stock upstream download); `package-{macos,linux,mingw64}-runtime.sh` **stripped** of `copy_soia_utils_lib(s)` + `copy_config_data` functions + calls + loop entries; `README.md` + new `FORK-NOTES.md` document the diff. vcpkg + Meson + 4-workflow CI + 6-platform matrix retained. ⚠️ Needs `git push` to `fyom-org/fork-mpv` on GitHub.
-- [ ] Publish first clean tarball `fyom-v0.41.0-r1` (6 platforms) from the fork's tag-triggered `ci.yml` — verify NO `libsoia_utils.*` / `config.data` in the artifacts. ⚠️ Deferred: requires pushing the fork to GitHub + triggering the GHA 6-platform matrix (macOS arm64/x64 + Linux x64/arm64 + Windows mingw64/clangarm64 runners).
-- [x] Audit tsukimi `src/ui/mpv/{tsukimi_mpv,mpvglarea,options_matcher}.rs` + soia `src-tauri/src/mpv/{handle,mod}.rs` + `platform/*` + `commands/playback.rs` + `subtitles.rs`; confirmed none of soia's `soia_utils` call sites are recreated — fyom's `MpvInstance` wraps `libmpv2::Mpv` directly; `libmpv2::render::RenderContext` (Phase 2.3) replaces all ~30 `soia_utils` call sites.
-- [x] Port `scripts/runtime_libs_release_config.env` → repointed `MPV_RELEASE_REPO=fyom-org/fork-mpv`, `MPV_RELEASE_TAG=fyom-v0.41.0-r1`.
-- [x] Port `scripts/setup_runtime_libs.{mjs,macos.sh,linux.sh,windows.mjs}` verbatim (GPL-3.0, attributed; scripts read the `.env` so no edits needed — the fork tarball is already clean, no `--exclude`). SHA256 verification retained.
-- [x] Port `src-tauri/build.rs`: clean rewrite — emits `cargo:rustc-link-search=native=libs/mpv` + `cargo:rustc-link-lib=dylib=mpv` (non-windows) / `cargo:rustc-link-lib=<name>` (windows); NO `soia_utils` / `config.data` / `SOIA_API` logic. Added `src-tauri/.cargo/config.toml` setting `MPV_LIB_DIR = "libs/mpv"` (relative) so `libmpv2`'s build script resolves the pre-built dylib + headers.
-- [x] Add to `src-tauri/Cargo.toml`: `libmpv2 = "4.1"` + `atomic-wait` + `flume` + `arc-swap` + `libc` (the 2.0-essential set for the event-pump + binding). ⚠️ `glow` + `raw-window-handle` + `glutin`/`surfman` deferred to Phase 2.3 (render context) to keep 2.0 lean + compile times down.
-- [x] Skeleton `src-tauri/src/mpv/{mod,handle}.rs`: `MpvInstance::new()` wrapping `libmpv2::Mpv::with_initializer(...)` (initializer property set ported from tsukimi: vo=libmpv, hwdec=auto-safe, cache, volume, input bindings); `loadfile()` / `stop()` / `set_pause()` / `seek_relative()` / `set_property()` facade; `unsafe impl Send+Sync` (matches tsukimi's proven pattern).
-- [x] Transparent-window PoC: `tauri.conf.json` `transparent:true` + `macOSPrivateApi:true`; `commands/playback.rs` rewritten with real `get_playback_backend_info` (`{backend:"libmpv", native_playback:true}`) + `play_media({mediaUrl, posterUrl?})` + `stop_media` (9.7 contract) + `play_test_media` (loads `lavfi://sine` or `$FYOM_MPV_TEST_MEDIA`); `MpvState` managed in `lib.rs` setup; `init_error` fallback keeps the `<video>` safety net. ⚠️ Compile-verify deferred (no Rust toolchain in this sandbox); code reviewed against tsukimi's proven `libmpv2` usage.
-- [x] Decision gate: verdict recorded in `docs/libmpv-assessment.md` §3.8. libmpv2 build-script dylib resolution via `MPV_LIB_DIR` is sound (documented libmpv2 behavior); transparent-overlay-GL on macOS confirmed as the path (soia's `.video-mode` trick is render-backend-agnostic). Full macOS PoC verification deferred to a macOS dev machine.
+### Implementation Blueprint
 
-### Phase 2.1 — Runtime-libs Consumer Pipeline
+#### 1. Rust Backend (OS Integration)
+- **External Execution (`launcher.rs`):**
+  - Implement a Tauri command `open_external_player(url: String)`.
+  - Read user settings to determine if a specific player binary path is configured.
+  - Execute via `std::process::Command`:
+    - macOS: `open <url>` or `<player_path> <url>`
+    - Windows: `cmd /C start <url>` or `<player_path> <url>`
+    - Linux: `xdg-open <url>` or `<player_path> <url>`
+- **Codebase Purge:**
+  - Delete `src-tauri/src/platform/` (macOS, Windows, Linux surface code).
+  - Delete `src-tauri/src/mpv/` (event loops, IPC, render context).
+  - Remove `libmpv2`, `raw-window-handle`, `objc2`, `cocoa` from `Cargo.toml`.
 
-> **Status (PART-B round 2):** scripts + Taskfile + workflow + flake wiring complete. Compile-verification + first end-to-end CI run deferred to a Rust-equipped environment. See worklog `PART-B-2.1`.
+#### 2. Frontend (Vue) Simplification
+- **API Refactor:**
+  - Remove `native-player.ts` IPC wrappers and event subscribers.
+  - The "Play" action becomes a fire-and-forget command.
+- **UI/UX Updates:**
+  - Replace in-app full-screen player with a simple "Playing in external player..." toast or notification.
+  - Media cover art displays a simple "Watched" checkmark overlay upon clicking play.
+  - Remove complex progress bar sliders from the UI.
 
-- [x] Port `scripts/bundle_runtime_libs_{macos.sh,linux.mjs,windows.mjs}` from soia verbatim (with `--sign-identity` stub for Phase 3; no soia_utils handling — the fork tarball never contained it). Bonus: `bundle_dmg_macos.sh` pre-ported for Phase 2.6.
-- [x] Port `scripts/{sync_runtime_libs,apply_runtime_libs,run_tauri,sync_version}.mjs` + `scripts/{linuxdeploy-plugin-gtk.sh,prepare_tauri_linuxdeploy_plugin_gtk.mjs}` (GPL-3.0, attributed). Deferred: `check_playback_navigation.mjs` + `sync_media_extensions.mjs` — they target soia-specific source files (`playbackNavigation.ts`, `mediaExtensions.json`) that fyom doesn't have yet; will port alongside the modules they support (Phase 2.5 navigation, Phase 2.6 file associations).
-- [x] `Taskfile.yml`: added `setup:runtime-libs` + `sync:runtime-libs` + `bundle:runtime-libs` (+ per-platform variants `bundle:runtime-libs:{macos,linux,windows}`); rewired `dev:desktop` + `build:desktop` to depend on `setup:runtime-libs` and call `node scripts/run_tauri.mjs` + the platform-aware bundle step.
-- [x] `.github/workflows/build-desktop.yaml`: added `MPV_RELEASE_REPO` + `MPV_RELEASE_TAG` env vars at workflow scope; added "Cache libmpv runtime libs" + "Download libmpv runtime bundle" steps on all 3 platform jobs (Linux uses `nix develop --command node ...`); added "Cache cargo registry" on macOS + Windows jobs (Linux relies on Nix's own cargo caching); keys are scoped to `${{ env.MPV_RELEASE_TAG }}` so a tag bump invalidates.
-- [x] `flake.nix`: added `libmpv` + `libass` to `linuxRuntimeLibs` (Nix dev path — the bundled installer still uses the fork-mpv tarball); `linuxShellHook` exports `MPV_LIB_DIR=$(pkg-config --variable=libdir mpv)` so the libmpv2 build script resolves the Nix libmpv (override `.cargo/config.toml`'s `libs/mpv` default); `darwinShellHook` documents the non-Nix macOS dev flow (`node scripts/setup_runtime_libs.mjs --platform darwin`).
-- [x] Strengthening: `src-tauri/libs/mpv/.checksum` checked in as a comment-only stub (zero entries = bootstrap mode = verification skipped on first download). All 3 `setup_runtime_libs_*` scripts now call `verify_runtime_checksum` after download — fails the build on hash mismatch once real hashes are pinned. Phase 2.0 leftover soia `copy_config_data_to_dir` no-op calls stripped from all 3 setup scripts (the fork tarball never contained `config.data`).
-- [ ] Exit: `task build:desktop` produces an installer (with bundled libmpv from `fyom-org/fork-mpv`) that launches + dlopens libmpv on all 3 platforms (CI green, no native playback yet — `get_playback_backend_info` reports `{backend:"libmpv", native_playback:false, ready:false}`). ⚠️ Deferred: requires Rust toolchain + first fyom-v0.41.0-r1 tarball publication + first full CI run.
+#### 3. Backend API Adjustments
+- Ensure the media streaming endpoint fully supports presigned URLs, as external players cannot attach custom Authorization headers.
+- Simplify the progress endpoint to accept `{ "played": true }` without requiring `position` or `duration`.
 
-### Phase 2.2 — Tauri Command + Event Wiring (port tsukimi event pump)
+### Positive Consequences
 
-- [ ] Port tsukimi `src/ui/mpv/tsukimi_mpv.rs` → `src-tauri/src/mpv/event_loop.rs` (attributed `PORTED_FROM_TSUKIMI @ <commit>`): the `process_events()` thread (`EventContext::wait_event(1000.0)` loop + `observe_property` for 10 properties: duration/pause/cache-speed/track-list/paused-for-cache/demuxer-cache-time/time-pos/volume/chapter-list/speed) + the `ListenEvent` enum (→ `MpvEvent`: Seek/PlaybackRestart/Eof/FileLoaded/Duration/Pause/CacheSpeed/Error/TrackList/Volume/Speed/Shutdown/DemuxerCacheTime/TimePos/PausedForCache/ChapterList) + `node_to_tracks` + `node_to_chapter_list` + `TrackSelection` + the `atomic_wait` PAUSED/ACTIVE/SHUTDOWN state machine. **Adapt:** tsukimi's `flume` `MPV_EVENT_CHANNEL` → `AppHandle::emit("fyom://mpv/*")` (Tauri emit is thread-safe; keep an internal `flume` for Rust-side consumers like watched-status logic); tsukimi's GTK `press_key`/`KEYSTRING_MAP` → a Tauri `mpv_keypress` command fed from webview keyboard events
-- [ ] Port tsukimi `options_matcher.rs` (39 LOC) verbatim → `src-tauri/src/mpv/options_matcher.rs`: `match_hwdec_interop` / `match_video_upscale` / `match_audio_channels` / `match_sub_border_style`
-- [ ] Port soia `commands/playback.rs` command surface (545 LOC) → `src-tauri/src/commands/playback.rs`, reimplemented on `libmpv2::Mpv`: implement `play_media({mediaUrl, posterUrl?}) → {success, error?}` + `stop_media()` + seek/pause/volume/subtitle/audio-track commands. **Adapt:** fyom's media URLs are presigned HTTP (directly loadable via `loadfile` — Q3, no `stream_protocol`/`stream_proxy` for v1); drop yt-dlp resolver wiring (defer)
-- [ ] Register commands in `src-tauri/src/lib.rs` (port soia's `invoke_handler!` registration, adapted to fyom's existing command set)
-- [ ] Event payloads: `fyom://mpv/time-pos` → `{position, duration}`; `fyom://mpv/pause` → `{paused}`; `fyom://mpv/end-file` → `{reason}`; `fyom://mpv/file-loaded` → `{media_id}`; `fyom://mpv/track-list` → `{audio_tracks, sub_tracks}`; `fyom://mpv/volume` → `{volume}`
-- [ ] `get_playback_backend_info` returns real `{backend:"libmpv", version, capabilities, hwdec, native_playback:true}`
-- [ ] Frontend `web/src/lib/player/native-player.ts`: wire `listen('fyom://mpv/*')` handlers (additive, no 9.7 contract change); port soia `useAppPlaybackEvents.ts` composables (rename `soia://` → `fyom://mpv/`)
-- [ ] Exit: `tryInitializeNativePlayer` succeeds; PlayerView plays via libmpv (audio + a black video frame — GL rendering comes in 2.3; the `<video>` fallback stays as safety net) on macOS+Linux+Windows dev builds
+- **Compositional Stability:** Eliminates 100% of rendering crashes, GL context drops, and Wayland/X11 conflicts.
+- **Rapid Delivery:** Unblocks the desktop release immediately without waiting for C-library compilation or graphics API debugging.
+- **Focus Realignment:** Engineering effort is redirected to metadata scraping, library management, and the future Flutter client architecture.
 
-### Phase 2.3 — Render Context + Transparent Overlay (the GL adaptation)
+### Negative Consequences & Mitigations
 
-- [ ] `src-tauri/src/mpv/render.rs` (new): `libmpv2::render::RenderContext::new` with `RenderParamApiType::OpenGl` + `OpenGLInitParams { get_proc_address }` (port tsukimi `mpvglarea.rs::setup_mpv` pattern, drop the GTK `GLArea` shell); `set_update_callback` → `flume` channel → render-thread wake (port tsukimi's `RENDER_UPDATE` pattern); render loop reads current FBO via `glow::get_parameter_i32(FRAMEBUFFER_BINDING)` then `ctx.render(fbo, w*scale_factor, h*scale_factor)` (port tsukimi's `render()` body verbatim); resize/HiDPI handling
-- [ ] Wire render context into `MpvInstance` (field `render_ctx: Option<RenderContext>`)
-- [ ] Get the `RawWindowHandle` from Tauri via `raw-window-handle` (Tauri windows implement `HasRawWindowHandle`)
-- [ ] **macOS** (`src-tauri/src/platform/macos.rs`, ~250 LOC): create `NSOpenGLContext` + `NSOpenGLView` child **behind** `WKWebView`; port soia's window/transparency/lifecycle logic (~460 LOC of the 863 — the non-Metal portion); rewrite soia's Metal-layer surface (~400 LOC) as the simpler NSOpenGL path; port `platform/macos_ffi.rs` Obj-C FFI (swap Metal calls for NSOpenGL). `surfman` is an alternative if hand-rolled NSOpenGL proves brittle
-- [ ] **Windows** (`src-tauri/src/platform/windows.rs`, ~180 LOC): port soia's window logic; **add** child `HWND` + WGL context (`wglCreateContext` + `wglMakeCurrent`) + `wglGetProcAddress`
-- [ ] **Linux** (`src-tauri/src/platform/default.rs`, ~250 LOC): port soia's default; **add** child X11 `Window` (XID) + GLX context, **or** Wayland `wl_subsurface` + EGL; XWayland fallback for v1 (R2)
-- [ ] Frontend: port soia `src/styles/player.css` verbatim — `.video-mode` class toggles webview root background to `transparent !important` when a file loads (z-order: native mpv GL layer underneath webview, HTML5 controls overlay on top — render-backend-agnostic, identical for OpenGL as it was for soia's Vulkan)
-- [ ] Exit: video renders at correct aspect ratio + HiDPI; controls overlay works; no flicker on window resize; works on macOS+Windows+X11 (Wayland-XWayland acceptable for v1)
-
-### Phase 2.4 — Playback Features (port soia subtitles + tsukimi options + composables)
-
-- [ ] Port soia `subtitles.rs` (482 LOC) → `src-tauri/src/subtitles.rs`, reimplemented on `libmpv2` commands: ASS/SRT track management via libass (already bundled in the fork tarball); `sub-add` / `sub-select` / `sub-remove` command surface
-- [ ] Port soia `useMediaTracks.ts` + `usePlaybackSeekActions.ts` + `usePlaybackAdjustments.ts` + `usePlaybackSpeed.ts` composables (rename `soia://` → `fyom://mpv/`); add frontend subtitle + audio-track pickers
-- [ ] Hardware-accelerated decoding: `hwdec=auto-safe` (via the ported `match_hwdec_interop`); surface active hwdec via `get_playback_backend_info`; fall back to software on failure
-- [ ] Seek / volume / position sync: bidirectional `time-pos` / `volume` / `pause` property binding; PlayerView scrubber drives libmpv (not the HTML5 `<video>`)
-- [ ] Poster art: pass `posterUrl` to mpv as `--cover-art-auto` or render as a pre-load placeholder
-- [ ] Exit: all PlayerView controls drive libmpv; subtitles render (ASS + SRT); HW decode active on macOS (VideoToolbox) + Linux (VA-API) + Windows (D3D11/DXVA)
-
-### Phase 2.5 — Watched Status + Progress (wire to fyom Go backend)
-
-- [ ] `MPV_EVENT_END_FILE` with `reason=eof` → auto-set media `status='watched'` via existing `POST /api/v1/media/{id}/status` (adapt soia's `usePlaybackHistory.ts` to fyom's API)
-- [ ] `time-pos` events → `POST /api/v1/media/{id}/progress` with `{position, duration, finished}` (replace the HTML5 `onTimeUpdate` path when native playback is active; keep the 10s throttle)
-- [ ] 90%-duration threshold → `finished:true` (matches existing PlayerView logic)
-- [ ] Resume: on `play_media`, if `media.progress.position > 0`, `set_property("time-pos", position)` after `MPV_EVENT_FILE_LOADED`
-- [ ] Exit: watched auto-marks on EOF; continue-watching list works; progress survives reload; resume-from-position works
-
-### Phase 2.6 — Hardening + Release
-
-- [ ] Audio passthrough: `--audio-spdif=dts-hd,truehd` (DTS/AC3 to receiver); surface capability in `get_playback_backend_info`
-- [ ] Error classifier: wire `mapNativePlayerInitError` stages to real mpv errors (`library-load` / `mpv-context` / `render-context` / `surface` / `unknown`)
-- [ ] Graceful degradation: if libmpv load fails at runtime, the existing browser `<video>` fallback kicks in (the 9.7 guardrail already supports this)
-- [ ] `tauri.conf.json`: add macOS `dmg` + Windows `msi`/`nsis` to bundle targets (currently only `["deb","rpm"]`); macOS ships **per-arch** `aarch64.dmg` + `x86_64.dmg` (Q1)
-- [ ] `.github/workflows/build-desktop.yaml`: add `publish-release` job (on tag push, modeled on `fyom-org/fork-mpv`'s `ci.yml`) that uploads all platform installers to a GitHub Release with `generate_release_notes: true`; wire `tauri-plugin-updater` to the releases feed
-- [ ] Code signing + notarization: `--sign-identity` plumbing ready (soia's bundle scripts already accept it); real certs deferred to Phase 3
-- [ ] First signed beta installer on all 3 platforms (macOS arm64/x64, Windows x64, Linux x64); full fallback matrix green (browser → native-fail → `<video>`)
-- [ ] Supply-chain: `fyom-org/fork-mpv` is the canonical libmpv source (Q4 — upgraded from a passive mirror to an active fork fyom fully controls); periodically rebase the fork on `FengZeng/mpv` upstream to pick up vcpkg/mpv fixes
-
-### Phase 2 — Cross-cutting Notes
-
-- **Testing:** each sub-phase exits green on `task lint` + `task test` (Go) + `pnpm test` (web) + `cargo test` (Rust); manual smoke on all 3 platforms (macOS arm64, Windows x64, Linux x64)
-- **Fallback invariant:** the Phase 9.7 HTML5 `<video>` fallback path must stay green end-to-end across all sub-phases — native playback is an enhancement, never a regression
-- **Licensing:** fyom (GPL-3.0-only) + soia source (GPL-3.0-only) + tsukimi source (GPL-3.0-only) + `fyom-org/fork-mpv` tarball (GPLv2+) + `libmpv2`/`glow` crates (MIT OR Apache-2.0) are **fully compatible** — no licensing gate. Ported soia files carry a `PORTED_FROM_SOIA @ <commit>` header; ported tsukimi files carry a `PORTED_FROM_TSUKIMI @ <commit>` header; both preserve the GPL-3.0 notice + original copyright
-- **Upstream sync:** ported soia files (`scripts/*`, `build.rs`, `player.css`, composables, `commands/playback.rs`, `subtitles.rs`) + ported tsukimi files (`mpv/event_loop.rs`, `mpv/options_matcher.rs`, the `mpvglarea.rs` GL pattern) are vendored (not git-submoduled); periodic manual sync with both upstreams (`git log` diff) to cherry-pick bugfixes
-- **Deferred modules** (not needed for Phase 2, portable later if demanded): soia `network/protocols/{smb,dlna,webdav}.rs`, `mpv/ytdlp_resolver.rs`, `mpv/stream_proxy.rs` (Q3 — direct `loadfile` for v1), `playback_source/*`, `store/*` (fyom uses Go backend + SQLite); tsukimi `mpris/` (Linux MPRIS — optional Phase 2.6+ nicety)
+- **Loss of Playback Control:** Users manage their own player state.
+  - *Mitigation:* Power users likely already prefer their own tuned players (IINA, mpv, PotPlayer). FYOM embraces this by getting out of their way.
+- **No Progress Sync:** FYOM cannot resume playback where the user left off in the external player.
+  - *Mitigation:* Acceptable tradeoff for the Tauri Web Shell. Exact progress resuming will be a headline feature of the future Flutter native client.
 
 ## Production Phase 3: Polish UI/UX & Metadata
 
