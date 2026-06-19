@@ -1227,6 +1227,11 @@ errors), `web/src/main.ts`, `web/index.html`, `pkg/response/response.go`,
 - [x] Extend `PUT /media/{id}/progress` to accept `{ "played": true }` shorthand alongside legacy `{ "position", "duration", "finished" }`.
 - [x] `MediaProgressInput` frontend type updated with optional `played` field.
 
+#### 4. Remove useless scripts and fix ci
+- [x] remove scripts for libmpv runtime on different platforms
+- [x] clean up ci stages [build-desktop.yaml](.github/workflows/build-desktop.yaml)
+
+
 ### Positive Consequences
 
 - **Compositional Stability:** Eliminates 100% of rendering crashes, GL context drops, and Wayland/X11 conflicts.
