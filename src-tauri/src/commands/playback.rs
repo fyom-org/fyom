@@ -16,6 +16,7 @@
 //! - create a dedicated `NSView`
 //! - attach `CAMetalLayer`
 //! - expose the `NSView` pointer as mpv `wid`
+//! - initialize mpv with that `wid`
 //! - retain the platform surface for the playback lifetime
 //! - let mpv own Vulkan/MoltenVK/Metal rendering internally
 
@@ -54,17 +55,18 @@ fn err(message: impl Into<String>) -> Value {
 
 fn no_instance_error(mpv_state: &MpvState) -> Value {
     err(mpv_state
-        .init_error
-        .clone()
-        .unwrap_or_else(|| "libmpv not initialized".to_string()))
+        .init_error()
+        .unwrap_or_else(|| "libmpv not initialized; attach render surface first".to_string()))
 }
 
 fn get_instance<'a>(mpv_state: &'a MpvState) -> Result<&'a MpvInstance, Value> {
     mpv_state
-        .instance
-        .get()
-        .map(|instance| instance as &MpvInstance)
+        .get_instance()
         .ok_or_else(|| no_instance_error(mpv_state))
+}
+
+fn require_instance<'a>(mpv_state: &'a MpvState) -> Result<&'a MpvInstance, Value> {
+    mpv_state.require_instance().map_err(err)
 }
 
 fn normalize_mpv_version(raw: Option<String>) -> Option<String> {
@@ -119,6 +121,40 @@ fn command_result(result: Result<(), String>) -> Result<Value, String> {
     })
 }
 
+fn resolve_media_url_for_mpv(
+    app_state: &crate::AppState,
+    media_url: &str,
+) -> Result<String, String> {
+    let media_url = media_url.trim();
+
+    if media_url.is_empty() {
+        return Err("media_url must not be empty".to_string());
+    }
+
+    if media_url.starts_with("http://")
+        || media_url.starts_with("https://")
+        || media_url.starts_with("file://")
+        || media_url.starts_with("lavfi://")
+    {
+        return Ok(media_url.to_string());
+    }
+
+    if media_url.starts_with('/') {
+        let api_base_url = app_state.sidecar_state.get_api_base_url().map_err(|error| {
+            format!(
+                "sidecar API is not ready; cannot resolve relative media URL `{media_url}`: {error}"
+            )
+        })?;
+
+        let api_base_url = api_base_url.trim_end_matches('/');
+        let media_url = media_url.trim_start_matches('/');
+
+        return Ok(format!("{api_base_url}/{media_url}"));
+    }
+
+    Ok(media_url.to_string())
+}
+
 // -----------------------------------------------------------------------------
 // Backend info
 // -----------------------------------------------------------------------------
@@ -128,8 +164,7 @@ pub async fn get_playback_backend_info(mpv_state: State<'_, MpvState>) -> Result
     let Ok(instance) = get_instance(&mpv_state) else {
         return Ok(json!({
             "backend": mpv_state
-                .init_error
-                .as_ref()
+                .init_error()
                 .map(|error| format!("libmpv (init failed: {error})"))
                 .unwrap_or_else(|| "none".to_string()),
             "version": "0.1.0",
@@ -178,6 +213,7 @@ pub async fn get_playback_backend_info(mpv_state: State<'_, MpvState>) -> Result
 #[tauri::command]
 pub async fn play_media(
     mpv_state: State<'_, MpvState>,
+    app_state: State<'_, crate::AppState>,
     media_url: String,
     poster_url: Option<String>,
 ) -> Result<Value, String> {
@@ -187,17 +223,28 @@ pub async fn play_media(
         return Ok(payload);
     }
 
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
 
-    command_result(instance.loadfile(&media_url))
+    let resolved_media_url = match resolve_media_url_for_mpv(&app_state, &media_url) {
+        Ok(url) => url,
+        Err(error) => return Ok(err(error)),
+    };
+
+    tracing::info!(
+        "[mpv/playback] play_media resolved url: input={} resolved={}",
+        media_url,
+        resolved_media_url
+    );
+
+    command_result(instance.loadfile(&resolved_media_url))
 }
 
 #[tauri::command]
 pub async fn stop_media(mpv_state: State<'_, MpvState>) -> Result<Value, String> {
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -215,7 +262,7 @@ pub async fn seek(mpv_state: State<'_, MpvState>, position: f64) -> Result<Value
         return Ok(payload);
     }
 
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -240,7 +287,7 @@ pub async fn seek_relative(mpv_state: State<'_, MpvState>, seconds: f64) -> Resu
         return Ok(payload);
     }
 
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -252,7 +299,7 @@ pub async fn seek_relative(mpv_state: State<'_, MpvState>, seconds: f64) -> Resu
 
 #[tauri::command]
 pub async fn toggle_pause(mpv_state: State<'_, MpvState>) -> Result<Value, String> {
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -266,7 +313,7 @@ pub async fn toggle_pause(mpv_state: State<'_, MpvState>) -> Result<Value, Strin
 
 #[tauri::command]
 pub async fn set_pause(mpv_state: State<'_, MpvState>, paused: bool) -> Result<Value, String> {
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -276,7 +323,7 @@ pub async fn set_pause(mpv_state: State<'_, MpvState>, paused: bool) -> Result<V
 
 #[tauri::command]
 pub async fn set_volume(mpv_state: State<'_, MpvState>, volume: i64) -> Result<Value, String> {
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -296,7 +343,7 @@ pub async fn set_speed(mpv_state: State<'_, MpvState>, speed: f64) -> Result<Val
         return Ok(err("speed must be greater than 0"));
     }
 
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -309,7 +356,7 @@ pub async fn set_audio_track(
     mpv_state: State<'_, MpvState>,
     track_id: Option<i64>,
 ) -> Result<Value, String> {
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -324,7 +371,7 @@ pub async fn set_subtitle_track(
     mpv_state: State<'_, MpvState>,
     track_id: Option<i64>,
 ) -> Result<Value, String> {
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -340,7 +387,7 @@ pub async fn mpv_keypress(mpv_state: State<'_, MpvState>, key: String) -> Result
         return Ok(payload);
     }
 
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -353,7 +400,7 @@ pub async fn mpv_command(
     mpv_state: State<'_, MpvState>,
     args: Vec<String>,
 ) -> Result<Value, String> {
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -377,7 +424,7 @@ pub async fn mpv_command(
 
 #[tauri::command]
 pub async fn play_test_media(mpv_state: State<'_, MpvState>) -> Result<Value, String> {
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -403,26 +450,16 @@ pub async fn play_test_media(mpv_state: State<'_, MpvState>) -> Result<Value, St
 /// Current behavior:
 /// - create platform surface on the main thread
 /// - read platform native window id
-/// - configure mpv native video output
-/// - configure mpv `wid`
+/// - initialize mpv with `wid`
+/// - start mpv event loop
 /// - retain the platform surface through `MpvInstance::spawn_render_thread`
 /// - do not initialize `mpv_render_context`
-///
-/// Important:
-/// This transitional path must be called before the first `loadfile`.
-/// The more robust long-term path is to create the platform surface before
-/// `MpvInstance` initialization and call `MpvInstance::new_with_wid(...)`.
 #[tauri::command]
 pub async fn attach_render_surface(
     mpv_state: State<'_, MpvState>,
     app_handle: tauri::AppHandle,
 ) -> Result<Value, String> {
     use tauri::Manager;
-
-    let instance = match get_instance(&mpv_state) {
-        Ok(instance) => instance,
-        Err(payload) => return Ok(payload),
-    };
 
     let Some(window) = app_handle.get_webview_window(crate::MAIN_WINDOW_LABEL) else {
         return Ok(err("main window not found"));
@@ -481,19 +518,15 @@ pub async fn attach_render_surface(
         height
     );
 
-    // Transitional safety:
-    // These options should ideally be set before mpv initialization. In the current
-    // command-driven attach path, configure them before the first loadfile and before
-    // we retain the native surface lifecycle.
-    if let Err(error) = instance.configure_native_video_output() {
-        tracing::warn!("[mpv/playback] native video output configuration failed: {error}");
-        return Ok(err(error));
-    }
+    let instance = match mpv_state.initialize_with_wid(wid.clone()) {
+        Ok(instance) => instance,
+        Err(error) => {
+            tracing::warn!("[mpv/playback] mpv initialize_with_wid failed: {error}");
+            return Ok(err(error));
+        }
+    };
 
-    if let Err(error) = instance.configure_embedded_wid(&wid) {
-        tracing::warn!("[mpv/playback] embedded wid configuration failed: {error}");
-        return Ok(err(error));
-    }
+    instance.spawn_event_loop(app_handle.clone());
 
     match instance.spawn_render_thread(surface) {
         Ok(()) => Ok(ok_with(json!({
@@ -502,6 +535,7 @@ pub async fn attach_render_surface(
             "wid": wid,
             "drawable_width": width,
             "drawable_height": height,
+            "mpv_initialized": true,
         }))),
         Err(error) => {
             tracing::warn!("[mpv/playback] native surface lifecycle spawn failed: {error}");
@@ -592,7 +626,7 @@ pub async fn sub_add(
         return Ok(payload);
     }
 
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -614,7 +648,7 @@ pub async fn sub_add(
 
 #[tauri::command]
 pub async fn sub_remove(mpv_state: State<'_, MpvState>, track_id: i64) -> Result<Value, String> {
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -626,7 +660,7 @@ pub async fn sub_remove(mpv_state: State<'_, MpvState>, track_id: i64) -> Result
 
 #[tauri::command]
 pub async fn sub_reload(mpv_state: State<'_, MpvState>, track_id: i64) -> Result<Value, String> {
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -646,7 +680,7 @@ pub async fn audio_add(
         return Ok(payload);
     }
 
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -658,7 +692,7 @@ pub async fn audio_add(
 
 #[tauri::command]
 pub async fn audio_remove(mpv_state: State<'_, MpvState>, track_id: i64) -> Result<Value, String> {
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -678,7 +712,7 @@ pub async fn set_sub_delay(mpv_state: State<'_, MpvState>, seconds: f64) -> Resu
         return Ok(payload);
     }
 
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -695,7 +729,7 @@ pub async fn set_secondary_sub_delay(
         return Ok(payload);
     }
 
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -712,7 +746,7 @@ pub async fn set_audio_delay(
         return Ok(payload);
     }
 
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -730,7 +764,7 @@ pub async fn set_sub_scale(mpv_state: State<'_, MpvState>, scale: f64) -> Result
         return Ok(err("scale must be greater than 0"));
     }
 
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -748,7 +782,7 @@ pub async fn set_color_adjustment(
         return Ok(payload);
     }
 
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -767,7 +801,7 @@ pub async fn set_color_adjustment(
 
 #[tauri::command]
 pub async fn set_chapter(mpv_state: State<'_, MpvState>, index: i64) -> Result<Value, String> {
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -789,7 +823,7 @@ pub async fn mpv_set_option_string(
         return Ok(payload);
     }
 
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -803,7 +837,7 @@ pub async fn get_property(mpv_state: State<'_, MpvState>, name: String) -> Resul
         return Ok(payload);
     }
 
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -820,7 +854,7 @@ pub async fn get_property(mpv_state: State<'_, MpvState>, name: String) -> Resul
 
 #[tauri::command]
 pub async fn get_track_list(mpv_state: State<'_, MpvState>) -> Result<Value, String> {
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
@@ -877,7 +911,7 @@ pub async fn get_track_list(mpv_state: State<'_, MpvState>) -> Result<Value, Str
 
 #[tauri::command]
 pub async fn get_chapter_list(mpv_state: State<'_, MpvState>) -> Result<Value, String> {
-    let instance = match get_instance(&mpv_state) {
+    let instance = match require_instance(&mpv_state) {
         Ok(instance) => instance,
         Err(payload) => return Ok(payload),
     };
