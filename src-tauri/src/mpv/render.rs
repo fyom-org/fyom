@@ -1,14 +1,28 @@
+//! mpv rendering abstraction.
+//!
+//! FYOM currently uses native window embedding for the production playback path.
+//!
+//! macOS path:
+//! - create a dedicated `NSView`
+//! - attach a `CAMetalLayer`
+//! - pass the `NSView` pointer to mpv through the `wid` option before `mpv_initialize()`
+//! - let mpv own the Vulkan/MoltenVK/Metal context
+//!
+//! This module intentionally does not initialize `mpv_render_context` for the
+//! normal embedded playback path.
+//!
+//! `mpv_render_context` is only appropriate for a future texture-sharing architecture
+//! where FYOM owns the GPU context and asks mpv to render into host-managed targets.
+//! That is not the current architecture.
+
 use std::ffi::c_void;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use flume::{Receiver, RecvTimeoutError, Sender, bounded};
-use glow::HasContext;
 use libmpv2::Mpv;
-use libmpv2::render::{OpenGLInitParams, RenderContext, RenderParam, RenderParamApiType};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
 use crate::mpv::event_loop::SHUTDOWN;
 
@@ -16,176 +30,142 @@ use crate::mpv::event_loop::SHUTDOWN;
 // RenderSurface
 // -----------------------------------------------------------------------------
 
+/// Platform render target abstraction.
+///
+/// In the current `--wid` architecture, this is not a real mpv render context.
+/// It represents the native platform surface that mpv renders into by itself.
+///
+/// Important:
+/// Do not use this trait as a reason to call `mpv_render_context_create()`.
+/// In `--wid` mode, mpv owns the GPU context and presentation pipeline.
 pub trait RenderSurface: Send + 'static {
+    /// Make the platform GPU context current.
+    ///
+    /// In `--wid` mode this is a no-op because mpv owns the GPU context.
     fn make_current(&self) -> Result<(), String>;
+
+    /// Resolve platform GPU function pointers.
+    ///
+    /// In `--wid` mode this returns null because mpv resolves GPU symbols internally.
     fn get_proc_address(&self, name: &str) -> *mut c_void;
+
+    /// Drawable size in physical pixels.
+    ///
+    /// This can still be useful for diagnostics and layout validation.
     fn drawable_size(&self) -> (i32, i32);
+
+    /// Swap platform buffers.
+    ///
+    /// In `--wid` mode this is a no-op because mpv presents internally.
     fn swap_buffers(&self);
 }
 
 // -----------------------------------------------------------------------------
-// Thread-local surface pointer
+// Render mode
 // -----------------------------------------------------------------------------
 
-thread_local! {
-    static CURRENT_SURFACE: std::cell::RefCell<Option<*const dyn RenderSurface>> =
-        const { std::cell::RefCell::new(None) };
+/// FYOM's active mpv rendering architecture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MpvRenderMode {
+    /// Native window embedding.
+    ///
+    /// This is the current production path.
+    ///
+    /// macOS:
+    /// `NSView` + `CAMetalLayer` + mpv `wid`.
+    Wid,
+
+    /// Future texture-sharing path.
+    ///
+    /// This must not be used unless FYOM explicitly owns the GPU context and
+    /// imports mpv-rendered textures into its own compositor.
+    RenderApi,
 }
 
-struct SurfaceGuard;
-
-impl SurfaceGuard {
-    fn install(surface: &dyn RenderSurface) -> Self {
-        CURRENT_SURFACE.with(|slot| {
-            *slot.borrow_mut() = Some(surface as *const _);
-        });
-
-        Self
+impl Default for MpvRenderMode {
+    fn default() -> Self {
+        Self::Wid
     }
 }
 
-impl Drop for SurfaceGuard {
-    fn drop(&mut self) {
-        CURRENT_SURFACE.with(|slot| {
-            *slot.borrow_mut() = None;
-        });
+/// Guard against accidental use of mpv's render API in the current architecture.
+pub fn ensure_wid_mode(mode: MpvRenderMode) -> Result<(), String> {
+    match mode {
+        MpvRenderMode::Wid => Ok(()),
+        MpvRenderMode::RenderApi => Err(
+            "mpv render API is disabled for FYOM's current --wid embedding architecture"
+                .to_string(),
+        ),
     }
-}
-
-fn get_proc_address(name: &str) -> *mut c_void {
-    CURRENT_SURFACE.with(|slot| {
-        let Some(ptr) = *slot.borrow() else {
-            return std::ptr::null_mut();
-        };
-
-        // SAFETY:
-        // The pointer is installed by `SurfaceGuard` on the render thread and remains
-        // valid until the render context is dropped and the guard is cleared.
-        unsafe { (&*ptr).get_proc_address(name) }
-    })
-}
-
-fn get_proc_address_thunk(_ctx: &(), name: &str) -> *mut c_void {
-    get_proc_address(name)
 }
 
 // -----------------------------------------------------------------------------
 // Spawn
 // -----------------------------------------------------------------------------
 
+/// Spawn the render lifecycle thread.
+///
+/// In the old architecture this function initialized `mpv_render_context` and drove
+/// an OpenGL render loop. That is now intentionally disabled for the default path.
+///
+/// In the current `--wid` architecture:
+/// - mpv renders directly into the native child view
+/// - mpv owns the GPU context
+/// - no OpenGL context is made current by FYOM
+/// - no `mpv_render_context` is created
+///
+/// This thread exists only to retain the platform surface for as long as playback
+/// needs it, and to preserve the existing caller contract while the playback path
+/// is being migrated to explicit `wid` startup options.
 pub fn spawn_render_thread(
     mpv: Arc<Mpv>,
     surface: Box<dyn RenderSurface>,
     shutdown: Arc<AtomicU32>,
 ) -> Result<JoinHandle<()>, String> {
     std::thread::Builder::new()
-        .name("fyom-mpv-render".into())
-        .spawn(move || run_render_loop(mpv, surface, shutdown))
-        .map_err(|error| format!("render thread spawn failed: {error}"))
+        .name("fyom-mpv-surface-lifecycle".into())
+        .spawn(move || run_surface_lifecycle_loop(mpv, surface, shutdown))
+        .map_err(|error| format!("surface lifecycle thread spawn failed: {error}"))
 }
 
 // -----------------------------------------------------------------------------
-// Core loop
+// Lifecycle loop
 // -----------------------------------------------------------------------------
 
-fn run_render_loop(mpv: Arc<Mpv>, surface: Box<dyn RenderSurface>, shutdown: Arc<AtomicU32>) {
+fn run_surface_lifecycle_loop(
+    mpv: Arc<Mpv>,
+    surface: Box<dyn RenderSurface>,
+    shutdown: Arc<AtomicU32>,
+) {
+    let _mpv = mpv;
+
     if shutdown.load(Ordering::SeqCst) == SHUTDOWN {
         return;
     }
 
-    if let Err(error) = surface.make_current() {
-        error!("[render] make_current failed: {error}");
-        return;
-    }
+    let (width, height) = surface.drawable_size();
 
-    info!("[render] GL context ready");
-
-    let _surface_guard = SurfaceGuard::install(&*surface);
-
-    let params = vec![
-        RenderParam::ApiType(RenderParamApiType::OpenGl),
-        RenderParam::InitParams(OpenGLInitParams {
-            get_proc_address: get_proc_address_thunk,
-            ctx: (),
-        }),
-    ];
-
-    let mut handle = mpv.ctx;
-
-    let mut render_ctx = match unsafe { RenderContext::new(handle.as_mut(), params) } {
-        Ok(ctx) => ctx,
-        Err(error) => {
-            error!("[render] RenderContext init failed: {error}");
-            return;
-        }
-    };
-
-    info!("[render] mpv RenderContext created");
-
-    // Keep only one pending render wake.
-    //
-    // mpv can emit update callbacks faster than we render. A bounded(1) channel coalesces
-    // redundant wakeups and prevents unbounded memory growth. The callback must never block.
-    let (tx, rx): (Sender<()>, Receiver<()>) = bounded(1);
-
-    render_ctx.set_update_callback(move || {
-        let _ = tx.try_send(());
-    });
-
-    // SAFETY:
-    // The GL context is current on this render thread. glow only stores function pointers
-    // resolved through the current platform surface.
-    let gl = unsafe {
-        glow::Context::from_loader_function(|name| get_proc_address(name) as *const c_void)
-    };
-
-    let mut frames: u64 = 0;
+    info!(
+        "[render] wid embedding active; mpv_render_context disabled; initial drawable={}x{}",
+        width, height
+    );
 
     loop {
         if shutdown.load(Ordering::SeqCst) == SHUTDOWN {
             break;
         }
 
-        match rx.recv_timeout(Duration::from_millis(200)) {
-            Ok(()) => {}
-            Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) => break,
-        }
-
-        if shutdown.load(Ordering::SeqCst) == SHUTDOWN {
-            break;
-        }
-
         let (width, height) = surface.drawable_size();
 
-        if width <= 0 || height <= 0 {
-            debug!("[render] skip frame with invalid drawable size: {width}x{height}");
-            continue;
-        }
+        debug!(
+            "[render] surface lifecycle heartbeat; drawable={}x{}",
+            width, height
+        );
 
-        // SAFETY:
-        // The GL context is current on this render thread.
-        let fbo = unsafe { gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING) };
-
-        match render_ctx.render::<()>(fbo, width, height, true) {
-            Ok(()) => {
-                surface.swap_buffers();
-
-                frames = frames.saturating_add(1);
-
-                if frames == 1 {
-                    info!("[render] first frame {width}x{height}");
-                } else if frames % 300 == 0 {
-                    debug!("[render] frame {frames} {width}x{height}");
-                }
-            }
-            Err(error) => {
-                warn!("[render] frame failed: {error}");
-            }
-        }
+        std::thread::sleep(Duration::from_millis(500));
     }
 
-    drop(render_ctx);
+    drop(surface);
 
-    info!("[render] exit, total frames={frames}");
+    info!("[render] surface lifecycle exit");
 }
