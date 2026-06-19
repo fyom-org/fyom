@@ -15,6 +15,7 @@
 //! macOS production path:
 //! - create a dedicated `NSView`
 //! - attach `CAMetalLayer`
+//! - expose the `NSView` pointer as mpv `wid`
 //! - retain the platform surface for the playback lifetime
 //! - let mpv own Vulkan/MoltenVK/Metal rendering internally
 
@@ -401,13 +402,16 @@ pub async fn play_test_media(mpv_state: State<'_, MpvState>) -> Result<Value, St
 ///
 /// Current behavior:
 /// - create platform surface on the main thread
+/// - read platform native window id
+/// - configure mpv native video output
+/// - configure mpv `wid`
 /// - retain the platform surface through `MpvInstance::spawn_render_thread`
 /// - do not initialize `mpv_render_context`
 ///
 /// Important:
-/// If mpv has already been initialized without `wid`, this command cannot fix that.
-/// The correct startup path must set `wid`, `vo`, `gpu-api`, and macOS `gpu-context`
-/// before `mpv_initialize()`.
+/// This transitional path must be called before the first `loadfile`.
+/// The more robust long-term path is to create the platform surface before
+/// `MpvInstance` initialization and call `MpvInstance::new_with_wid(...)`.
 #[tauri::command]
 pub async fn attach_render_surface(
     mpv_state: State<'_, MpvState>,
@@ -450,15 +454,60 @@ pub async fn attach_render_surface(
         }
     };
 
+    let backend = surface.backend_name();
     let (width, height) = surface.drawable_size();
 
+    let Some(wid) = surface.native_window_id() else {
+        tracing::warn!(
+            "[mpv/playback] platform surface does not expose native window id; backend={backend}"
+        );
+
+        return Ok(err(
+            "platform surface does not expose a native window id for mpv wid embedding",
+        ));
+    };
+
+    if wid.trim().is_empty() {
+        tracing::warn!("[mpv/playback] platform surface returned empty native window id");
+
+        return Ok(err(
+            "platform surface returned an empty native window id for mpv wid embedding",
+        ));
+    }
+
     tracing::info!(
-        "[mpv/playback] native wid surface attached; drawable={}x{}",
+        "[mpv/playback] native wid surface created; backend={backend}; wid={wid}; drawable={}x{}",
         width,
         height
     );
 
-    command_result(instance.spawn_render_thread(surface))
+    // Transitional safety:
+    // These options should ideally be set before mpv initialization. In the current
+    // command-driven attach path, configure them before the first loadfile and before
+    // we retain the native surface lifecycle.
+    if let Err(error) = instance.configure_native_video_output() {
+        tracing::warn!("[mpv/playback] native video output configuration failed: {error}");
+        return Ok(err(error));
+    }
+
+    if let Err(error) = instance.configure_embedded_wid(&wid) {
+        tracing::warn!("[mpv/playback] embedded wid configuration failed: {error}");
+        return Ok(err(error));
+    }
+
+    match instance.spawn_render_thread(surface) {
+        Ok(()) => Ok(ok_with(json!({
+            "render_mode": "wid",
+            "backend": backend,
+            "wid": wid,
+            "drawable_width": width,
+            "drawable_height": height,
+        }))),
+        Err(error) => {
+            tracing::warn!("[mpv/playback] native surface lifecycle spawn failed: {error}");
+            Ok(err(error))
+        }
+    }
 }
 
 #[tauri::command]
