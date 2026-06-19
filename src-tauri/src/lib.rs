@@ -82,16 +82,16 @@ pub fn run() {
             tray::setup_tray(app)?;
             window::setup_main_window(app)?;
 
-            let mpv_state = MpvState::new();
-
-            if let Some(instance) = mpv_state.instance.get() {
-                tracing::info!("[mpv] native playback ready; spawning event loop");
-                instance.spawn_event_loop(app.handle().clone());
-            } else if let Some(error) = &mpv_state.init_error {
-                tracing::warn!("[mpv] native playback disabled: {}", error);
-            }
-
-            app.manage(mpv_state);
+            // mpv must be initialized lazily.
+            //
+            // macOS `--wid` embedding requires the native platform surface to exist
+            // before mpv is initialized, because `wid` must be configured before
+            // `mpv_initialize()`.
+            //
+            // The correct flow is:
+            // attach_render_surface -> create CAMetalLayer NSView -> get wid
+            // -> MpvState::initialize_with_wid -> spawn event loop.
+            app.manage(MpvState::new());
 
             let app_handle = app.handle().clone();
             let state = app_state.clone();
@@ -175,9 +175,13 @@ pub fn run() {
             }
 
             if let Some(mpv_state) = app_handle.try_state::<MpvState>() {
-                if let Some(instance) = mpv_state.instance.get() {
+                if let Some(instance) = mpv_state.get_instance() {
                     instance.shutdown_render_thread();
                     instance.shutdown_event_loop();
+                } else if let Some(error) = mpv_state.init_error() {
+                    tracing::warn!("[mpv] shutdown skipped; init error: {error}");
+                } else {
+                    tracing::debug!("[mpv] shutdown skipped; mpv was never initialized");
                 }
             }
 
