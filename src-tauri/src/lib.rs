@@ -1,6 +1,7 @@
 //! fyom Tauri desktop application
 
 mod commands;
+pub(crate) mod desktop_config;
 mod sidecar;
 mod state;
 mod tray;
@@ -9,6 +10,7 @@ mod window;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::desktop_config::DesktopConfig;
 use crate::state::SidecarState;
 use tauri::{Emitter, Manager};
 
@@ -20,10 +22,28 @@ pub(crate) const SIDECAR_STARTUP_TIMEOUT_SECS: u64 = 30;
 
 #[derive(Clone)]
 pub struct AppState {
+    /// Runtime state for the FYOM server sidecar.
     pub sidecar_state: Arc<SidecarState>,
+
+    /// Set once shutdown begins to avoid duplicate shutdown handling.
     pub shutdown_started: Arc<AtomicBool>,
+
+    /// Set when the user explicitly intends to exit the desktop application.
     pub exit_intent: Arc<AtomicBool>,
+
+    /// Desktop database path used by the local desktop runtime.
     pub desktop_db_path: Arc<String>,
+
+    /// Desktop-local configuration.
+    ///
+    /// This includes external player configuration such as:
+    /// - configured mpv binary
+    /// - custom external player
+    /// - custom player arguments
+    ///
+    /// This is intentionally separate from the Go backend `fyom.yaml`.
+    /// The Go backend must not know or interpret local desktop player paths.
+    pub desktop_config: Arc<DesktopConfig>,
 }
 
 impl Default for AppState {
@@ -33,6 +53,7 @@ impl Default for AppState {
             shutdown_started: Arc::new(AtomicBool::new(false)),
             exit_intent: Arc::new(AtomicBool::new(false)),
             desktop_db_path: Arc::new(String::new()),
+            desktop_config: Arc::new(DesktopConfig::load()),
         }
     }
 }
@@ -102,6 +123,7 @@ pub fn run() {
             commands::quit_app,
             commands::get_sidecar_status,
             commands::launcher::get_api_base_url,
+            commands::launcher::get_external_player_config,
             commands::launcher::open_external_player,
         ])
         .build(tauri::generate_context!())

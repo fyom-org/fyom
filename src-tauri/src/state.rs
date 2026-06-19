@@ -1,121 +1,12 @@
 //! Application state.
-// std::sync::atomic::{AtomicBool, Ordering};//!
+//!
+//! This module owns sidecar runtime state.
+
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::desktop_config::DesktopConfig;
 use crate::{SIDECAR_STARTUP_TIMEOUT_SECS, SidecarStatus};
-
-// -----------------------------------------------------------------------------
-// AppState
-// -----------------------------------------------------------------------------
-
-/// Global Tauri application state.
-///
-/// This state is intentionally desktop-local. It may contain local paths,
-/// local launcher configuration, and sidecar runtime information.
-///
-/// The Go backend must not own or interpret desktop-only player configuration.
-#[derive(Debug)]
-pub struct AppState {
-    /// Runtime state for the FYOM server sidecar.
-    pub sidecar_state: SidecarState,
-
-    /// Set once shutdown begins to avoid duplicate shutdown flows.
-    pub shutdown_started: AtomicBool,
-
-    /// Set when the user explicitly intends to exit the desktop app.
-    pub exit_intent: AtomicBool,
-
-    /// Optional desktop database path discovered or selected at runtime.
-    pub desktop_db_path: Mutex<Option<PathBuf>>,
-
-    /// Local desktop configuration.
-    ///
-    /// This includes external player configuration such as:
-    /// - FYOM external player mode
-    /// - configured mpv binary
-    /// - custom player arguments
-    ///
-    /// This is deliberately separate from the Go backend `fyom.yaml`.
-    pub desktop_config: DesktopConfig,
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self {
-            sidecar_state: SidecarState::default(),
-            shutdown_started: AtomicBool::new(false),
-            exit_intent: AtomicBool::new(false),
-            desktop_db_path: Mutex::new(None),
-            desktop_config: DesktopConfig::load(),
-        }
-    }
-}
-
-impl AppState {
-    /// Create a new application state instance.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Mark application shutdown as started.
-    ///
-    /// Returns `true` if this call changed the state from not-started to
-    /// started. Returns `false` if shutdown had already started.
-    pub fn begin_shutdown(&self) -> bool {
-        !self.shutdown_started.swap(true, Ordering::SeqCst)
-    }
-
-    /// Returns whether shutdown has already started.
-    pub fn is_shutdown_started(&self) -> bool {
-        self.shutdown_started.load(Ordering::SeqCst)
-    }
-
-    /// Mark that the user explicitly requested app exit.
-    pub fn mark_exit_intent(&self) {
-        self.exit_intent.store(true, Ordering::SeqCst);
-    }
-
-    /// Returns whether the user explicitly requested app exit.
-    pub fn has_exit_intent(&self) -> bool {
-        self.exit_intent.load(Ordering::SeqCst)
-    }
-
-    /// Set the desktop database path.
-    pub fn set_desktop_db_path(&self, path: PathBuf) {
-        match self.desktop_db_path.lock() {
-            Ok(mut desktop_db_path) => {
-                *desktop_db_path = Some(path);
-            }
-            Err(error) => {
-                tracing::error!("[app/state] failed to set desktop db path: {error}");
-            }
-        }
-    }
-
-    /// Get the desktop database path.
-    pub fn get_desktop_db_path(&self) -> Option<PathBuf> {
-        match self.desktop_db_path.lock() {
-            Ok(desktop_db_path) => desktop_db_path.clone(),
-            Err(error) => {
-                tracing::error!("[app/state] failed to get desktop db path: {error}");
-                None
-            }
-        }
-    }
-
-    /// Clear the desktop database path.
-    pub fn clear_desktop_db_path(&self) {
-        match self.desktop_db_path.lock() {
-            Ok(mut desktop_db_path) => {
-                *desktop_db_path = None;
-            }
-            Err(error) => {
-                tracing::error!("[app/state] failed to clear desktop db path: {error}");
-            }
-        }
-    }
-}
 
 // -----------------------------------------------------------------------------
 // Sidecar state
@@ -364,7 +255,3 @@ fn normalize_api_base_url(raw: String) -> Result<String, String> {
 
     Ok(url)
 }
-//! This module owns desktop runtime state and sidecar runtime state.
-
-use std::path::PathBuf;
-use std::sync::Mutex;
