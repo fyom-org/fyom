@@ -44,7 +44,7 @@
 use std::ffi::c_void;
 use std::ptr;
 
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 
 use crate::mpv::render::RenderSurface;
 
@@ -79,7 +79,7 @@ unsafe impl Sync for WaylandSurface {}
 impl WaylandSurface {
     pub fn new(display: *mut c_void, parent_surface: *mut c_void) -> Result<Self, String> {
         if display.is_null() {
-            return Err("Wayland display pointer is null".to_string());
+            return Err("Wayland wl_display pointer is null".to_string());
         }
 
         if parent_surface.is_null() {
@@ -170,27 +170,41 @@ impl RenderSurface for WaylandSurface {
 ///
 /// That failure is correct until mpv supports `wl-parent-surface`.
 pub fn create_surface(window: &tauri::WebviewWindow) -> Result<Box<dyn RenderSurface>, String> {
-    let raw_handle = window
+    let window_handle = window
         .window_handle()
         .map_err(|error| format!("failed to get raw window handle: {error}"))?;
 
-    let wayland = match raw_handle.as_ref() {
+    let display_handle = window
+        .display_handle()
+        .map_err(|error| format!("failed to get raw display handle: {error}"))?;
+
+    let wayland_window = match window_handle.as_ref() {
         RawWindowHandle::Wayland(handle) => handle,
         other => {
             return Err(format!(
                 "expected Wayland raw window handle, got {}",
-                raw_handle_name(other)
+                raw_window_handle_name(other)
             ));
         }
     };
 
-    let display = wayland.display.as_ptr() as *mut c_void;
-    let surface = wayland.surface.as_ptr() as *mut c_void;
+    let wayland_display = match display_handle.as_ref() {
+        RawDisplayHandle::Wayland(handle) => handle,
+        other => {
+            return Err(format!(
+                "expected Wayland raw display handle, got {}",
+                raw_display_handle_name(other)
+            ));
+        }
+    };
 
-    let surface = WaylandSurface::new(display, surface)?;
+    let display = wayland_display.display.as_ptr() as *mut c_void;
+    let parent_surface = wayland_window.surface.as_ptr() as *mut c_void;
+
+    let surface = WaylandSurface::new(display, parent_surface)?;
 
     tracing::info!(
-        "[platform/wayland] captured host wl_surface for future native embedding; display={:?}; parent_surface={}",
+        "[platform/wayland] captured host wl_display and wl_surface for future native embedding; display={:?}; parent_surface={}",
         surface.display_ptr(),
         surface.parent_surface_hex()
     );
@@ -206,7 +220,7 @@ pub fn create_surface(window: &tauri::WebviewWindow) -> Result<Box<dyn RenderSur
 // Diagnostics
 // -----------------------------------------------------------------------------
 
-fn raw_handle_name(handle: &RawWindowHandle) -> &'static str {
+fn raw_window_handle_name(handle: &RawWindowHandle) -> &'static str {
     match handle {
         RawWindowHandle::UiKit(_) => "UIKit",
         RawWindowHandle::AppKit(_) => "AppKit",
@@ -223,6 +237,24 @@ fn raw_handle_name(handle: &RawWindowHandle) -> &'static str {
         RawWindowHandle::WebOffscreenCanvas(_) => "WebOffscreenCanvas",
         RawWindowHandle::AndroidNdk(_) => "AndroidNdk",
         RawWindowHandle::Haiku(_) => "Haiku",
+        _ => "Unknown",
+    }
+}
+
+fn raw_display_handle_name(handle: &RawDisplayHandle) -> &'static str {
+    match handle {
+        RawDisplayHandle::UiKit(_) => "UIKit",
+        RawDisplayHandle::AppKit(_) => "AppKit",
+        RawDisplayHandle::Orbital(_) => "Orbital",
+        RawDisplayHandle::Xlib(_) => "Xlib",
+        RawDisplayHandle::Xcb(_) => "Xcb",
+        RawDisplayHandle::Wayland(_) => "Wayland",
+        RawDisplayHandle::Drm(_) => "Drm",
+        RawDisplayHandle::Gbm(_) => "Gbm",
+        RawDisplayHandle::Windows(_) => "Windows",
+        RawDisplayHandle::Web(_) => "Web",
+        RawDisplayHandle::Android(_) => "Android",
+        RawDisplayHandle::Haiku(_) => "Haiku",
         _ => "Unknown",
     }
 }
