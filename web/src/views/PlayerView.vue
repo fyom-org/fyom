@@ -25,8 +25,15 @@
       </div>
     </section>
 
+    <!-- Player surface area. Native mode and browser fallback mode are mutually exclusive -->
     <section v-else class="player-surface">
-      <div v-if="streamUrl" class="browser-player-shell">
+      <!-- 1. Native playback mount point (Tauri environment) -->
+      <div v-if="isNativeReady" class="native-surface-wrapper">
+        <div ref="nativeSurfaceRef" class="native-surface" />
+      </div>
+
+      <!-- 2. Browser fallback player (non-Tauri environment, or when native initialization fails) -->
+      <div v-else-if="useBrowserFallback && streamUrl" class="browser-player-shell">
         <video
           :key="videoElementKey"
           ref="videoRef"
@@ -66,32 +73,34 @@
         </div>
       </div>
 
-      <div v-else-if="isNativeReady" class="native-surface">
-        <PlayerControls
-          :state="controlsState"
-          @toggle-pause="onTogglePause"
-          @seek="onSeek"
-          @seek-relative="onSeekRelative"
-          @set-volume="onSetVolume"
-          @set-speed="onSetSpeed"
-          @select-audio="onSelectAudio"
-          @select-sub="onSelectSub"
-          @set-color-adjustment="onSetColorAdjustment"
-          @set-sub-delay="onSetSubDelay"
-          @set-audio-delay="onSetAudioDelay"
-          @set-sub-scale="onSetSubScale"
-          @set-global-color="onSetGlobalColor"
-          @set-chapter="onSetChapter"
-          @toggle-fullscreen="onToggleFullscreen"
-          @reset-adjustments="onResetAdjustments"
-        />
-      </div>
-
-      <div v-if="isLoading && !streamUrl" class="loading">
+      <!-- 3. Global loading state (native is initializing, or media info is being fetched) -->
+      <div v-if="isLoading && !isNativeReady && !useBrowserFallback" class="loading player-overlay">
         <span class="spinner" aria-hidden="true"></span>
         <span>{{ loadingLabel }}</span>
       </div>
     </section>
+
+    <!-- Controls layer: floats as an overlay on the player surface -->
+    <PlayerControls
+      v-if="!error && (isNativeReady || useBrowserFallback)"
+      :state="controlsState"
+      class="player-controls-overlay"
+      @toggle-pause="onTogglePause"
+      @seek="onSeek"
+      @seek-relative="onSeekRelative"
+      @set-volume="onSetVolume"
+      @set-speed="onSetSpeed"
+      @select-audio="onSelectAudio"
+      @select-sub="onSelectSub"
+      @set-color-adjustment="onSetColorAdjustment"
+      @set-sub-delay="onSetSubDelay"
+      @set-audio-delay="onSetAudioDelay"
+      @set-sub-scale="onSetSubScale"
+      @set-global-color="onSetGlobalColor"
+      @set-chapter="onSetChapter"
+      @toggle-fullscreen="onToggleFullscreen"
+      @reset-adjustments="onResetAdjustments"
+    />
   </main>
 </template>
 
@@ -106,6 +115,7 @@ import {
   isNativePlaybackRuntimeAvailable,
   resizeRenderSurface,
   setVideoMode,
+  stopMedia,
   subscribeMpvEvents,
   tryInitializeNativePlayer,
   type MpvChapter,
@@ -134,24 +144,13 @@ interface ProgressPayload {
   finished: boolean;
 }
 
-interface TauriInvokeApi {
-  invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
-}
-
-interface TauriInternals {
-  tauri?: TauriInvokeApi;
-}
-
-interface TauriWindow extends Window {
-  __TAURI_INTERNALS__?: TauriInternals;
-}
-
 const PROGRESS_REPORT_INTERVAL_SECONDS = 10;
 
 const route = useRoute();
 const { t } = useI18n();
 
 const videoRef = ref<HTMLVideoElement | null>(null);
+const nativeSurfaceRef = ref<HTMLDivElement | null>(null);
 const videoElementKey = ref(0);
 
 const streamUrl = ref('');
@@ -177,24 +176,18 @@ const mediaId = computed(() => {
   return typeof id === 'string' ? id : '';
 });
 
-const hasTauriInvoke = computed(() => Boolean(getTauriInvoke()));
-const isNativeAvailable = computed(
-  () => hasTauriInvoke.value && isNativePlaybackRuntimeAvailable()
-);
+// Use official Tauri runtime detection
+const isNativeAvailable = computed(() => isNativePlaybackRuntimeAvailable());
 const isInitializing = computed(() => nativePlayerState.value.status === 'initializing');
 const isNativeReady = computed(() => nativePlayerState.value.status === 'ready');
 const isNativeFailed = computed(() => nativePlayerState.value.status === 'failed');
-const isNativeUnavailable = computed(() => nativePlayerState.value.status === 'unavailable');
-const isNativeIdle = computed(() => nativePlayerState.value.status === 'idle');
 
-const shouldAttemptNativePlayback = computed(() => {
-  return isNativeAvailable.value && Boolean(streamUrl.value);
-});
-
-const showBrowserPlayer = computed(() => {
+// Determine whether to fall back to <video> tag
+const useBrowserFallback = computed(() => {
   if (error.value) return false;
-  if (!streamUrl.value) return false;
-  return true;
+  if (!isNativeAvailable.value) return true; // Non-Tauri environment
+  if (isNativeFailed.value) return true; // Tauri environment but native initialization failed
+  return false;
 });
 
 const showFallbackBanner = computed(() => {
@@ -667,6 +660,15 @@ async function loadMedia(id: string): Promise<void> {
     // Web always uses HTML5 video. Tauri attempts native only when runtime exists.
     if (isNativeAvailable.value) {
       await attemptNativeInit(generation);
+
+      // If native initialization failed, automatically fall back to browser playback
+      if (
+        nativePlayerState.value.status === 'failed' &&
+        !disposed &&
+        generation === loadGeneration
+      ) {
+        await prepareBrowserPlayback(generation);
+      }
       return;
     }
 
@@ -717,7 +719,7 @@ async function prepareBrowserPlayback(generation: number): Promise<void> {
   await nextTick();
 
   if (generation !== loadGeneration || disposed) return;
-  if (!showBrowserPlayer.value) return;
+  if (!useBrowserFallback.value || !streamUrl.value) return;
 
   const video = videoRef.value;
 
@@ -853,7 +855,7 @@ async function reportProgress(payload: ProgressPayload): Promise<void> {
 }
 
 function onVideoLoadStart(): void {
-  if (!showBrowserPlayer.value) return;
+  if (!useBrowserFallback.value) return;
 
   browserLoading.value = true;
   browserPlaybackBlocked.value = false;
@@ -893,12 +895,12 @@ function onPlaying(): void {
 }
 
 function onWaiting(): void {
-  if (!showBrowserPlayer.value) return;
+  if (!useBrowserFallback.value) return;
   browserLoading.value = true;
 }
 
 function onStalled(): void {
-  if (!showBrowserPlayer.value) return;
+  if (!useBrowserFallback.value) return;
   browserLoading.value = true;
 }
 
@@ -906,7 +908,7 @@ async function safePlayBrowserVideo(reason: string): Promise<void> {
   const video = videoRef.value;
 
   if (!video) return;
-  if (!showBrowserPlayer.value) return;
+  if (!useBrowserFallback.value) return;
   if (disposed) return;
 
   try {
@@ -1110,11 +1112,8 @@ async function stopNativePlayer(): Promise<void> {
   if (!isNativeReady.value) return;
 
   try {
-    const tauriInvoke = getTauriInvoke();
-
-    if (tauriInvoke) {
-      await tauriInvoke('stop_media');
-    }
+    // Use the officially imported stopMedia method
+    await stopMedia();
   } catch {
     // Ignore native cleanup failures.
   } finally {
@@ -1122,15 +1121,6 @@ async function stopNativePlayer(): Promise<void> {
       nativePlayerState.value = createInitialNativePlayerState();
     }
   }
-}
-
-function getTauriInvoke(): TauriInvokeApi['invoke'] | null {
-  if (typeof window === 'undefined') return null;
-
-  const tauriWindow = window as TauriWindow;
-  const invoke = tauriWindow.__TAURI_INTERNALS__?.tauri?.invoke;
-
-  return typeof invoke === 'function' ? invoke : null;
 }
 </script>
 
@@ -1141,6 +1131,7 @@ function getTauriInvoke(): TauriInvokeApi['invoke'] | null {
   flex-direction: column;
   color: #e0e0e0;
   background: #000;
+  position: relative;
 }
 
 .player-view.video-mode {
@@ -1243,7 +1234,15 @@ function getTauriInvoke(): TauriInvokeApi['invoke'] | null {
   background: #5a52e0;
 }
 
+.native-surface-wrapper {
+  width: 100%;
+  height: 100vh;
+  position: relative;
+}
+
 .native-surface {
+  width: 100%;
+  height: 100%;
   min-height: 240px;
   display: flex;
   align-items: center;
@@ -1254,15 +1253,13 @@ function getTauriInvoke(): TauriInvokeApi['invoke'] | null {
   text-align: center;
 }
 
-.native-status {
-  color: #f0f0ff;
-  font-size: 18px;
-  font-weight: 800;
-}
-
-.native-subtitle {
-  color: #666688;
-  font-size: 13px;
+.player-controls-overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  pointer-events: auto;
 }
 
 .loading {
