@@ -53,7 +53,6 @@ const NS_VIEW_HEIGHT_SIZABLE: usize = 16;
 /// In this architecture, mpv owns the GPU context and renders directly into the
 /// native view through `--wid`. `RenderSurface` exists only as a cross-platform
 /// abstraction boundary; the mpv render API is intentionally not used here.
-#[allow(dead_code)]
 pub struct MacosSurface {
     /// Dedicated child `NSView` passed to libmpv via `--wid`.
     view: Retained<AnyObject>,
@@ -88,7 +87,6 @@ pub struct MacosSurface {
 unsafe impl Send for MacosSurface {}
 unsafe impl Sync for MacosSurface {}
 
-#[allow(dead_code)]
 impl MacosSurface {
     /// Returns the raw pointer address of the dedicated child `NSView`.
     ///
@@ -163,6 +161,19 @@ impl RenderSurface for MacosSurface {
 
     /// In `--wid` mode, libmpv handles buffer presentation internally.
     fn swap_buffers(&self) {}
+
+    /// Native window id passed to mpv `wid`.
+    ///
+    /// macOS mpv expects this as a decimal string containing the target `NSView`
+    /// pointer value.
+    fn native_window_id(&self) -> Option<String> {
+        Some(self.wid_string())
+    }
+
+    /// Human-readable backend name for diagnostics.
+    fn backend_name(&self) -> &'static str {
+        "macos-nsview-cametallayer"
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -197,7 +208,6 @@ pub fn create_surface(window: &tauri::WebviewWindow) -> Result<Box<dyn RenderSur
     }
 
     let overlay_view = retain_obj(raw_ns_view, "AppKit ns_view")?;
-
     let container_view = resolve_safe_container_view(&overlay_view)?;
 
     let overlay_for_front = if same_obj(&overlay_view, &container_view) {
@@ -363,12 +373,4 @@ fn backing_scale_factor(view: &Retained<AnyObject>) -> f64 {
 
 fn ns_rect(x: f64, y: f64, width: f64, height: f64) -> NSRect {
     NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))
-}
-
-fn native_window_id(&self) -> Option<String> {
-    Some(self.wid_string())
-}
-
-fn backend_name(&self) -> &'static str {
-    "macos-nsview-cametallayer"
 }
