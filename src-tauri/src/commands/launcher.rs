@@ -452,8 +452,10 @@ pub async fn open_external_player(
         resolved_url
     );
 
-    let launcher =
-        open_url_in_external_player(&app_state.desktop_config.external_player, &resolved_url)?;
+    let launcher = open_url_in_external_player(
+        &app_state.desktop_config.as_ref().external_player,
+        &resolved_url,
+    )?;
 
     Ok(ok(&resolved_url, &launcher))
 }
@@ -464,7 +466,7 @@ pub async fn open_external_player(
 /// It does not query or depend on the Go backend.
 #[tauri::command]
 pub async fn get_external_player_config(app_state: State<'_, AppState>) -> Result<Value, String> {
-    let desktop_player = &app_state.desktop_config.external_player;
+    let desktop_player = &app_state.desktop_config.as_ref().external_player;
 
     let value = match configured_external_player(desktop_player) {
         Some(config) => json!({
