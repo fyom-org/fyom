@@ -6,7 +6,7 @@ on:
     branches:
       - main
     tags:
-      - 'v*'
+      - "v*"
   pull_request:
 
 permissions:
@@ -15,11 +15,6 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
-  # Pinned fyom-org/fork-mpv release (libmpv tarball). Caching for the
-  # downloaded runtime libs is keyed on this value so a tag bump invalidates
-  # the cache. Override via the workflow_dispatch UI to test a new tag.
-  MPV_RELEASE_REPO: fyom-org/fork-mpv
-  MPV_RELEASE_TAG: v0.41.0-r1-fyom
 
 jobs:
   build-linux:
@@ -36,22 +31,12 @@ jobs:
       - name: Show Nix version
         run: nix --version
 
-      - name: Cache libmpv runtime libs
-        uses: actions/cache@v4
-        with:
-          path: src-tauri/libs/mpv
-          key: libmpv-linux-${{ env.MPV_RELEASE_TAG }}-${{ runner.arch }}
-
-      - name: Download libmpv runtime bundle
-        run: nix develop --command node scripts/setup_runtime_libs.mjs --platform linux
-
       - name: Build desktop app in Nix dev shell
         run: nix develop --command task build:desktop
         env:
           VERSION: ${{ github.ref_name }}
           COMMIT: ${{ github.sha }}
           BUILD_TIME: ${{ github.run_id }}
-          FYOM_SKIP_APPLY_RUNTIME_LIBS: "1"
 
       - name: Collect Linux assets
         shell: bash
@@ -134,24 +119,6 @@ jobs:
       - name: Install frontend dependencies
         working-directory: web
         run: pnpm install --frozen-lockfile
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: cargo-macos-${{ runner.arch }}-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml') }}-${{ env.MPV_RELEASE_TAG }}
-
-      - name: Cache libmpv runtime libs
-        uses: actions/cache@v4
-        with:
-          path: src-tauri/libs/mpv
-          key: libmpv-macos-${{ env.MPV_RELEASE_TAG }}-${{ runner.arch }}
-
-      - name: Download libmpv runtime bundle
-        run: node scripts/setup_runtime_libs.mjs --platform darwin
 
       - name: Build desktop app on macOS runner
         run: task build:desktop
@@ -241,25 +208,6 @@ jobs:
         working-directory: web
         run: pnpm install --frozen-lockfile
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~\.cargo\registry
-            ~\.cargo\git
-            src-tauri\target
-          key: cargo-windows-${{ runner.arch }}-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml') }}-${{ env.MPV_RELEASE_TAG }}
-
-      - name: Cache libmpv runtime libs
-        uses: actions/cache@v4
-        with:
-          path: src-tauri/libs/mpv
-          key: libmpv-windows-${{ env.MPV_RELEASE_TAG }}-${{ runner.arch }}
-
-      - name: Download libmpv runtime bundle
-        shell: pwsh
-        run: node scripts/setup_runtime_libs.mjs --platform win32
-
       - name: Build desktop app on Windows runner
         shell: pwsh
         run: task build:desktop
@@ -301,51 +249,6 @@ jobs:
           name: release-assets-windows
           path: release-assets/*
           if-no-files-found: error
-
-  # Phase 2.6: publish a GitHub Release on tag push. Collects the per-platform
-  # installers uploaded by the 3 build jobs above + auto-generates release notes
-  # from the commit history since the last tag. The job only runs on tag refs
-  # (e.g. `v0.1.0`); pushes to `main` still build + upload artifacts but do not
-  # cut a release. Tags containing a hyphen (e.g. `v0.1.0-beta1`) are marked
-  # pre-release.
-  publish-release:
-    name: publish-release
-    needs: [build-linux, build-macos, build-windows]
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download all platform artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: release-assets
-
-      - name: Flatten release assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p staged
-          # Collect every installer Tauri produces across the 3 platforms:
-          #   Linux:  .deb .rpm .AppImage .tar.gz
-          #   macOS:  .dmg .app.tar.gz .sig (updater signature)
-          #   Windows: .msi .exe (nsis) .sig
-          find release-assets -type f \( \
-            -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" -o -name "*.tar.gz" \
-            -o -name "*.dmg" -o -name "*.app.tar.gz" -o -name "*.sig" \
-            -o -name "*.msi" -o -name "*.exe" -o -name "*.nsis.zip" \
-          \) -exec cp {} staged/ \;
-
-          echo "Staged release assets:"
-          ls -lah staged
-
-          if [ -z "$(ls -A staged 2>/dev/null || true)" ]; then
-            echo "No release assets found — aborting release creation"
-            exit 1
-          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
