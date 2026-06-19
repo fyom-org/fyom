@@ -1,0 +1,8 @@
+{
+  "externalPlayer": {
+    "kind": "mpv",
+    "program": "mpv",
+    "args": [],
+    "appendDefaultMpvArgs": true
+  }
+}
