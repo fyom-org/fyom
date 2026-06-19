@@ -26,6 +26,7 @@ coverage.out
 Thumbs.db
 
 # Frontend
+node_modules/
 web/node_modules/
 web/dist/
 web/.vite/
