@@ -11,6 +11,7 @@
  * contain low-level bridge invoke logic itself.
  */
 
+import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
 import { isTauriEnvironment } from '@/lib/runtime/tauri';
@@ -52,16 +53,6 @@ export type NativePlayerInitResult = { ok: true } | { ok: false; failure: Native
 interface NativeCommandResponse {
   success: boolean;
   error?: string;
-}
-
-type TauriInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
-
-interface TauriInternalsWindow extends Window {
-  __TAURI_INTERNALS__?: {
-    tauri?: {
-      invoke?: TauriInvoke;
-    };
-  };
 }
 
 /* ── Factory ───────────────────────────────────────────────────────────── */
@@ -139,39 +130,18 @@ export function mapNativePlayerInitError(err: unknown): NativePlayerFailure {
 /* ── Tauri invoke bridge helpers ───────────────────────────────────────── */
 
 /**
- * Get the Tauri invoke function, or null outside the Tauri runtime.
- *
- * This project intentionally goes through `window.__TAURI_INTERNALS__.tauri.invoke`
- * instead of importing `invoke` directly, so the plain-browser fallback bundle can
- * keep calling these helpers safely.
- */
-function getTauriInvoke(): TauriInvoke | null {
-  if (!isNativePlaybackRuntimeAvailable()) {
-    return null;
-  }
-
-  const tauriWindow = window as TauriInternalsWindow;
-  const tauriApi = tauriWindow.__TAURI_INTERNALS__?.tauri;
-  const invoke = tauriApi?.invoke;
-
-  return typeof invoke === 'function' ? invoke.bind(tauriApi) : null;
-}
-
-/**
  * Typed wrapper around Tauri invoke.
  *
- * The raw Tauri invoke function obtained from `window.__TAURI_INTERNALS__` is not
- * typed as a generic function. Do not call `invoke<T>()` directly; call this helper
- * instead so TypeScript sees one safe cast boundary in this file.
+ * Uses the official `invoke` imported from `@tauri-apps/api/core` (Tauri v2).
+ * If not in a Tauri environment, it throws safely, which is caught upstream.
  */
 async function invokeTauri<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  const invoke = getTauriInvoke();
-
-  if (!invoke) {
+  if (!isNativePlaybackRuntimeAvailable()) {
     throw new Error('Native playback runtime is not available');
   }
 
-  return (await invoke(command, args)) as T;
+  // Directly use the official invoke from Tauri v2
+  return await invoke<T>(command, args);
 }
 
 /**
@@ -201,10 +171,6 @@ async function invokeBooleanCommand(
  * This is the single bridge boundary between frontend and native player.
  * All invoke/catch logic is encapsulated here; PlayerView only sees
  * the typed result.
- *
- * The invoke command name (`play_media`) is a placeholder for the future
- * libmpv backend integration point. When the Tauri backend implements
- * this command, the frontend bridge will work without changes.
  */
 export async function tryInitializeNativePlayer(
   params: NativePlayerInitParams
@@ -222,7 +188,8 @@ export async function tryInitializeNativePlayer(
   try {
     const result = await invokeTauri<NativeCommandResponse>('play_media', {
       mediaUrl: params.mediaUrl,
-      posterUrl: params.posterUrl ?? '',
+      // Pass null instead of empty string for Option<String> in Rust
+      posterUrl: params.posterUrl ?? null,
     });
 
     if (result?.success) {
@@ -243,27 +210,13 @@ export async function tryInitializeNativePlayer(
 
 /* ── Phase 2.2: `fyom://mpv/*` event subscription ──────────────────────── */
 
-/**
- * The mpv event channel payload shapes (emitted by `src-tauri/src/mpv/event_loop.rs`).
- *
- * These are additive to the Phase 9.7 guardrail: the `invoke('play_media')` /
- * `invoke('stop_media')` contract is unchanged; these events let the frontend observe
- * playback state changes driven by libmpv (position, pause, volume, tracks, …).
- *
- * PORTED_FROM_SOIA `useAppPlaybackEvents.ts` event shapes (renamed `soia://` →
- * `fyom://mpv/`); the orchestration logic (history/nowPlaying) is deferred to Phase 2.5.
- */
-
 export interface MpvTrack {
   id: number;
   title: string;
   lang: string;
   type: string;
-  /** Whether this track is currently selected (Phase 2.4). */
   selected?: boolean;
-  /** Whether this is an external track (loaded via `sub-add` / `audio-add`) (Phase 2.4). */
   external?: boolean;
-  /** Source id (the track's originating file index; 0 for the main file) (Phase 2.4). */
   src_id?: number;
 }
 
@@ -282,13 +235,11 @@ export interface MpvPauseEvent {
 }
 
 export interface MpvEndFileEvent {
-  /** mpv EndFileReason code: 0=eof, 1=stop, 2=quit, 3=error, 4=redirect. */
   reason: number;
   reason_name: string;
 }
 
 export interface MpvFileLoadedEvent {
-  /** The path/URL mpv loaded (correlate with the pending play request). */
   path: string | null;
 }
 
@@ -329,74 +280,52 @@ export interface MpvErrorEvent {
   message: string;
 }
 
-// Phase 2.4 additions — typed payloads for the new `fyom://mpv/*` events emitted by
-// the extended `event_loop.rs` observer set (hwdec-current, aid, sid, A/V delays, color
-// adjustments, chapter, eof-reached).
 export interface MpvHwdecCurrentEvent {
-  /** Active hwdec backend (e.g. "auto-safe", "vt", "vaapi", "d3d11va", "nv"). */
   hwdec: string;
 }
 
 export interface MpvAidEvent {
-  /** Current audio track id (0 = none / disabled). */
   id: number;
 }
 
 export interface MpvSidEvent {
-  /** Current subtitle track id (0 = none / disabled). */
   id: number;
 }
 
 export interface MpvSubDelayEvent {
-  /** Subtitle delay in seconds (negative = earlier, positive = later). */
   delay: number;
 }
 
 export interface MpvAudioDelayEvent {
-  /** Audio delay in seconds (negative = earlier, positive = later). */
   delay: number;
 }
 
 export interface MpvColorAdjustmentEvent {
-  /** Adjustment value in -100..=100 (0 = default). */
   value: number;
 }
 
 export interface MpvChapterEvent {
-  /** Current chapter index (-1 = no chapter). */
   index: number;
 }
 
 export interface MpvEofReachedEvent {
-  /** Whether playback has reached end of file. */
   eof: boolean;
 }
 
-/**
- * Extended track shape — now identical to `MpvTrack` (Phase 2.4 extended the event
- * payload to include `selected`, `external`, `src_id`). Kept as an alias for backward
- * compatibility with code that references `MpvTrackFull` explicitly.
- */
 export type MpvTrackFull = MpvTrack;
 
-/** Response shape from `get_track_list` invoke. */
 export interface MpvTrackListResponse extends NativeCommandResponse {
   audio_tracks: MpvTrackFull[];
   sub_tracks: MpvTrackFull[];
 }
 
-/** Response shape from `get_chapter_list` invoke. */
 export interface MpvChapterListResponse extends NativeCommandResponse {
   chapters: MpvChapter[];
 }
 
-/** Response shape from `find_external_subtitles` invoke. */
 export interface ExternalSubtitleMatch {
-  /** Absolute filesystem path to the subtitle file. */
   path: string;
-  /** Match score 0.0–100.0 (higher = better). */
   score: number;
-  /** Display name (file stem) for the subtitle. */
   label: string;
 }
 
@@ -404,10 +333,6 @@ export interface FindExternalSubtitlesResponse extends NativeCommandResponse {
   matches: ExternalSubtitleMatch[];
 }
 
-/**
- * Handler callbacks for each `fyom://mpv/*` event. Only wire the ones you care about;
- * unset handlers are skipped.
- */
 export interface MpvEventHandlers {
   onTimePos?: (e: MpvTimePosEvent) => void;
   onPause?: (e: MpvPauseEvent) => void;
@@ -426,7 +351,6 @@ export interface MpvEventHandlers {
   onShutdown?: () => void;
   onError?: (e: MpvErrorEvent) => void;
 
-  // Phase 2.4 additions
   onHwdecCurrent?: (e: MpvHwdecCurrentEvent) => void;
   onAid?: (e: MpvAidEvent) => void;
   onSid?: (e: MpvSidEvent) => void;
@@ -441,13 +365,6 @@ export interface MpvEventHandlers {
   onEofReached?: (e: MpvEofReachedEvent) => void;
 }
 
-/**
- * Subscribe to all `fyom://mpv/*` events. Returns an `unlisten` function that tears
- * down every listener.
- *
- * No-op (returns a no-op unlisten) outside the Tauri runtime — safe to call from code
- * that also runs in a plain browser; the `<video>` fallback path is unaffected.
- */
 export async function subscribeMpvEvents(handlers: MpvEventHandlers): Promise<() => void> {
   if (!isNativePlaybackRuntimeAvailable()) {
     return () => {};
@@ -538,10 +455,6 @@ export async function subscribeMpvEvents(handlers: MpvEventHandlers): Promise<()
 
 /* ── Phase 2.3: GL render surface bridge ───────────────────────────────── */
 
-/**
- * Phase 2.3: attach the platform GL surface (NSOpenGLContext / WGL / GLX) to the main
- * Tauri window + spawn the mpv render thread.
- */
 export async function attachRenderSurface(): Promise<NativePlayerInitResult> {
   if (!isNativePlaybackRuntimeAvailable()) {
     return {
@@ -574,10 +487,6 @@ export async function attachRenderSurface(): Promise<NativePlayerInitResult> {
   }
 }
 
-/**
- * Phase 2.3: notify the backend that the webview entered / exited `.video-mode`
- * (transparent background so the mpv GL layer shows through).
- */
 export async function setVideoMode(enabled: boolean): Promise<void> {
   if (!isNativePlaybackRuntimeAvailable()) {
     return;
@@ -590,9 +499,6 @@ export async function setVideoMode(enabled: boolean): Promise<void> {
   }
 }
 
-/**
- * Phase 2.3: notify the backend of a window resize so it can update the GL surface.
- */
 export async function resizeRenderSurface(
   width: number,
   height: number,
@@ -615,11 +521,6 @@ export async function resizeRenderSurface(
 
 /* ── Phase 2.4: playback feature bridge ────────────────────────────────── */
 
-/**
- * Phase 2.4: find external subtitle files matching a LOCAL media file.
- *
- * LOCAL-only: returns an empty list for remote (presigned URL / network) media.
- */
 export async function findExternalSubtitles(
   mediaPath: string,
   mediaTitle?: string
@@ -644,14 +545,6 @@ export async function findExternalSubtitles(
   }
 }
 
-/**
- * Phase 2.4: add an external subtitle file to the current playback.
- *
- * @param path Absolute filesystem path to the subtitle file.
- * @param mode `"select"` (activate immediately) or `"auto"` (add but don't activate).
- * @param title Optional display title (shown in track list + subtitle picker).
- * @param lang Optional ISO 639-1 language code (e.g. "en", "zh").
- */
 export async function subAdd(
   path: string,
   mode: 'select' | 'auto' = 'select',
@@ -666,41 +559,30 @@ export async function subAdd(
   });
 }
 
-/** Remove an external subtitle track by id. */
 export async function subRemove(trackId: number): Promise<boolean> {
   return invokeBooleanCommand('sub_remove', { trackId });
 }
 
-/** Reload a subtitle track by id (useful after editing an external .srt). */
 export async function subReload(trackId: number): Promise<boolean> {
   return invokeBooleanCommand('sub_reload', { trackId });
 }
 
-/** Add an external audio track. */
 export async function audioAdd(path: string, mode: 'select' | 'auto' = 'select'): Promise<boolean> {
   return invokeBooleanCommand('audio_add', { path, mode });
 }
 
-/** Set the subtitle delay (seconds; negative = earlier, positive = later). */
 export async function setSubDelay(seconds: number): Promise<boolean> {
   return invokeBooleanCommand('set_sub_delay', { seconds });
 }
 
-/** Set the audio delay (seconds; negative = earlier, positive = later). */
 export async function setAudioDelay(seconds: number): Promise<boolean> {
   return invokeBooleanCommand('set_audio_delay', { seconds });
 }
 
-/** Set the subtitle font scale (1.0 = default). */
 export async function setSubScale(scale: number): Promise<boolean> {
   return invokeBooleanCommand('set_sub_scale', { scale });
 }
 
-/**
- * Set a color adjustment.
- *
- * Range: -100..=100.
- */
 export async function setColorAdjustment(
   name: 'brightness' | 'contrast' | 'saturation' | 'gamma' | 'hue',
   value: number
@@ -711,7 +593,6 @@ export async function setColorAdjustment(
   });
 }
 
-/** Generic mpv option-string setter (power-user surface — prefer typed commands above). */
 export async function mpvSetOptionString(
   name: string,
   value: string | number | boolean
@@ -722,7 +603,6 @@ export async function mpvSetOptionString(
   });
 }
 
-/** Get the current track list (audio + sub) as a typed object. One-shot read. */
 export async function getTrackList(): Promise<MpvTrackListResponse | null> {
   if (!isNativePlaybackRuntimeAvailable()) {
     return null;
@@ -735,7 +615,6 @@ export async function getTrackList(): Promise<MpvTrackListResponse | null> {
   }
 }
 
-/** Get the chapter list (one-shot read). */
 export async function getChapterList(): Promise<MpvChapterListResponse | null> {
   if (!isNativePlaybackRuntimeAvailable()) {
     return null;
@@ -748,12 +627,10 @@ export async function getChapterList(): Promise<MpvChapterListResponse | null> {
   }
 }
 
-/** Navigate to a chapter by index. */
 export async function setChapter(index: number): Promise<boolean> {
   return invokeBooleanCommand('set_chapter', { index });
 }
 
-/** Generic string-valued property getter (one-shot read). */
 export async function getProperty(name: string): Promise<string | null> {
   if (!isNativePlaybackRuntimeAvailable()) {
     return null;
@@ -776,52 +653,42 @@ export async function getProperty(name: string): Promise<string | null> {
 
 /* ── Phase 2.4: typed wrappers for Phase 2.2 commands ──────────────────── */
 
-/** Seek to an absolute position (seconds). */
 export async function seek(position: number): Promise<boolean> {
   return invokeBooleanCommand('seek', { position });
 }
 
-/** Seek by a relative offset (seconds; negative = backward). */
 export async function seekRelative(seconds: number): Promise<boolean> {
   return invokeBooleanCommand('seek_relative', { seconds });
 }
 
-/** Toggle play/pause. */
 export async function togglePause(): Promise<boolean> {
   return invokeBooleanCommand('toggle_pause');
 }
 
-/** Explicitly set the pause state (`true` = paused, `false` = playing). */
 export async function setPause(paused: boolean): Promise<boolean> {
   return invokeBooleanCommand('set_pause', { paused });
 }
 
-/** Set the volume (0–100). */
 export async function setVolume(volume: number): Promise<boolean> {
   return invokeBooleanCommand('set_volume', { volume });
 }
 
-/** Set the playback speed (1.0 = normal). */
 export async function setSpeed(speed: number): Promise<boolean> {
   return invokeBooleanCommand('set_speed', { speed });
 }
 
-/** Select the audio track (`null` to disable audio). */
 export async function setAudioTrack(trackId: number | null): Promise<boolean> {
   return invokeBooleanCommand('set_audio_track', { trackId });
 }
 
-/** Select the subtitle track (`null` to disable subtitles). */
 export async function setSubtitleTrack(trackId: number | null): Promise<boolean> {
   return invokeBooleanCommand('set_subtitle_track', { trackId });
 }
 
-/** Forward a keypress to mpv (mpv keystr format, e.g. "Space", "Ctrl+Right", "Volume+"). */
 export async function mpvKeypress(key: string): Promise<boolean> {
   return invokeBooleanCommand('mpv_keypress', { key });
 }
 
-/** Stop playback + clear the playlist. */
 export async function stopMedia(): Promise<boolean> {
   return invokeBooleanCommand('stop_media');
 }
