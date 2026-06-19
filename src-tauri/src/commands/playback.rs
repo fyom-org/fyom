@@ -1,11 +1,22 @@
 //! Playback commands — native libmpv command surface.
 //!
 //! This module is the Tauri command boundary for desktop playback.
+//!
 //! Keep this layer thin:
 //! - validate command input
 //! - resolve `MpvInstance`
 //! - call mpv facade
 //! - return stable JSON payloads
+//!
+//! Important:
+//! The current FYOM video path uses native `--wid` embedding.
+//! This command module must not create or drive `mpv_render_context`.
+//!
+//! macOS production path:
+//! - create a dedicated `NSView`
+//! - attach `CAMetalLayer`
+//! - retain the platform surface for the playback lifetime
+//! - let mpv own Vulkan/MoltenVK/Metal rendering internally
 
 use serde_json::{Value, json};
 use tauri::State;
@@ -124,6 +135,7 @@ pub async fn get_playback_backend_info(mpv_state: State<'_, MpvState>) -> Result
             "capabilities": [],
             "native_playback": false,
             "ready": false,
+            "render_mode": "none",
         }));
     };
 
@@ -145,10 +157,12 @@ pub async fn get_playback_backend_info(mpv_state: State<'_, MpvState>) -> Result
             "audio",
             "video",
             "subtitles",
-            "hardware-decode"
+            "hardware-decode",
+            "native-wid-embedding"
         ],
         "native_playback": true,
         "ready": true,
+        "render_mode": "wid",
         "hwdec": "auto-safe",
         "hwdec_current": hwdec_current,
         "volume": volume,
@@ -377,9 +391,23 @@ pub async fn play_test_media(mpv_state: State<'_, MpvState>) -> Result<Value, St
 }
 
 // -----------------------------------------------------------------------------
-// Render surface
+// Native video surface
 // -----------------------------------------------------------------------------
 
+/// Attach the native video surface used by mpv `--wid` embedding.
+///
+/// This command name is intentionally kept as `attach_render_surface` for frontend
+/// compatibility, but it no longer means "initialize mpv render API".
+///
+/// Current behavior:
+/// - create platform surface on the main thread
+/// - retain the platform surface through `MpvInstance::spawn_render_thread`
+/// - do not initialize `mpv_render_context`
+///
+/// Important:
+/// If mpv has already been initialized without `wid`, this command cannot fix that.
+/// The correct startup path must set `wid`, `vo`, `gpu-api`, and macOS `gpu-context`
+/// before `mpv_initialize()`.
 #[tauri::command]
 pub async fn attach_render_surface(
     mpv_state: State<'_, MpvState>,
@@ -396,23 +424,39 @@ pub async fn attach_render_surface(
         return Ok(err("main window not found"));
     };
 
-    // UI operations must be performed on the main thread
     let (tx, rx) = tokio::sync::oneshot::channel();
 
-    let _ = app_handle.run_on_main_thread(move || {
+    let run_result = app_handle.run_on_main_thread(move || {
         let result = crate::platform::create_platform_surface(&window);
         let _ = tx.send(result);
     });
 
-    // Wait for the main thread to finish executing and return a result
+    if let Err(error) = run_result {
+        tracing::warn!("[mpv/playback] failed to schedule surface creation: {error}");
+        return Ok(err(format!(
+            "failed to schedule platform surface creation: {error}"
+        )));
+    }
+
     let surface = match rx.await {
         Ok(Ok(surface)) => surface,
         Ok(Err(error)) => {
             tracing::warn!("[mpv/playback] platform surface creation failed: {error}");
             return Ok(err(format!("platform surface creation failed: {error}")));
         }
-        Err(_) => return Ok(err("main thread task dropped")),
+        Err(_) => {
+            tracing::warn!("[mpv/playback] platform surface creation task dropped");
+            return Ok(err("main thread surface creation task dropped"));
+        }
     };
+
+    let (width, height) = surface.drawable_size();
+
+    tracing::info!(
+        "[mpv/playback] native wid surface attached; drawable={}x{}",
+        width,
+        height
+    );
 
     command_result(instance.spawn_render_thread(surface))
 }
@@ -444,6 +488,13 @@ pub async fn resize_render_surface(
     if let Err(payload) = ensure_finite("scale_factor", scale_factor) {
         return Ok(payload);
     }
+
+    tracing::debug!(
+        "[mpv/playback] resize surface request: {}x{} scale={}",
+        width,
+        height,
+        scale_factor
+    );
 
     Ok(ok())
 }
