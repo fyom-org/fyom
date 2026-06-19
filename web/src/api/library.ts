@@ -733,15 +733,15 @@ export async function getMediaProgressSilent(id: string): Promise<MediaProgress 
 /**
  * Progress payload sent to `PUT /media/{id}/progress`.
  *
- * Phase 2.5: the native player (PlayerView.vue) and the HTML5 `<video>` path
- * both report progress through this shape. The Go backend clamps `position`
- * to `duration` and auto-transitions the user's media status to `watching`
- * (on first progress) or `watched` (when `finished` is true).
+ * Supports two shapes:
+ * - Legacy: { position, duration, finished }
+ * - Launcher: { played: true } — marks the item as played without timestamp tracking
  */
 export interface MediaProgressInput {
-  position: number;
-  duration: number;
-  finished: boolean;
+  position?: number;
+  duration?: number;
+  finished?: boolean;
+  played?: boolean;
 }
 
 /**
