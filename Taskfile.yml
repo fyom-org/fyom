@@ -89,10 +89,30 @@ tasks:
   # ================================================
 
   dev:desktop:
-    desc: "Run Tauri desktop dev mode (requires sidecar binary)"
-    deps: [sidecar]
+    desc: "Run Tauri desktop dev mode with external mpv player"
     cmds:
-      - cd src-tauri && FYOM_BIN=../build/fyom RUST_LOG=debug cargo-tauri dev
+      - task dev:desktop-mpv-system
+
+  dev:desktop-mpv-system:
+    desc: "Run Tauri desktop dev mode using mpv from PATH"
+    deps: [sidecar]
+    dir: src-tauri
+    env:
+      FYOM_BIN: ../build/fyom
+      FYOM_MPV_BIN: mpv
+      RUST_LOG: debug
+    cmds:
+      - cargo-tauri dev
+
+  dev:desktop-system-player:
+    desc: "Run Tauri desktop dev mode using the OS default external player"
+    deps: [sidecar]
+    dir: src-tauri
+    env:
+      FYOM_BIN: ../build/fyom
+      RUST_LOG: debug
+    cmds:
+      - cargo-tauri dev
 
   build:desktop:
     desc: "Build Tauri desktop app bundle"
