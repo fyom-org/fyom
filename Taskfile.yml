@@ -90,6 +90,8 @@ tasks:
 
   dev:desktop:
     desc: "Run Tauri desktop dev mode with external mpv player"
+    env:
+      FYOM_DESKTOP_CONFIG: "fyom/configs/fyom-desktop.json"
     cmds:
       - task dev:desktop-mpv-system
 
