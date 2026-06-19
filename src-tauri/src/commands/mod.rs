@@ -1,18 +1,13 @@
 //! Tauri command handlers.
 //!
-//! This module owns application-level Tauri invoke handlers and exposes the
-//! native playback command namespace through `commands::playback`.
+//! This module owns application-level Tauri invoke handlers.
 //!
 //! Keep this module thin:
 //! - window visibility commands
 //! - application quit commands
 //! - sidecar status read model
-//!
-//! Do not initialize libmpv here.
-//! Do not create mpv render surfaces here.
-//! Native playback and mpv command handling belong in `commands::playback`.
 
-pub mod playback;
+pub mod launcher;
 
 use tauri::{AppHandle, Manager, State};
 

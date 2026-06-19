@@ -16,7 +16,7 @@ crate-type = ["cdylib", "lib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -33,57 +33,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 anyhow = "1"
 thiserror = "1"
-cookie = { version = "0.18.1", features = ["secure"] }
-time = "0.3.47"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-
-# --- Phase 2: libmpv native playback ---
-# libmpv2 = the safe Rust binding (same crate tsukimi uses). Resolves libmpv via
-# MPV_LIB_DIR (set in .cargo/config.toml) or pkg-config. Provides Mpv, EventContext,
-# RenderContext, MpvNode — the full surface fyom needs.
-# Default features include `render` + `protocols` (matches tsukimi).
-libmpv2 = "4.1"
-# Concurrency primitives ported from tsukimi's event-pump architecture (Phase 2.2).
-# atomic-wait powers the PAUSED/ACTIVE/SHUTDOWN state machine; flume is the event channel.
-atomic-wait = "1.1"
-flume = "0.11"
-arc-swap = "1.9"
-libc = "0.2"
-
-# --- Phase 2.3: GL render context + per-platform GL surfaces ---
-# glow = the GL wrapper tsukimi uses (read current FBO binding for mpv_render_context_render).
-glow = "0.16"
-# raw-window-handle = Tauri windows implement HasWindowHandle; provides the platform HWND /
-# NSView / X11 Window pointer fyom needs to create the child GL surface.
-raw-window-handle = "0.6"
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-updater = "2"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-process = "2"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSView", "NSApplication", "NSMenu", "NSMenuItem", "NSImage", "NSStatusBar", "NSGraphics", "NSResponder"] }
-objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSObject"] }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-# windows-sys = the official Windows API bindings. Used for WGL (wglCreateContext,
-# wglMakeCurrent, wglGetProcAddress) + GDI (ChoosePixelFormat, SetPixelFormat, SwapBuffers)
-# + windowing (CreateWindowExW, SetWindowPos, GetDpiForWindow).
-windows-sys = { version = "0.59", features = [
-    "Win32_Foundation",
-    "Win32_Graphics_Gdi",
-    "Win32_Graphics_OpenGL",
-    "Win32_UI_HiDpi",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_System_LibraryLoader",
-    "Win32_System_SystemServices",
-] }
-
-[target.'cfg(not(any(target_os = "macos", target_os = "windows")))'.dependencies]
-# x11-dl = the dynamic-loading X11 + GLX bindings. Used for Linux's child X11 window +
-# GLX context (glXCreateContext, glXMakeCurrent, glXGetProcAddressARB, glXSwapBuffers).
-# XWayland fallback for Wayland (native Wayland + EGL is Phase 2.5+).
-x11-dl = "2.21"

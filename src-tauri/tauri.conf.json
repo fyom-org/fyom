@@ -10,7 +10,6 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "macOSPrivateApi": true,
     "security": {
       "csp": null
     },
@@ -25,8 +24,7 @@
         "resizable": true,
         "fullscreen": false,
         "visible": false,
-        "decorations": true,
-        "transparent": true
+        "decorations": true
       }
     ]
   },
