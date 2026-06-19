@@ -1290,6 +1290,16 @@ the Go backend `fyom.yaml`.
 - **No Progress Sync:** FYOM cannot resume playback where the user left off in the external player.
   - *Mitigation:* Acceptable tradeoff for the Tauri Web Shell. Exact progress resuming will be a headline feature of the future Flutter native client.
 
+> **Production Phase 2 is complete.** 
+>
+> **Follow-up notes:**
+> In the plan, there would be a pure fyom-client for fyom-server / fyom-desktop
+> At present, the brand new client for fyom may use `Dart + Flutter` and to bring a native experience for multipal platforms
+> Multipal playback backends are considered: libmpv, [Erika](https://github.com/AimesSoft/Erika), FVP (libmdk), Media Kit, Video Player
+> This would be another project under [fyom-org](https://github.com/fyom-org/fyom)
+>
+
+
 ## Production Phase 3: Polish UI/UX & Metadata
 
 - [ ] Per-item metadata overrides (layered override: global → library → item)
