@@ -1,11 +1,25 @@
-//! Thread-safe libmpv facade.//! Thread
+//! Thread-safe libmpv facade.
 //!
 //! Command handlers must talk to mpv through `MpvInstance` only.
 //!
 //! This module owns:
 //! - the shared `libmpv2::Mpv` handle
 //! - the mpv event thread lifecycle
-
+//! - the native video surface lifecycle holder
+//!
+//! Current rendering architecture:
+//! - FYOM does not use `mpv_render_context` for production playback.
+//! - mpv owns the GPU context.
+//! - macOS uses `NSView` + `CAMetalLayer` + `wid` embedding.
+//!
+//! Important:
+//! `wid` should be configured before the first video output is created.
+//! The safest path is to configure it before `mpv_initialize()`. With the current
+//! `libmpv2::Mpv::with_initializer` flow, this requires the platform surface to be
+//! created before `MpvInstance::new_with_wid(...)`.
+//!
+//! For the transitional app flow, `configure_embedded_wid(...)` exists so callers
+//! can set `wid` immediately after creating the surface and before `loadfile`.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -27,6 +41,8 @@ const DEFAULT_VOLUME: i64 = 80;
 const DEFAULT_CACHE_MIB: u64 = 256;
 const DEFAULT_CACHE_SECS: i64 = 10;
 
+const DEFAULT_MPV_LOG_FILE: &str = "/tmp/mpv-fyom.log";
+
 // -----------------------------------------------------------------------------
 // Internal thread state
 // -----------------------------------------------------------------------------
@@ -34,6 +50,42 @@ const DEFAULT_CACHE_SECS: i64 = 10;
 struct RenderThread {
     handle: JoinHandle<()>,
     shutdown: Arc<AtomicU32>,
+}
+
+// -----------------------------------------------------------------------------
+// Mpv startup config
+// -----------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Default)]
+pub struct MpvStartupConfig {
+    /// Native window id passed to mpv `wid`.
+    ///
+    /// macOS expects a decimal `NSView` pointer string.
+    pub wid: Option<String>,
+
+    /// Whether to force the native Vulkan path.
+    pub force_vulkan: bool,
+
+    /// Optional mpv log file.
+    pub log_file: Option<String>,
+}
+
+impl MpvStartupConfig {
+    pub fn default_native() -> Self {
+        Self {
+            wid: None,
+            force_vulkan: true,
+            log_file: Some(DEFAULT_MPV_LOG_FILE.to_string()),
+        }
+    }
+
+    pub fn native_with_wid(wid: String) -> Self {
+        Self {
+            wid: Some(wid),
+            force_vulkan: true,
+            log_file: Some(DEFAULT_MPV_LOG_FILE.to_string()),
+        }
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -50,7 +102,9 @@ pub struct MpvInstance {
     /// Event thread handle.
     event_thread: Mutex<Option<JoinHandle<()>>>,
 
-    /// Render thread handle + shutdown flag.
+    /// Native surface lifecycle thread handle + shutdown flag.
+    ///
+    /// This is intentionally not an mpv render-context thread.
     render_thread: Mutex<Option<RenderThread>>,
 }
 
@@ -70,7 +124,7 @@ impl std::fmt::Debug for MpvInstance {
 
         f.debug_struct("MpvInstance")
             .field("event_thread_alive", &event_thread_alive)
-            .field("render_thread_alive", &render_thread_alive)
+            .field("surface_lifecycle_thread_alive", &render_thread_alive)
             .finish()
     }
 }
@@ -81,11 +135,40 @@ impl MpvInstance {
     // -------------------------------------------------------------------------
 
     pub fn new() -> Result<Self, String> {
+        Self::new_with_config(MpvStartupConfig::default_native())
+    }
+
+    pub fn new_with_wid(wid: String) -> Result<Self, String> {
+        Self::new_with_config(MpvStartupConfig::native_with_wid(wid))
+    }
+
+    pub fn new_with_config(config: MpvStartupConfig) -> Result<Self, String> {
         set_c_numeric_locale();
 
         let mpv = Mpv::with_initializer(|init| {
-            // Render API output. The real GL surface is attached later by render.rs.
-            init.set_property("vo", "libmpv")?;
+            // Native mpv video output.
+            //
+            // Do not use `vo=libmpv` here. `vo=libmpv` requires mpv_render_context,
+            // which FYOM intentionally does not use for the current architecture.
+            init.set_property("vo", "gpu")?;
+
+            if let Some(wid) = config.wid.as_deref() {
+                init.set_property("wid", wid)?;
+            }
+
+            if config.force_vulkan {
+                init.set_property("gpu-api", "vulkan")?;
+
+                #[cfg(target_os = "macos")]
+                {
+                    init.set_property("gpu-context", "macvk")?;
+                }
+            }
+
+            if let Some(log_file) = config.log_file.as_deref() {
+                init.set_property("log-file", log_file)?;
+                init.set_property("msg-level", "all=v")?;
+            }
 
             // Frontend owns UI and controls.
             init.set_property("osc", false)?;
@@ -114,7 +197,18 @@ impl MpvInstance {
         })
         .map_err(|error| format!("mpv init failed: {error}"))?;
 
-        info!("[mpv] instance created");
+        info!(
+            "[mpv] instance created; render_mode=wid; vo=gpu; vulkan={}",
+            config.force_vulkan
+        );
+
+        if let Some(wid) = config.wid.as_deref() {
+            info!("[mpv] startup wid configured: {wid}");
+        } else {
+            warn!(
+                "[mpv] startup wid not configured; caller must set wid before first loadfile for embedded video"
+            );
+        }
 
         Ok(Self {
             mpv: Arc::new(mpv),
@@ -122,6 +216,47 @@ impl MpvInstance {
             event_thread: Mutex::new(None),
             render_thread: Mutex::new(None),
         })
+    }
+
+    // -------------------------------------------------------------------------
+    // Native embedding configuration
+    // -------------------------------------------------------------------------
+
+    /// Configure the native window id used by mpv video output.
+    ///
+    /// macOS:
+    /// - value must be a decimal `NSView` pointer
+    /// - target view must have a `CAMetalLayer`
+    ///
+    /// This should be called before the first `loadfile`.
+    /// Prefer `new_with_wid(...)` when the surface is available before mpv init.
+    pub fn configure_embedded_wid(&self, wid: &str) -> Result<(), String> {
+        if wid.trim().is_empty() {
+            return Err("mpv wid must not be empty".to_string());
+        }
+
+        info!("[mpv] configure embedded wid: {wid}");
+
+        self.set_property("wid", wid)
+    }
+
+    /// Configure native GPU output options after initialization.
+    ///
+    /// This is a transitional helper. The preferred path is setting these options
+    /// inside `new_with_config(...)` before mpv initialization.
+    pub fn configure_native_video_output(&self) -> Result<(), String> {
+        self.set_property("vo", "gpu")?;
+        self.set_property("gpu-api", "vulkan")?;
+
+        #[cfg(target_os = "macos")]
+        {
+            self.set_property("gpu-context", "macvk")?;
+        }
+
+        self.set_property("log-file", DEFAULT_MPV_LOG_FILE)?;
+        self.set_property("msg-level", "all=v")?;
+
+        Ok(())
     }
 
     // -------------------------------------------------------------------------
@@ -144,11 +279,8 @@ impl MpvInstance {
 
         self.event_alive.store(ACTIVE, Ordering::SeqCst);
 
-        let handle = event_loop::spawn_event_loop(
-            Arc::clone(&self.mpv),
-            app,
-            Arc::clone(&self.event_alive),
-        );
+        let handle =
+            event_loop::spawn_event_loop(Arc::clone(&self.mpv), app, Arc::clone(&self.event_alive));
 
         *guard = Some(handle);
 
@@ -178,7 +310,7 @@ impl MpvInstance {
     }
 
     // -------------------------------------------------------------------------
-    // Render thread lifecycle
+    // Native surface lifecycle
     // -------------------------------------------------------------------------
 
     pub fn spawn_render_thread(&self, surface: Box<dyn RenderSurface>) -> Result<(), String> {
@@ -188,21 +320,18 @@ impl MpvInstance {
             .map_err(|error| format!("render_thread mutex poisoned: {error}"))?;
 
         if guard.is_some() {
-            debug!("[mpv] render thread already running");
+            debug!("[mpv] native surface lifecycle thread already running");
             return Ok(());
         }
 
         let shutdown = Arc::new(AtomicU32::new(0));
 
-        let handle = render::spawn_render_thread(
-            Arc::clone(&self.mpv),
-            surface,
-            Arc::clone(&shutdown),
-        )?;
+        let handle =
+            render::spawn_render_thread(Arc::clone(&self.mpv), surface, Arc::clone(&shutdown))?;
 
         *guard = Some(RenderThread { handle, shutdown });
 
-        info!("[mpv] render thread started");
+        info!("[mpv] native surface lifecycle thread started");
 
         Ok(())
     }
@@ -223,9 +352,9 @@ impl MpvInstance {
         render_thread.shutdown.store(SHUTDOWN, Ordering::SeqCst);
 
         if render_thread.handle.join().is_err() {
-            warn!("[mpv] render thread panicked during join");
+            warn!("[mpv] native surface lifecycle thread panicked during join");
         } else {
-            info!("[mpv] render thread joined");
+            info!("[mpv] native surface lifecycle thread joined");
         }
     }
 
@@ -319,7 +448,7 @@ fn set_c_numeric_locale() {
     // SAFETY:
     // mpv expects LC_NUMERIC=C so decimal parsing is stable.
     unsafe {
-        use libc::{setlocale, LC_NUMERIC};
+        use libc::{LC_NUMERIC, setlocale};
 
         let c_locale = b"C\0";
         setlocale(LC_NUMERIC, c_locale.as_ptr() as *const _);
@@ -332,6 +461,8 @@ fn set_c_numeric_locale() {
 
 // SAFETY:
 // mpv client API is documented as thread-safe for command/property access.
-// Event/render contexts are confined to dedicated threads.
+// Event loops are confined to dedicated threads.
+// The native surface lifecycle thread only retains the platform surface and does
+// not mutate AppKit directly.
 unsafe impl Send for MpvInstance {}
 unsafe impl Sync for MpvInstance {}
