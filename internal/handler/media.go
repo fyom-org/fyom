@@ -533,6 +533,11 @@ func (h *MediaHandler) ListEpisodes(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateProgress records watch progress for the current user.
+//
+// Accepts two payload shapes:
+//   - Legacy: { "position": int, "duration": int, "finished": bool }
+//   - Launcher: { "played": bool } — marks the item as played (position=0, finished=false)
+//   - Launcher: { "finished": bool } — when finished=true, marks the item as watched
 func (h *MediaHandler) UpdateProgress(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
@@ -555,9 +560,27 @@ func (h *MediaHandler) UpdateProgress(w http.ResponseWriter, r *http.Request) {
 		Position int  `json:"position"`
 		Duration int  `json:"duration"`
 		Finished bool `json:"finished"`
+		Played   bool `json:"played"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.ErrorCode(w, http.StatusBadRequest, errors.CodeInvalidJSON, "")
+		return
+	}
+
+	// Launcher-mode: { "played": true } shorthand.
+	if req.Played && req.Position == 0 && req.Duration == 0 && !req.Finished {
+		if err := h.repo.UpsertProgress(r.Context(), userIDStr, id, 0, 0, false); err != nil {
+			h.logger.Error("failed to update progress", "media_id", id, "user_id", userIDStr, "err", err)
+			response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
+			return
+		}
+
+		currentStatus, _ := h.statusRepo.GetStatus(r.Context(), userIDStr, id)
+		if currentStatus == "none" || currentStatus == "want_to_watch" {
+			_ = h.statusRepo.SetStatus(r.Context(), userIDStr, id, "watching")
+		}
+
+		response.NoContent(w)
 		return
 	}
 
