@@ -5,15 +5,16 @@
 //! macOS path:
 //! - create a dedicated `NSView`
 //! - attach a `CAMetalLayer`
-//! - pass the `NSView` pointer to mpv through the `wid` option before `mpv_initialize()`
+//! - expose the `NSView` pointer through [`RenderSurface::native_window_id`]
+//! - pass that id to mpv through the `wid` option
 //! - let mpv own the Vulkan/MoltenVK/Metal context
 //!
 //! This module intentionally does not initialize `mpv_render_context` for the
 //! normal embedded playback path.
 //!
-//! `mpv_render_context` is only appropriate for a future texture-sharing architecture
-//! where FYOM owns the GPU context and asks mpv to render into host-managed targets.
-//! That is not the current architecture.
+//! `mpv_render_context` is only appropriate for a future texture-sharing
+//! architecture where FYOM owns the GPU context and asks mpv to render into
+//! host-managed targets. That is not the current architecture.
 
 use std::ffi::c_void;
 use std::sync::Arc;
@@ -22,7 +23,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use libmpv2::Mpv;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::mpv::event_loop::SHUTDOWN;
 
@@ -58,6 +59,30 @@ pub trait RenderSurface: Send + 'static {
     ///
     /// In `--wid` mode this is a no-op because mpv presents internally.
     fn swap_buffers(&self);
+
+    /// Native window id passed to mpv `wid`.
+    ///
+    /// macOS:
+    /// - decimal string of a dedicated `NSView` pointer
+    /// - the target view must be backed by `CAMetalLayer`
+    ///
+    /// Linux X11:
+    /// - X11 window id string
+    ///
+    /// Wayland native:
+    /// - currently unsupported by mpv `wid`; should return `None` until a
+    ///   dedicated parent-surface/subsurface integration exists.
+    ///
+    /// Default returns `None` so unsupported platforms fail explicitly instead of
+    /// accidentally passing an invalid id to mpv.
+    fn native_window_id(&self) -> Option<String> {
+        None
+    }
+
+    /// Human-readable surface backend name for diagnostics.
+    fn backend_name(&self) -> &'static str {
+        "unknown"
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -103,10 +128,11 @@ pub fn ensure_wid_mode(mode: MpvRenderMode) -> Result<(), String> {
 // Spawn
 // -----------------------------------------------------------------------------
 
-/// Spawn the render lifecycle thread.
+/// Spawn the native surface lifecycle thread.
 ///
-/// In the old architecture this function initialized `mpv_render_context` and drove
-/// an OpenGL render loop. That is now intentionally disabled for the default path.
+/// In the old architecture this function initialized `mpv_render_context` and
+/// drove an OpenGL render loop. That is now intentionally disabled for the
+/// default path.
 ///
 /// In the current `--wid` architecture:
 /// - mpv renders directly into the native child view
@@ -116,12 +142,14 @@ pub fn ensure_wid_mode(mode: MpvRenderMode) -> Result<(), String> {
 ///
 /// This thread exists only to retain the platform surface for as long as playback
 /// needs it, and to preserve the existing caller contract while the playback path
-/// is being migrated to explicit `wid` startup options.
+/// is migrated to explicit `wid` startup/configuration.
 pub fn spawn_render_thread(
     mpv: Arc<Mpv>,
     surface: Box<dyn RenderSurface>,
     shutdown: Arc<AtomicU32>,
 ) -> Result<JoinHandle<()>, String> {
+    ensure_wid_mode(MpvRenderMode::Wid)?;
+
     std::thread::Builder::new()
         .name("fyom-mpv-surface-lifecycle".into())
         .spawn(move || run_surface_lifecycle_loop(mpv, surface, shutdown))
@@ -143,12 +171,24 @@ fn run_surface_lifecycle_loop(
         return;
     }
 
+    let backend = surface.backend_name();
+    let native_window_id = surface.native_window_id();
     let (width, height) = surface.drawable_size();
 
-    info!(
-        "[render] wid embedding active; mpv_render_context disabled; initial drawable={}x{}",
-        width, height
-    );
+    match native_window_id.as_deref() {
+        Some(wid) => {
+            info!(
+                "[render] wid embedding active; backend={backend}; wid={wid}; mpv_render_context disabled; initial drawable={}x{}",
+                width, height
+            );
+        }
+        None => {
+            warn!(
+                "[render] wid embedding active but surface exposes no native window id; backend={backend}; initial drawable={}x{}",
+                width, height
+            );
+        }
+    }
 
     loop {
         if shutdown.load(Ordering::SeqCst) == SHUTDOWN {
@@ -158,7 +198,7 @@ fn run_surface_lifecycle_loop(
         let (width, height) = surface.drawable_size();
 
         debug!(
-            "[render] surface lifecycle heartbeat; drawable={}x{}",
+            "[render] surface lifecycle heartbeat; backend={backend}; drawable={}x{}",
             width, height
         );
 
@@ -167,5 +207,5 @@ fn run_surface_lifecycle_loop(
 
     drop(surface);
 
-    info!("[render] surface lifecycle exit");
+    info!("[render] surface lifecycle exit; backend={backend}");
 }

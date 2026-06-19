@@ -364,3 +364,11 @@ fn backing_scale_factor(view: &Retained<AnyObject>) -> f64 {
 fn ns_rect(x: f64, y: f64, width: f64, height: f64) -> NSRect {
     NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))
 }
+
+fn native_window_id(&self) -> Option<String> {
+    Some(self.wid_string())
+}
+
+fn backend_name(&self) -> &'static str {
+    "macos-nsview-cametallayer"
+}
