@@ -273,8 +273,6 @@ tasks:
 
   dev:desktop:
     desc: "Run Tauri desktop dev mode with external mpv player"
-    env:
-      FYOM_DESKTOP_CONFIG: "fyom/configs/fyom-desktop.json"
     cmds:
       - task dev:desktop-mpv-system
 
@@ -285,6 +283,7 @@ tasks:
     env:
       FYOM_BIN: ../build/fyom
       FYOM_MPV_BIN: mpv
+      FYOM_DESKTOP_CONFIG: "{{.ROOT_DIR}}/configs/fyom-desktop.json"
       RUST_LOG: debug
     cmds:
       - cargo-tauri dev

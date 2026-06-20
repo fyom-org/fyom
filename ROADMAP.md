@@ -504,7 +504,7 @@ Current client-side genre filtering is unaffected.
 
 - [x] Remove machine-specific hardcoded media paths from default tests;
       keep real-media corpus coverage opt-in via environment variable
-      (`fyom_TEST_MEDIA_ROOT`) rather than hardcoded `/root/...` paths
+      (`FYOM_TEST_MEDIA_ROOT`) rather than hardcoded `/root/...` paths
 
 - [ ] Add API response snapshot tests for `MediaItemResponse`
 
@@ -1176,7 +1176,7 @@ errors), `web/src/main.ts`, `web/index.html`, `pkg/response/response.go`,
 
 - [x] Tauri 2 desktop shell (wrapping the Web UI)
 - [x] Go sidecar `--sidecar` mode with fixed loopback port `127.0.0.1:27403`
-- [x] `fyom_READY` readiness signal and `/readyz` confirmation flow
+- [x] `FYOM_READY` readiness signal and `/readyz` confirmation flow
 - [x] Desktop DB path resolution (`fyom.db` colocated with desktop app executable)
 - [x] Sidecar bootstrap / runtime lifecycle stabilization
 - [x] Tauri system tray, window lifecycle, close-to-tray behavior, and real quit sequencing
@@ -1187,7 +1187,7 @@ errors), `web/src/main.ts`, `web/index.html`, `pkg/response/response.go`,
 - [x] Desktop playback architecture simplified to “media library + external player”
 - [x] Native mpv embedding path removed from the primary desktop playback flow
 - [x] Cross-platform playback behavior unified around independent external player windows
-- [x] `fyom_EXTERNAL_PLAYER`, `fyom_EXTERNAL_PLAYER_ARGS`, and `fyom_MPV_BIN` environment overrides
+- [x] `FYOM_EXTERNAL_PLAYER`, `FYOM_EXTERNAL_PLAYER_ARGS`, and `FYOM_MPV_BIN` environment overrides
 - [x] Desktop-local player configuration via `configs/fyom-desktop.json`
 - [x] External player resolution priority: environment overrides → desktop config → OS default opener
 - [x] mpv supported as a desktop-managed external player / sidecar-style launcher target
@@ -1199,7 +1199,7 @@ errors), `web/src/main.ts`, `web/index.html`, `pkg/response/response.go`,
   - Windows: `%APPDATA%\fyom\fyom-desktop.json`
   - macOS: `~/Library/Application Support/fyom/fyom-desktop.json`
   - Linux: `${XDG_CONFIG_HOME:-~/.config}/fyom/fyom-desktop.json`
-- [ ] Keep `fyom_DESKTOP_CONFIG` as the highest-priority explicit override
+- [ ] Keep `FYOM_DESKTOP_CONFIG` as the highest-priority explicit override
 - [ ] Keep dev fallback support for repo-local `configs/fyom-desktop.json`
 - [ ] Stop relying on process current working directory for production config discovery
 - [ ] Ensure desktop player config remains Tauri-local and separate from Go backend `fyom.yaml`
@@ -1232,7 +1232,7 @@ config directories:
 - macOS: `~/Library/Application Support/fyom/fyom-desktop.json`
 - Linux: `${XDG_CONFIG_HOME:-~/.config}/fyom/fyom-desktop.json`
 
-`fyom_DESKTOP_CONFIG` should remain the highest-priority explicit override, and
+`FYOM_DESKTOP_CONFIG` should remain the highest-priority explicit override, and
 the repo-local `configs/fyom-desktop.json` should remain available only as a
 development fallback. This work must not move local player configuration into
 the Go backend `fyom.yaml`.

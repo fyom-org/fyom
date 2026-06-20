@@ -1,11 +1,11 @@
-//! FYOM Desktop local configuration.
+//! fyom Desktop local configuration.
 //!
 //! This module is intentionally Tauri/Desktop-only.
 //! Do not load external player settings from the Go backend `fyom.yaml`.
 //!
-//! Configuration priority is handled by the launcher:
+//! Player selection priority is handled by the desktop launcher:
 //!
-//! 1. Environment variables
+//! 1. Player environment overrides
 //! 2. Desktop config file
 //! 3. OS default opener
 //!
@@ -15,11 +15,18 @@
 //! 2. Platform user config path
 //! 3. Development fallback `configs/fyom-desktop.json` (debug builds only)
 //! 4. No config
+//!
+//! Important path behavior:
+//!
+//! - Explicit env override paths are interpreted by the operating system as-is.
+//!   Relative paths therefore resolve relative to the current working directory.
+//! - The debug development fallback never depends on the current working
+//!   directory. It is derived from `CARGO_MANIFEST_DIR`.
 
 use std::{
     env,
     ffi::OsString,
-    fs,
+    fmt, fs,
     path::{Path, PathBuf},
 };
 
@@ -89,18 +96,77 @@ pub enum DesktopConfigSource {
     DevFallback,
 }
 
+impl fmt::Display for DesktopConfigSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ExplicitEnv => formatter.write_str("explicit-env"),
+            Self::PlatformUser => formatter.write_str("platform-user"),
+            Self::DevFallback => formatter.write_str("dev-fallback"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopConfigPath {
     pub path: PathBuf,
     pub source: DesktopConfigSource,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DesktopConfigPathError {
-    ExplicitOverrideMissing(PathBuf),
-    ExplicitOverrideUnreadable { path: PathBuf, reason: String },
+    ExplicitOverrideMissing {
+        path: PathBuf,
+        cwd: Option<PathBuf>,
+    },
+    ExplicitOverrideUnreadable {
+        path: PathBuf,
+        reason: String,
+        cwd: Option<PathBuf>,
+    },
     PlatformUnsupported,
 }
+
+impl fmt::Display for DesktopConfigPathError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ExplicitOverrideMissing { path, cwd } => {
+                write!(
+                    formatter,
+                    "explicit desktop config override `{}` points to a missing file: {}",
+                    ENV_DESKTOP_CONFIG,
+                    path.display()
+                )?;
+
+                if let Some(cwd) = cwd {
+                    write!(formatter, "; cwd={}", cwd.display())?;
+                }
+
+                Ok(())
+            }
+
+            Self::ExplicitOverrideUnreadable { path, reason, cwd } => {
+                write!(
+                    formatter,
+                    "desktop config file `{}` is not readable: {}",
+                    path.display(),
+                    reason
+                )?;
+
+                if let Some(cwd) = cwd {
+                    write!(formatter, "; cwd={}", cwd.display())?;
+                }
+
+                Ok(())
+            }
+
+            Self::PlatformUnsupported => formatter.write_str(
+                "platform user config path is unsupported or required environment variables are missing",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DesktopConfigPathError {}
 
 pub trait EnvProvider {
     fn var_os(&self, key: &str) -> Option<OsString>;
@@ -114,6 +180,12 @@ impl EnvProvider for ProcessEnv {
     }
 }
 
+/// Supported platform targets for desktop config path construction.
+///
+/// This enum intentionally contains variants for all supported desktop
+/// platforms even when compiling on only one host OS. Tests use these variants
+/// to verify deterministic cross-platform path behavior.
+#[allow(dead_code)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Platform {
     Windows,
@@ -142,6 +214,31 @@ pub fn current_platform() -> Platform {
     Platform::Unsupported
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ConfigFileStatus {
+    File,
+    Missing,
+    NotFile,
+    Unreadable(String),
+}
+
+trait ConfigFileProbe {
+    fn status(&self, path: &Path) -> ConfigFileStatus;
+}
+
+struct ProcessConfigFileProbe;
+
+impl ConfigFileProbe for ProcessConfigFileProbe {
+    fn status(&self, path: &Path) -> ConfigFileStatus {
+        match fs::metadata(path) {
+            Ok(metadata) if metadata.is_file() => ConfigFileStatus::File,
+            Ok(_) => ConfigFileStatus::NotFile,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => ConfigFileStatus::Missing,
+            Err(error) => ConfigFileStatus::Unreadable(error.to_string()),
+        }
+    }
+}
+
 pub fn resolve_desktop_config_path() -> Result<Option<DesktopConfigPath>, DesktopConfigPathError> {
     resolve_desktop_config_path_with_env(&ProcessEnv, current_platform())
 }
@@ -150,30 +247,32 @@ pub fn resolve_desktop_config_path_with_env<E: EnvProvider>(
     env: &E,
     platform: Platform,
 ) -> Result<Option<DesktopConfigPath>, DesktopConfigPathError> {
-    // 1. Explicit env override: FYOM_DESKTOP_CONFIG
+    resolve_desktop_config_path_with_env_and_probe(env, platform, &ProcessConfigFileProbe)
+}
+
+fn resolve_desktop_config_path_with_env_and_probe<E: EnvProvider, F: ConfigFileProbe>(
+    env: &E,
+    platform: Platform,
+    files: &F,
+) -> Result<Option<DesktopConfigPath>, DesktopConfigPathError> {
+    // 1. Explicit env override: FYOM_DESKTOP_CONFIG.
+    //
+    // Empty or whitespace-only values are treated as unset.
+    // Non-empty values are explicit and must not silently fall back.
     if let Some(value) = env.var_os(ENV_DESKTOP_CONFIG) {
-        let value = value.to_string_lossy().trim().to_string();
-
-        if value.is_empty() {
-            // Empty string: treat as unset, continue to platform paths.
-        } else {
-            let path = PathBuf::from(&value);
-
-            return match path_exists_and_readable(&path) {
-                Ok(true) => Ok(Some(DesktopConfigPath {
-                    path,
-                    source: DesktopConfigSource::ExplicitEnv,
-                })),
-                Ok(false) => Err(DesktopConfigPathError::ExplicitOverrideMissing(path)),
-                Err(err) => Err(err),
-            };
+        if !os_string_is_blank(&value) {
+            let path = PathBuf::from(value);
+            return resolve_explicit_config_path(path, files);
         }
     }
 
-    // 2. Platform user config path
+    // 2. Platform user config path.
+    //
+    // Missing platform environment variables should not crash desktop startup.
+    // A missing or invalid platform config means "no platform config".
     match platform_user_config_path_with_env(env, platform) {
         Ok(platform_path) => {
-            if platform_path.is_file() {
+            if matches!(files.status(&platform_path), ConfigFileStatus::File) {
                 return Ok(Some(DesktopConfigPath {
                     path: platform_path,
                     source: DesktopConfigSource::PlatformUser,
@@ -183,14 +282,17 @@ pub fn resolve_desktop_config_path_with_env<E: EnvProvider>(
         Err(DesktopConfigPathError::PlatformUnsupported) => {
             // Continue to dev fallback before giving up.
         }
-        Err(err) => return Err(err),
+        Err(error) => return Err(error),
     }
 
-    // 3. Dev fallback (debug builds only)
+    // 3. Dev fallback (debug builds only).
+    //
+    // This must never rely on process current working directory.
     #[cfg(debug_assertions)]
     {
         let dev_path = dev_fallback_config_path();
-        if dev_path.is_file() {
+
+        if matches!(files.status(&dev_path), ConfigFileStatus::File) {
             return Ok(Some(DesktopConfigPath {
                 path: dev_path,
                 source: DesktopConfigSource::DevFallback,
@@ -198,8 +300,39 @@ pub fn resolve_desktop_config_path_with_env<E: EnvProvider>(
         }
     }
 
-    // 4. No config found
+    // 4. No config found.
     Ok(None)
+}
+
+fn resolve_explicit_config_path<F: ConfigFileProbe>(
+    path: PathBuf,
+    files: &F,
+) -> Result<Option<DesktopConfigPath>, DesktopConfigPathError> {
+    match files.status(&path) {
+        ConfigFileStatus::File => Ok(Some(DesktopConfigPath {
+            path,
+            source: DesktopConfigSource::ExplicitEnv,
+        })),
+
+        ConfigFileStatus::Missing => Err(DesktopConfigPathError::ExplicitOverrideMissing {
+            path,
+            cwd: process_cwd(),
+        }),
+
+        ConfigFileStatus::NotFile => Err(DesktopConfigPathError::ExplicitOverrideUnreadable {
+            path,
+            reason: "path is not a regular file".to_string(),
+            cwd: process_cwd(),
+        }),
+
+        ConfigFileStatus::Unreadable(reason) => {
+            Err(DesktopConfigPathError::ExplicitOverrideUnreadable {
+                path,
+                reason,
+                cwd: process_cwd(),
+            })
+        }
+    }
 }
 
 pub fn platform_user_config_path_with_env<E: EnvProvider>(
@@ -208,18 +341,18 @@ pub fn platform_user_config_path_with_env<E: EnvProvider>(
 ) -> Result<PathBuf, DesktopConfigPathError> {
     match platform {
         Platform::Windows => {
-            let appdata = env
-                .var_os("APPDATA")
-                .ok_or(DesktopConfigPathError::PlatformUnsupported)?;
+            let appdata =
+                non_blank_env(env, "APPDATA").ok_or(DesktopConfigPathError::PlatformUnsupported)?;
+
             Ok(PathBuf::from(appdata)
                 .join("fyom")
                 .join("fyom-desktop.json"))
         }
 
         Platform::Macos => {
-            let home = env
-                .var_os("HOME")
-                .ok_or(DesktopConfigPathError::PlatformUnsupported)?;
+            let home =
+                non_blank_env(env, "HOME").ok_or(DesktopConfigPathError::PlatformUnsupported)?;
+
             Ok(PathBuf::from(home)
                 .join("Library")
                 .join("Application Support")
@@ -228,17 +361,14 @@ pub fn platform_user_config_path_with_env<E: EnvProvider>(
         }
 
         Platform::Linux => {
-            // Prefer XDG_CONFIG_HOME, fall back to $HOME/.config
-            if let Some(xdg) = env
-                .var_os("XDG_CONFIG_HOME")
-                .filter(|v| !v.to_string_lossy().trim().is_empty())
-            {
-                return Ok(PathBuf::from(xdg).join("fyom").join("fyom-desktop.json"));
+            if let Some(xdg_config_home) = non_blank_env(env, "XDG_CONFIG_HOME") {
+                return Ok(PathBuf::from(xdg_config_home)
+                    .join("fyom")
+                    .join("fyom-desktop.json"));
             }
 
-            let home = env
-                .var_os("HOME")
-                .ok_or(DesktopConfigPathError::PlatformUnsupported)?;
+            let home =
+                non_blank_env(env, "HOME").ok_or(DesktopConfigPathError::PlatformUnsupported)?;
 
             Ok(PathBuf::from(home)
                 .join(".config")
@@ -252,7 +382,7 @@ pub fn platform_user_config_path_with_env<E: EnvProvider>(
 
 #[cfg(debug_assertions)]
 pub fn dev_fallback_config_path() -> PathBuf {
-    // CARGO_MANIFEST_DIR points to src-tauri (where this crate's Cargo.toml lives).
+    // CARGO_MANIFEST_DIR points to src-tauri, where this crate's Cargo.toml lives.
     // The repo-local config is at <repo>/configs/fyom-desktop.json.
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -261,24 +391,16 @@ pub fn dev_fallback_config_path() -> PathBuf {
         .join("fyom-desktop.json")
 }
 
-pub fn path_exists_and_readable(path: &Path) -> Result<bool, DesktopConfigPathError> {
-    match fs::metadata(path) {
-        Ok(metadata) => {
-            if metadata.is_file() {
-                Ok(true)
-            } else {
-                Err(DesktopConfigPathError::ExplicitOverrideUnreadable {
-                    path: path.to_path_buf(),
-                    reason: "path is not a regular file".to_string(),
-                })
-            }
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(err) => Err(DesktopConfigPathError::ExplicitOverrideUnreadable {
-            path: path.to_path_buf(),
-            reason: err.to_string(),
-        }),
-    }
+fn process_cwd() -> Option<PathBuf> {
+    env::current_dir().ok()
+}
+
+fn non_blank_env<E: EnvProvider>(env: &E, key: &str) -> Option<OsString> {
+    env.var_os(key).filter(|value| !os_string_is_blank(value))
+}
+
+fn os_string_is_blank(value: &OsString) -> bool {
+    value.to_string_lossy().trim().is_empty()
 }
 
 // ---------------------------------------------------------------------------
@@ -288,10 +410,7 @@ pub fn path_exists_and_readable(path: &Path) -> Result<bool, DesktopConfigPathEr
 impl DesktopConfig {
     pub fn load() -> Self {
         match try_load_desktop_config() {
-            Ok(Some(config)) => {
-                tracing::info!("[desktop-config] loaded desktop config");
-                config
-            }
+            Ok(Some(config)) => config,
             Ok(None) => {
                 tracing::info!("[desktop-config] no desktop config found; using defaults");
                 Self::default()
@@ -308,12 +427,12 @@ impl DesktopConfig {
 }
 
 fn try_load_desktop_config() -> Result<Option<DesktopConfig>, String> {
-    let Some(selected) = resolve_desktop_config_path().map_err(|err| format!("{err:?}"))? else {
+    let Some(selected) = resolve_desktop_config_path().map_err(|error| error.to_string())? else {
         return Ok(None);
     };
 
     tracing::info!(
-        "[desktop-config] selected desktop config source={:?} path={}",
+        "[desktop-config] selected desktop config source={} path={}",
         selected.source,
         selected.path.display()
     );
@@ -331,6 +450,12 @@ fn try_load_desktop_config() -> Result<Option<DesktopConfig>, String> {
             selected.path.display()
         )
     })?;
+
+    tracing::info!(
+        "[desktop-config] loaded desktop config source={} path={}",
+        selected.source,
+        selected.path.display()
+    );
 
     Ok(Some(config))
 }
@@ -359,6 +484,32 @@ mod tests {
     impl EnvProvider for FakeEnv {
         fn var_os(&self, key: &str) -> Option<OsString> {
             self.vars.get(key).cloned()
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeConfigFileProbe {
+        statuses: HashMap<PathBuf, ConfigFileStatus>,
+    }
+
+    impl FakeConfigFileProbe {
+        fn with_file<P: Into<PathBuf>>(mut self, path: P) -> Self {
+            self.statuses.insert(path.into(), ConfigFileStatus::File);
+            self
+        }
+
+        fn with_status<P: Into<PathBuf>>(mut self, path: P, status: ConfigFileStatus) -> Self {
+            self.statuses.insert(path.into(), status);
+            self
+        }
+    }
+
+    impl ConfigFileProbe for FakeConfigFileProbe {
+        fn status(&self, path: &Path) -> ConfigFileStatus {
+            self.statuses
+                .get(path)
+                .cloned()
+                .unwrap_or(ConfigFileStatus::Missing)
         }
     }
 
@@ -428,142 +579,6 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_platform_returns_error() {
-        let env = FakeEnv::default();
-
-        let result = platform_user_config_path_with_env(&env, Platform::Unsupported);
-
-        assert!(matches!(
-            result,
-            Err(DesktopConfigPathError::PlatformUnsupported)
-        ));
-    }
-
-    #[test]
-    fn windows_missing_appdata_returns_error() {
-        let env = FakeEnv::default();
-
-        let result = platform_user_config_path_with_env(&env, Platform::Windows);
-
-        assert!(matches!(
-            result,
-            Err(DesktopConfigPathError::PlatformUnsupported)
-        ));
-    }
-
-    #[test]
-    fn macos_missing_home_returns_error() {
-        let env = FakeEnv::default();
-
-        let result = platform_user_config_path_with_env(&env, Platform::Macos);
-
-        assert!(matches!(
-            result,
-            Err(DesktopConfigPathError::PlatformUnsupported)
-        ));
-    }
-
-    #[test]
-    fn linux_missing_all_returns_error() {
-        let env = FakeEnv::default();
-
-        let result = platform_user_config_path_with_env(&env, Platform::Linux);
-
-        assert!(matches!(
-            result,
-            Err(DesktopConfigPathError::PlatformUnsupported)
-        ));
-    }
-
-    // --- Priority tests ---
-
-    #[test]
-    fn explicit_env_wins_over_platform_config() {
-        let env = FakeEnv::default()
-            .with("FYOM_DESKTOP_CONFIG", "/custom/path/fyom-desktop.json")
-            .with("HOME", "/home/test");
-
-        // We can't test file existence without real files, so test that
-        // the explicit env var is checked first by verifying it returns
-        // an error for a missing explicit path (not falling back to platform).
-        let result = resolve_desktop_config_path_with_env(&env, Platform::Linux);
-
-        assert!(matches!(
-            result,
-            Err(DesktopConfigPathError::ExplicitOverrideMissing(p))
-            if p == PathBuf::from("/custom/path/fyom-desktop.json")
-        ));
-    }
-
-    #[test]
-    fn empty_explicit_env_is_ignored() {
-        let env = FakeEnv::default()
-            .with("FYOM_DESKTOP_CONFIG", "")
-            .with("HOME", "/home/test");
-
-        // Empty FYOM_DESKTOP_CONFIG should be treated as unset.
-        // Platform path won't exist on disk, so falls through to dev fallback.
-        let result = resolve_desktop_config_path_with_env(&env, Platform::Linux)
-            .expect("should not error with empty env override");
-
-        // Dev fallback may exist in this repo (configs/fyom-desktop.json).
-        // If it does, it should be returned as DevFallback, not silently skipped.
-        if let Some(ref selected) = result {
-            assert_eq!(selected.source, DesktopConfigSource::DevFallback);
-        }
-    }
-
-    #[test]
-    fn missing_explicit_override_does_not_silently_fall_back() {
-        let env = FakeEnv::default()
-            .with("FYOM_DESKTOP_CONFIG", "/nonexistent/fyom-desktop.json")
-            .with("HOME", "/home/test");
-
-        // Explicit override that doesn't exist should return an error,
-        // NOT silently fall back to platform config.
-        let result = resolve_desktop_config_path_with_env(&env, Platform::Linux);
-
-        assert!(matches!(
-            result,
-            Err(DesktopConfigPathError::ExplicitOverrideMissing(p))
-            if p == PathBuf::from("/nonexistent/fyom-desktop.json")
-        ));
-    }
-
-    #[test]
-    fn no_config_returns_none_when_override_absent() {
-        let env = FakeEnv::default().with("HOME", "/home/test");
-
-        // No FYOM_DESKTOP_CONFIG, platform path doesn't exist on disk.
-        let result =
-            resolve_desktop_config_path_with_env(&env, Platform::Linux).expect("should not error");
-
-        // Dev fallback may or may not exist depending on the build environment.
-        // In CI it likely won't exist, so result is None.
-        // We just verify no error occurred; the exact result depends on filesystem.
-        // If dev fallback exists, it returns DevFallback; otherwise None.
-        if let Some(ref selected) = result {
-            assert_eq!(selected.source, DesktopConfigSource::DevFallback);
-        }
-    }
-
-    #[test]
-    fn explicit_env_whitespace_only_is_ignored() {
-        let env = FakeEnv::default()
-            .with("FYOM_DESKTOP_CONFIG", "   ")
-            .with("HOME", "/home/test");
-
-        // Whitespace-only should be treated as empty/unset.
-        let result = resolve_desktop_config_path_with_env(&env, Platform::Linux)
-            .expect("should not error with whitespace-only env override");
-
-        // Same as empty: falls through to platform, then dev fallback.
-        if let Some(ref selected) = result {
-            assert_eq!(selected.source, DesktopConfigSource::DevFallback);
-        }
-    }
-
-    #[test]
     fn linux_empty_xdg_config_home_falls_back_to_home() {
         let env = FakeEnv::default()
             .with("XDG_CONFIG_HOME", "")
@@ -597,5 +612,424 @@ mod tests {
                 .join("fyom")
                 .join("fyom-desktop.json")
         );
+    }
+
+    #[test]
+    fn unsupported_platform_returns_error() {
+        let env = FakeEnv::default();
+
+        let result = platform_user_config_path_with_env(&env, Platform::Unsupported);
+
+        assert!(matches!(
+            result,
+            Err(DesktopConfigPathError::PlatformUnsupported)
+        ));
+    }
+
+    #[test]
+    fn windows_missing_appdata_returns_error() {
+        let env = FakeEnv::default();
+
+        let result = platform_user_config_path_with_env(&env, Platform::Windows);
+
+        assert!(matches!(
+            result,
+            Err(DesktopConfigPathError::PlatformUnsupported)
+        ));
+    }
+
+    #[test]
+    fn windows_empty_appdata_returns_error() {
+        let env = FakeEnv::default().with("APPDATA", "");
+
+        let result = platform_user_config_path_with_env(&env, Platform::Windows);
+
+        assert!(matches!(
+            result,
+            Err(DesktopConfigPathError::PlatformUnsupported)
+        ));
+    }
+
+    #[test]
+    fn macos_missing_home_returns_error() {
+        let env = FakeEnv::default();
+
+        let result = platform_user_config_path_with_env(&env, Platform::Macos);
+
+        assert!(matches!(
+            result,
+            Err(DesktopConfigPathError::PlatformUnsupported)
+        ));
+    }
+
+    #[test]
+    fn macos_empty_home_returns_error() {
+        let env = FakeEnv::default().with("HOME", "");
+
+        let result = platform_user_config_path_with_env(&env, Platform::Macos);
+
+        assert!(matches!(
+            result,
+            Err(DesktopConfigPathError::PlatformUnsupported)
+        ));
+    }
+
+    #[test]
+    fn linux_missing_all_returns_error() {
+        let env = FakeEnv::default();
+
+        let result = platform_user_config_path_with_env(&env, Platform::Linux);
+
+        assert!(matches!(
+            result,
+            Err(DesktopConfigPathError::PlatformUnsupported)
+        ));
+    }
+
+    #[test]
+    fn linux_empty_home_returns_error_when_xdg_missing() {
+        let env = FakeEnv::default().with("HOME", "");
+
+        let result = platform_user_config_path_with_env(&env, Platform::Linux);
+
+        assert!(matches!(
+            result,
+            Err(DesktopConfigPathError::PlatformUnsupported)
+        ));
+    }
+
+    // --- Priority tests ---
+
+    #[test]
+    fn explicit_env_wins_over_platform_config() {
+        let explicit_path = PathBuf::from("/custom/path/fyom-desktop.json");
+        let platform_path = PathBuf::from("/home/test")
+            .join(".config")
+            .join("fyom")
+            .join("fyom-desktop.json");
+
+        let env = FakeEnv::default()
+            .with(ENV_DESKTOP_CONFIG, explicit_path.to_string_lossy().as_ref())
+            .with("HOME", "/home/test");
+
+        let files = FakeConfigFileProbe::default()
+            .with_file(explicit_path.clone())
+            .with_file(platform_path);
+
+        let result = resolve_desktop_config_path_with_env_and_probe(&env, Platform::Linux, &files)
+            .expect("explicit config should resolve")
+            .expect("explicit config should be selected");
+
+        assert_eq!(result.source, DesktopConfigSource::ExplicitEnv);
+        assert_eq!(result.path, explicit_path);
+    }
+
+    #[test]
+    fn empty_explicit_env_is_ignored() {
+        let platform_path = PathBuf::from("/home/test")
+            .join(".config")
+            .join("fyom")
+            .join("fyom-desktop.json");
+
+        let env = FakeEnv::default()
+            .with(ENV_DESKTOP_CONFIG, "")
+            .with("HOME", "/home/test");
+
+        let files = FakeConfigFileProbe::default().with_file(platform_path.clone());
+
+        let result = resolve_desktop_config_path_with_env_and_probe(&env, Platform::Linux, &files)
+            .expect("empty explicit env should not error")
+            .expect("platform config should be selected");
+
+        assert_eq!(result.source, DesktopConfigSource::PlatformUser);
+        assert_eq!(result.path, platform_path);
+    }
+
+    #[test]
+    fn whitespace_explicit_env_is_ignored() {
+        let platform_path = PathBuf::from("/home/test")
+            .join(".config")
+            .join("fyom")
+            .join("fyom-desktop.json");
+
+        let env = FakeEnv::default()
+            .with(ENV_DESKTOP_CONFIG, "   ")
+            .with("HOME", "/home/test");
+
+        let files = FakeConfigFileProbe::default().with_file(platform_path.clone());
+
+        let result = resolve_desktop_config_path_with_env_and_probe(&env, Platform::Linux, &files)
+            .expect("whitespace explicit env should not error")
+            .expect("platform config should be selected");
+
+        assert_eq!(result.source, DesktopConfigSource::PlatformUser);
+        assert_eq!(result.path, platform_path);
+    }
+
+    #[test]
+    fn missing_explicit_override_does_not_silently_fall_back() {
+        let explicit_path = PathBuf::from("/nonexistent/fyom-desktop.json");
+        let platform_path = PathBuf::from("/home/test")
+            .join(".config")
+            .join("fyom")
+            .join("fyom-desktop.json");
+
+        let env = FakeEnv::default()
+            .with(ENV_DESKTOP_CONFIG, explicit_path.to_string_lossy().as_ref())
+            .with("HOME", "/home/test");
+
+        let files = FakeConfigFileProbe::default().with_file(platform_path);
+
+        let result = resolve_desktop_config_path_with_env_and_probe(&env, Platform::Linux, &files);
+
+        assert!(matches!(
+            result,
+            Err(DesktopConfigPathError::ExplicitOverrideMissing { path, .. })
+            if path == explicit_path
+        ));
+    }
+
+    #[test]
+    fn relative_missing_explicit_override_reports_cwd() {
+        let explicit_path = PathBuf::from("configs/fyom-desktop.json");
+
+        let env = FakeEnv::default()
+            .with(ENV_DESKTOP_CONFIG, explicit_path.to_string_lossy().as_ref())
+            .with("HOME", "/home/test");
+
+        let files = FakeConfigFileProbe::default();
+
+        let result = resolve_desktop_config_path_with_env_and_probe(&env, Platform::Linux, &files);
+
+        let Err(error) = result else {
+            panic!("relative missing explicit override should fail");
+        };
+
+        let rendered = error.to_string();
+
+        assert!(rendered.contains("configs/fyom-desktop.json"));
+        assert!(rendered.contains("cwd="));
+    }
+
+    #[test]
+    fn explicit_override_directory_is_error() {
+        let explicit_path = PathBuf::from("/tmp/fyom-config-dir");
+
+        let env = FakeEnv::default()
+            .with(ENV_DESKTOP_CONFIG, explicit_path.to_string_lossy().as_ref())
+            .with("HOME", "/home/test");
+
+        let files = FakeConfigFileProbe::default()
+            .with_status(explicit_path.clone(), ConfigFileStatus::NotFile);
+
+        let result = resolve_desktop_config_path_with_env_and_probe(&env, Platform::Linux, &files);
+
+        assert!(matches!(
+            result,
+            Err(DesktopConfigPathError::ExplicitOverrideUnreadable { path, reason, .. })
+            if path == explicit_path && reason == "path is not a regular file"
+        ));
+    }
+
+    #[test]
+    fn explicit_override_unreadable_is_error() {
+        let explicit_path = PathBuf::from("/tmp/fyom-desktop.json");
+
+        let env = FakeEnv::default()
+            .with(ENV_DESKTOP_CONFIG, explicit_path.to_string_lossy().as_ref())
+            .with("HOME", "/home/test");
+
+        let files = FakeConfigFileProbe::default().with_status(
+            explicit_path.clone(),
+            ConfigFileStatus::Unreadable("permission denied".to_string()),
+        );
+
+        let result = resolve_desktop_config_path_with_env_and_probe(&env, Platform::Linux, &files);
+
+        assert!(matches!(
+            result,
+            Err(DesktopConfigPathError::ExplicitOverrideUnreadable { path, reason, .. })
+            if path == explicit_path && reason == "permission denied"
+        ));
+    }
+
+    #[test]
+    fn platform_config_is_selected_when_override_absent_and_file_exists() {
+        let platform_path = PathBuf::from("/home/test")
+            .join(".config")
+            .join("fyom")
+            .join("fyom-desktop.json");
+
+        let env = FakeEnv::default().with("HOME", "/home/test");
+        let files = FakeConfigFileProbe::default().with_file(platform_path.clone());
+
+        let result = resolve_desktop_config_path_with_env_and_probe(&env, Platform::Linux, &files)
+            .expect("platform config should resolve")
+            .expect("platform config should be selected");
+
+        assert_eq!(result.source, DesktopConfigSource::PlatformUser);
+        assert_eq!(result.path, platform_path);
+    }
+
+    #[test]
+    fn platform_config_missing_falls_through_to_no_config() {
+        let env = FakeEnv::default().with("HOME", "/home/test");
+        let files = FakeConfigFileProbe::default();
+
+        let result = resolve_desktop_config_path_with_env_and_probe(&env, Platform::Linux, &files)
+            .expect("missing config should not error");
+
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn platform_config_directory_is_ignored() {
+        let platform_path = PathBuf::from("/home/test")
+            .join(".config")
+            .join("fyom")
+            .join("fyom-desktop.json");
+
+        let env = FakeEnv::default().with("HOME", "/home/test");
+
+        let files =
+            FakeConfigFileProbe::default().with_status(platform_path, ConfigFileStatus::NotFile);
+
+        let result = resolve_desktop_config_path_with_env_and_probe(&env, Platform::Linux, &files)
+            .expect("invalid platform config should be ignored");
+
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn platform_config_unreadable_is_ignored() {
+        let platform_path = PathBuf::from("/home/test")
+            .join(".config")
+            .join("fyom")
+            .join("fyom-desktop.json");
+
+        let env = FakeEnv::default().with("HOME", "/home/test");
+
+        let files = FakeConfigFileProbe::default().with_status(
+            platform_path,
+            ConfigFileStatus::Unreadable("permission denied".to_string()),
+        );
+
+        let result = resolve_desktop_config_path_with_env_and_probe(&env, Platform::Linux, &files)
+            .expect("unreadable platform config should be ignored");
+
+        assert_eq!(result, None);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn dev_fallback_is_selected_in_debug_when_file_exists() {
+        let env = FakeEnv::default().with("HOME", "/home/test");
+        let dev_path = dev_fallback_config_path();
+
+        let files = FakeConfigFileProbe::default().with_file(dev_path.clone());
+
+        let result = resolve_desktop_config_path_with_env_and_probe(&env, Platform::Linux, &files)
+            .expect("dev fallback should not error")
+            .expect("dev fallback should be selected");
+
+        assert_eq!(result.source, DesktopConfigSource::DevFallback);
+        assert_eq!(result.path, dev_path);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn platform_config_wins_over_dev_fallback() {
+        let platform_path = PathBuf::from("/home/test")
+            .join(".config")
+            .join("fyom")
+            .join("fyom-desktop.json");
+
+        let dev_path = dev_fallback_config_path();
+
+        let env = FakeEnv::default().with("HOME", "/home/test");
+
+        let files = FakeConfigFileProbe::default()
+            .with_file(platform_path.clone())
+            .with_file(dev_path);
+
+        let result = resolve_desktop_config_path_with_env_and_probe(&env, Platform::Linux, &files)
+            .expect("config resolution should succeed")
+            .expect("platform config should be selected");
+
+        assert_eq!(result.source, DesktopConfigSource::PlatformUser);
+        assert_eq!(result.path, platform_path);
+    }
+
+    #[test]
+    fn unsupported_platform_falls_through_to_no_config_when_no_dev_fallback() {
+        let env = FakeEnv::default();
+        let files = FakeConfigFileProbe::default();
+
+        let result =
+            resolve_desktop_config_path_with_env_and_probe(&env, Platform::Unsupported, &files)
+                .expect("unsupported platform should fall through to no config");
+
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn display_error_reads_missing_error_fields() {
+        let missing = DesktopConfigPathError::ExplicitOverrideMissing {
+            path: PathBuf::from("/missing/fyom-desktop.json"),
+            cwd: Some(PathBuf::from("/workdir")),
+        };
+
+        let rendered = missing.to_string();
+
+        assert!(rendered.contains("/missing/fyom-desktop.json"));
+        assert!(rendered.contains("/workdir"));
+    }
+
+    #[test]
+    fn display_error_reads_unreadable_error_fields() {
+        let unreadable = DesktopConfigPathError::ExplicitOverrideUnreadable {
+            path: PathBuf::from("/unreadable/fyom-desktop.json"),
+            reason: "permission denied".to_string(),
+            cwd: Some(PathBuf::from("/workdir")),
+        };
+
+        let rendered = unreadable.to_string();
+
+        assert!(rendered.contains("/unreadable/fyom-desktop.json"));
+        assert!(rendered.contains("permission denied"));
+        assert!(rendered.contains("/workdir"));
+    }
+
+    #[test]
+    fn desktop_config_deserializes_minimal_json() {
+        let config = serde_json::from_str::<DesktopConfig>(r#"{}"#)
+            .expect("minimal desktop config should deserialize");
+
+        assert_eq!(config.external_player.kind, ExternalPlayerKind::System);
+        assert_eq!(config.external_player.program, "");
+        assert!(config.external_player.args.is_empty());
+        assert!(config.external_player.append_default_mpv_args);
+    }
+
+    #[test]
+    fn desktop_config_deserializes_external_player_json() {
+        let config = serde_json::from_str::<DesktopConfig>(
+            r#"
+            {
+              "externalPlayer": {
+                "kind": "mpv",
+                "program": "mpv",
+                "args": ["--force-window=yes"],
+                "appendDefaultMpvArgs": false
+              }
+            }
+            "#,
+        )
+        .expect("desktop config should deserialize");
+
+        assert_eq!(config.external_player.kind, ExternalPlayerKind::Mpv);
+        assert_eq!(config.external_player.program, "mpv");
+        assert_eq!(config.external_player.args, vec!["--force-window=yes"]);
+        assert!(!config.external_player.append_default_mpv_args);
     }
 }
