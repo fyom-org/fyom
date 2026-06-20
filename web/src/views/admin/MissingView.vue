@@ -4,8 +4,8 @@
       <h1>{{ $t('admin.missing.title') }}</h1>
       <button
         class="danger-btn"
-        @click="deleteAllMissing"
         :disabled="deleting || loading || items.length === 0"
+        @click="deleteAllMissing"
       >
         {{ deleting ? $t('admin.missing.deleting') : $t('admin.missing.deleteAll') }}
       </button>
@@ -15,12 +15,12 @@
       {{ $t('admin.missing.subtitle') }}
     </p>
 
-    <div class="toolbar" v-if="libraries.length > 1">
+    <div v-if="libraries.length > 1" class="toolbar">
       <select
         v-model="libraryFilter"
-        @change="fetchMissing"
         class="filter-select"
         :disabled="loading || deleting"
+        @change="fetchMissing"
       >
         <option value="">{{ $t('admin.missing.allLibraries') }}</option>
         <option v-for="lib in libraries" :key="lib.id" :value="lib.id">
@@ -33,27 +33,27 @@
     <p v-else-if="error" class="error-text">{{ error }}</p>
 
     <template v-else>
-      <div class="result-info" v-if="total > 0">
+      <div v-if="total > 0" class="result-info">
         {{ total }} {{ $t('admin.missing.itemCount', total) }}
       </div>
 
-      <div class="missing-list" v-if="items.length > 0">
-        <div class="missing-row" v-for="item in items" :key="item.id">
+      <div v-if="items.length > 0" class="missing-list">
+        <div v-for="item in items" :key="item.id" class="missing-row">
           <span class="item-type" :class="item.type">{{ item.type }}</span>
           <span class="item-title">{{ item.title }}</span>
           <span class="item-path">{{ item.file_path }}</span>
           <span class="item-library">{{ resolveLibraryName(item.library_id) }}</span>
           <button
             class="delete-btn"
-            @click="deleteSingle(item)"
             :disabled="deletingId === item.id || deleting"
+            @click="deleteSingle(item)"
           >
             {{ deletingId === item.id ? $t('admin.missing.removing') : $t('admin.missing.removeButton') }}
           </button>
         </div>
       </div>
 
-      <div class="all-clear" v-else>
+      <div v-else class="all-clear">
         <span class="check-icon">&#10003;</span>
         <p>{{ $t('admin.missing.allAvailable') }}</p>
       </div>

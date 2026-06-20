@@ -2,7 +2,7 @@
   <div class="admin-page">
     <div class="page-header">
       <h1>{{ $t('admin.providers.title') }}</h1>
-      <button class="add-btn" @click="toggleForm" :disabled="loading || saving">
+      <button class="add-btn" :disabled="loading || saving" @click="toggleForm">
         {{ showForm ? $t('common.cancel') : $t('admin.providers.addProvider') }}
       </button>
     </div>
@@ -38,7 +38,7 @@
 
       <p v-if="error" class="error">{{ error }}</p>
 
-      <button class="submit-btn" @click="createProvider" :disabled="saving">
+      <button class="submit-btn" :disabled="saving" @click="createProvider">
         {{ saving ? $t('admin.providers.creating') : $t('admin.providers.createButton') }}
       </button>
     </div>

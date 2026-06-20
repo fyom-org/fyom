@@ -5,18 +5,18 @@
     <div class="toolbar">
       <input
         v-model="searchQuery"
-        @input="onSearchInput"
         type="text"
         :placeholder="$t('admin.media.searchPlaceholder')"
         class="search-input"
+        @input="onSearchInput"
       />
       <select
         v-model="typeFilter"
+        class="filter-select"
         @change="
           page = 1;
           fetchItems();
         "
-        class="filter-select"
       >
         <option value="">{{ $t('admin.media.allTypes') }}</option>
         <option value="movie">Movies</option>
@@ -25,28 +25,28 @@
       </select>
       <select
         v-model="libraryFilter"
+        class="filter-select"
         @change="
           page = 1;
           fetchItems();
         "
-        class="filter-select"
       >
         <option value="">{{ $t('admin.media.allLibraries') }}</option>
         <option v-for="lib in libraries" :key="lib.id" :value="lib.id">{{ lib.name }}</option>
       </select>
     </div>
 
-    <div class="result-info" v-if="total > 0">{{ total }} {{ $t('admin.media.itemsCount') }}</div>
+    <div v-if="total > 0" class="result-info">{{ total }} {{ $t('admin.media.itemsCount') }}</div>
 
     <!-- Grouped view (shows with nested episodes; movies standalone) -->
-    <div class="media-list" v-if="groupedItems.length > 0">
+    <div v-if="groupedItems.length > 0" class="media-list">
       <template v-for="g in groupedItems" :key="g.id">
         <!-- Show row -->
         <div v-if="g.type === 'show'" class="media-row show-row" @click="toggleShow(g.id)">
           <span class="expand-icon">{{ expandedShows.has(g.id) ? '▼' : '▶' }}</span>
           <span class="item-type show">Show</span>
           <span class="item-title">{{ g.title }}</span>
-          <span class="item-year" v-if="g.year">{{ g.year }}</span>
+          <span v-if="g.year" class="item-year">{{ g.year }}</span>
           <span class="item-library">{{ g.library_id }}</span>
           <span class="item-provider">{{ g.provider_id }}</span>
           <span class="item-date">{{ formatDate(g.created_at) }}</span>
@@ -60,7 +60,7 @@
             <span class="item-type episode">Episode</span>
             <span class="ep-number">{{ ep.season }}x{{ String(ep.episode).padStart(2, '0') }}</span>
             <span class="item-title ep-title">{{ ep.title }}</span>
-            <span class="item-year" v-if="ep.year">{{ ep.year }}</span>
+            <span v-if="ep.year" class="item-year">{{ ep.year }}</span>
             <span class="item-library">{{ ep.library_id }}</span>
             <span class="item-provider">{{ ep.provider_id }}</span>
             <span class="item-date">{{ formatDate(ep.created_at) }}</span>
@@ -72,7 +72,7 @@
           <span class="expand-placeholder"></span>
           <span class="item-type movie">Movie</span>
           <span class="item-title">{{ g.title }}</span>
-          <span class="item-year" v-if="g.year">{{ g.year }}</span>
+          <span v-if="g.year" class="item-year">{{ g.year }}</span>
           <span class="item-library">{{ g.library_id }}</span>
           <span class="item-provider">{{ g.provider_id }}</span>
           <span class="item-date">{{ formatDate(g.created_at) }}</span>
@@ -81,7 +81,7 @@
       </template>
     </div>
 
-    <div class="pagination" v-if="total > limit">
+    <div v-if="total > limit" class="pagination">
       <button
         :disabled="page <= 1"
         @click="
@@ -103,7 +103,7 @@
       </button>
     </div>
 
-    <p class="empty" v-else-if="!loading && items.length === 0">{{ $t('admin.media.noItems') }}</p>
+    <p v-else-if="!loading && items.length === 0" class="empty">{{ $t('admin.media.noItems') }}</p>
   </div>
 </template>
 

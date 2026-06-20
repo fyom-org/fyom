@@ -11,7 +11,7 @@
         <h2>{{ $t('admin.settings.registration') }}</h2>
 
         <label class="toggle-row">
-          <input type="checkbox" v-model="allowRegistration" :disabled="saving" />
+          <input v-model="allowRegistration" type="checkbox" :disabled="saving" />
           <span>{{ $t('admin.settings.allowRegistration') }}</span>
         </label>
 

@@ -9,7 +9,7 @@
         <span class="chevron" :class="{ expanded: isSeasonExpanded(s.season) }">&#8249;</span>
       </button>
 
-      <div class="season-episodes" v-if="isSeasonExpanded(s.season)">
+      <div v-if="isSeasonExpanded(s.season)" class="season-episodes">
         <div
           v-for="ep in s.episodes"
           :key="ep.id"
