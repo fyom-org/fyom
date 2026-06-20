@@ -1272,10 +1272,10 @@ the Go backend `fyom.yaml`.
 - [x] Extend `PUT /media/{id}/progress` to accept `{ "played": true }` shorthand alongside legacy `{ "position", "duration", "finished" }`.
 - [x] `MediaProgressInput` frontend type updated with optional `played` field.
 
-#### 4. Remove useless scripts and fix ci workflow
+#### 4. Remove useless scripts, clean up ci workflow and deps
 - [x] Remove scripts for libmpv runtime on different platforms
-- [x] Clean up ci stages [build-desktop.yaml](.github/workflows/build-desktop.yaml)
-
+- [x] Fix and clean up ci stages [build-desktop.yaml](.github/workflows/build-desktop.yaml)
+- [x] Clean up `flake.nix` dependencies
 
 ### Positive Consequences
 
