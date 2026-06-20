@@ -19,23 +19,14 @@ tasks:
   # Build
   # ================================================
 
+  # ================================================
+  # Web dependencies and embedded frontend assets
+  # ================================================
+
   build:
     desc: "Build fyom backend binary with embedded frontend"
-    deps: [build:web]
-    cmds:
-      - mkdir -p {{.BUILD_DIR}}
-      - >
-        CGO_ENABLED=0 go build
-        -ldflags "-s -w
-        -X github.com/fyom/fyom/internal/version.Version={{.VERSION}}
-        -X github.com/fyom/fyom/internal/version.Commit={{.COMMIT}}
-        -X github.com/fyom/fyom/internal/version.BuildTime={{.BUILD_TIME}}"
-        -o {{.BUILD_DIR}}/{{.BINARY_NAME}}
-        {{.CMD_PATH}}
-
-  sidecar:
-    desc: "Build fyom sidecar binary"
-    deps: [build:web]
+    deps:
+      - build:web:dist
     cmds:
       - mkdir -p {{.BUILD_DIR}}
       - >
@@ -49,14 +40,55 @@ tasks:
 
   build:web:
     desc: "Build frontend for production"
+    deps:
+      - web:install
     dir: web
     cmds:
       - pnpm run build:full
       - node ../scripts/delete-sourcemaps.js dist
 
+  build:web:install:
+    desc: "Install frontend dependencies"
+    dir: web
+    cmds:
+      - pnpm install --frozen-lockfile
+
+  build:web:dist:
+    desc: "Ensure compiled frontend dist exists for Go embed"
+    deps:
+      - web:install
+    cmds:
+      - |
+        bash <<'EOF'
+        set -euo pipefail
+
+        if [ -f "web/dist/index.html" ]; then
+          echo "web/dist already exists."
+          exit 0
+        fi
+
+        echo "web/dist is missing; building frontend for Go embed."
+        task build:web
+        EOF
+
+  build:sidecar:
+    desc: "Build fyom sidecar binary"
+    deps:
+      - build:web:dist
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - >
+        CGO_ENABLED=0 go build
+        -ldflags "-s -w
+        -X github.com/fyom/fyom/internal/version.Version={{.VERSION}}
+        -X github.com/fyom/fyom/internal/version.Commit={{.COMMIT}}
+        -X github.com/fyom/fyom/internal/version.BuildTime={{.BUILD_TIME}}"
+        -o {{.BUILD_DIR}}/{{.BINARY_NAME}}
+        {{.CMD_PATH}}
+
   build:desktop:
     desc: "Build Tauri desktop app bundle"
-    deps: [sidecar]
+    deps: [build:sidecar]
     cmds:
       - cd src-tauri && cargo-tauri build
 
@@ -100,7 +132,7 @@ tasks:
 
   dev:desktop-mpv-system:
     desc: "Run Tauri desktop dev mode using mpv from PATH"
-    deps: [sidecar]
+    deps: [build:sidecar]
     dir: src-tauri
     env:
       FYOM_BIN: ../build/fyom
@@ -111,7 +143,7 @@ tasks:
 
   dev:desktop-system-player:
     desc: "Run Tauri desktop dev mode using the OS default external player"
-    deps: [sidecar]
+    deps: [build:sidecar]
     dir: src-tauri
     env:
       FYOM_BIN: ../build/fyom
@@ -149,12 +181,25 @@ tasks:
 
   test:coverage:
     desc: "Run Go coverage for project packages"
+    deps:
+      - build:web:dist
     cmds:
       - |
         bash <<'EOF'
         set -euo pipefail
 
-        mapfile -t packages < <(go list ./...)
+        packages_file="$(mktemp)"
+        trap 'rm -f "$packages_file"' EXIT
+
+        if ! go list ./... > "$packages_file"; then
+          echo
+          echo "go list ./... failed."
+          echo "If the error mentions web/embed.go or go:embed, ensure web/dist exists."
+          echo "Try: task build:web:dist"
+          exit 1
+        fi
+
+        mapfile -t packages < "$packages_file"
 
         filtered=()
         for package in "${packages[@]}"; do
@@ -180,12 +225,25 @@ tasks:
 
   test:go:
     desc: "Run all Go tests for project packages"
+    deps:
+      - build:web:dist
     cmds:
       - |
         bash <<'EOF'
         set -euo pipefail
 
-        mapfile -t packages < <(go list ./...)
+        packages_file="$(mktemp)"
+        trap 'rm -f "$packages_file"' EXIT
+
+        if ! go list ./... > "$packages_file"; then
+          echo
+          echo "go list ./... failed."
+          echo "If the error mentions web/embed.go or go:embed, ensure web/dist exists."
+          echo "Try: task build:web:dist"
+          exit 1
+        fi
+
+        mapfile -t packages < "$packages_file"
 
         filtered=()
         for package in "${packages[@]}"; do
@@ -243,12 +301,25 @@ tasks:
 
   test:race:
     desc: "Run Go race tests for project packages"
+    deps:
+      - build:web:dist
     cmds:
       - |
         bash <<'EOF'
         set -euo pipefail
 
-        mapfile -t packages < <(go list ./...)
+        packages_file="$(mktemp)"
+        trap 'rm -f "$packages_file"' EXIT
+
+        if ! go list ./... > "$packages_file"; then
+          echo
+          echo "go list ./... failed."
+          echo "If the error mentions web/embed.go or go:embed, ensure web/dist exists."
+          echo "Try: task build:web:dist"
+          exit 1
+        fi
+
+        mapfile -t packages < "$packages_file"
 
         filtered=()
         for package in "${packages[@]}"; do
@@ -308,13 +379,26 @@ tasks:
 
   lint:go:
     desc: "Run Go linter for project packages"
+    deps:
+      - build:web:dist
     cmds:
       - |
         bash <<'EOF'
         set -euo pipefail
 
         module_path="$(go list -m)"
-        mapfile -t packages < <(go list ./...)
+        packages_file="$(mktemp)"
+        trap 'rm -f "$packages_file"' EXIT
+
+        if ! go list ./... > "$packages_file"; then
+          echo
+          echo "go list ./... failed."
+          echo "If the error mentions web/embed.go or go:embed, ensure web/dist exists."
+          echo "Try: task build:web:dist"
+          exit 1
+        fi
+
+        mapfile -t packages < "$packages_file"
 
         patterns=()
         for package in "${packages[@]}"; do
