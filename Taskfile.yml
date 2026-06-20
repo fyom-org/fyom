@@ -134,9 +134,32 @@ tasks:
   # ================================================
 
   test:
-    desc: "Run all Go tests"
+    desc: "Run all Go tests for project packages"
     cmds:
-      - go test -v -count=1 ./...
+      - |
+        bash <<'EOF'
+        set -euo pipefail
+
+        mapfile -t packages < <(go list ./...)
+
+        filtered=()
+        for package in "${packages[@]}"; do
+          case "$package" in
+            *web/node_modules*)
+              continue
+              ;;
+          esac
+
+          filtered+=("$package")
+        done
+
+        if [ "${#filtered[@]}" -eq 0 ]; then
+          echo "No Go packages found to test."
+          exit 1
+        fi
+
+        go test -v -count=1 "${filtered[@]}"
+        EOF
     env:
       CGO_ENABLED: "0"
 
@@ -174,17 +197,63 @@ tasks:
       no_proxy: "localhost,127.0.0.1,::1"
 
   test:race:
-    desc: "Run Go race tests"
+    desc: "Run Go race tests for project packages"
     cmds:
-      - go test -race -count=1 ./...
+      - |
+        bash <<'EOF'
+        set -euo pipefail
+
+        mapfile -t packages < <(go list ./...)
+
+        filtered=()
+        for package in "${packages[@]}"; do
+          case "$package" in
+            *web/node_modules*)
+              continue
+              ;;
+          esac
+
+          filtered+=("$package")
+        done
+
+        if [ "${#filtered[@]}" -eq 0 ]; then
+          echo "No Go packages found to test."
+          exit 1
+        fi
+
+        go test -race -count=1 "${filtered[@]}"
+        EOF
     env:
       CGO_ENABLED: "1"
 
   coverage:
-    desc: "Run Go coverage"
+    desc: "Run Go coverage for project packages"
     cmds:
-      - go test -coverprofile=coverage.out ./...
-      - go tool cover -func=coverage.out
+      - |
+        bash <<'EOF'
+        set -euo pipefail
+
+        mapfile -t packages < <(go list ./...)
+
+        filtered=()
+        for package in "${packages[@]}"; do
+          case "$package" in
+            *web/node_modules*)
+              continue
+              ;;
+          esac
+
+          filtered+=("$package")
+        done
+
+        if [ "${#filtered[@]}" -eq 0 ]; then
+          echo "No Go packages found for coverage."
+          exit 1
+        fi
+
+        go test -coverprofile=coverage.out "${filtered[@]}"
+        go tool cover -func=coverage.out
+        EOF
     env:
       CGO_ENABLED: "0"
 
@@ -209,11 +278,39 @@ tasks:
       - lint:web
 
   lint:go:
-    desc: "Run Go linter"
+    desc: "Run Go linter for project packages"
     cmds:
-      - bash -c 'golangci-lint run $(go list ./... | grep -v "web/node_modules" | sed "s|github.com/fyom/fyom||" | sed "s|^|./|")'
+      - |
+        bash <<'EOF'
+        set -euo pipefail
+
+        mapfile -t packages < <(go list ./...)
+
+        filtered=()
+        for package in "${packages[@]}"; do
+          case "$package" in
+            *web/node_modules*)
+              continue
+              ;;
+          esac
+
+          filtered+=("$package")
+        done
+
+        if [ "${#filtered[@]}" -eq 0 ]; then
+          echo "No Go packages found to lint."
+          exit 1
+        fi
+
+        golangci-lint run "${filtered[@]}"
+        EOF
     env:
       CGO_ENABLED: "0"
+
+  lint:go:config:
+    desc: "Verify golangci-lint configuration"
+    cmds:
+      - golangci-lint config verify
 
   lint:web:
     desc: "Run ESLint for web"
@@ -231,7 +328,7 @@ tasks:
     desc: "Run ESLint with Node deprecation trace"
     dir: web
     cmds:
-      - pnpm exec eslint .
+      - pnpm lint
     env:
       NODE_OPTIONS: "--trace-deprecation"
 
@@ -242,6 +339,7 @@ tasks:
   ci:
     desc: "Run CI verification suite"
     deps:
+      - lint:go:config
       - lint
       - test
       - build
