@@ -208,7 +208,7 @@ task smoke
 
 ## Configuration
 
-### Server (`fyom.yaml`)
+### Server [fyom.yaml](configs/fyom.yaml)
 
 ```yaml
 server:
@@ -232,12 +232,16 @@ libraries:
     provider: "local"
 ```
 
-### Desktop (`fyom-desktop.json`)
+### Desktop [fyom-desktop.json](configs/fyom-desktop.json)
 
 ```json
 {
-  "player": "auto",
-  "mpvArgs": ["--fullscreen", "--force-media-title=${title}"]
+  "externalPlayer": {
+    "kind": "mpv",
+    "program": "mpv",
+    "args": [],
+    "appendDefaultMpvArgs": true
+  }
 }
 ```
 
@@ -307,6 +311,8 @@ fyom/
 ├── migrations/            # Embedded SQL migrations
 ├── configs/               # Default config files
 └── Taskfile.yml           # Build, dev, test, lint, CI tasks
+```
+
 ---
 
 ## Design Boundaries
