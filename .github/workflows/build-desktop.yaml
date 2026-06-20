@@ -11,6 +11,11 @@ on:
 
 permissions:
   contents: read
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -43,6 +48,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          rm -rf release-assets
           mkdir -p release-assets
 
           if [ -d "src-tauri/target/release/bundle" ]; then
@@ -69,6 +75,7 @@ jobs:
           name: release-assets-linux
           path: release-assets/*
           if-no-files-found: error
+          retention-days: 7
 
   build-macos:
     name: build-macos-native
@@ -87,7 +94,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
 
@@ -132,6 +139,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          rm -rf release-assets
           mkdir -p release-assets
 
           if [ -d "src-tauri/target/release/bundle" ]; then
@@ -158,6 +166,7 @@ jobs:
           name: release-assets-macos
           path: release-assets/*
           if-no-files-found: error
+          retention-days: 7
 
   build-windows:
     name: build-windows-native
@@ -176,7 +185,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
 
@@ -219,12 +228,19 @@ jobs:
       - name: Collect Windows assets
         shell: pwsh
         run: |
+          if (Test-Path "release-assets") {
+            Remove-Item -Recurse -Force "release-assets"
+          }
+
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
 
           $bundleFiles = @()
+
           if (Test-Path "src-tauri/target/release/bundle") {
             $bundleFiles = Get-ChildItem -Path src-tauri/target/release/bundle -Recurse -File -ErrorAction SilentlyContinue |
-              Where-Object { $_.Extension -in ".msi", ".exe" }
+              Where-Object {
+                $_.Extension -in ".msi", ".exe"
+              }
           }
 
           if ($bundleFiles.Count -gt 0) {
@@ -243,17 +259,117 @@ jobs:
           Write-Host "Collected Windows assets:"
           Get-ChildItem release-assets
 
+          if (-not (Get-ChildItem release-assets -File -ErrorAction SilentlyContinue)) {
+            Write-Error "No Windows release assets found after collection."
+            exit 1
+          }
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: release-assets-windows
           path: release-assets/*
           if-no-files-found: error
+          retention-days: 7
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+  release:
+    name: create-github-release
+    runs-on: ubuntu-latest
+    needs:
+      - build-linux
+      - build-macos
+      - build-windows
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
         with:
-          generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          files: staged/*
-          fail_on_unmatched_files: true
+          pattern: release-assets-*
+          path: downloaded-artifacts
+          merge-multiple: false
+
+      - name: Stage release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf staged
+          mkdir -p staged
+
+          if [ ! -d "downloaded-artifacts" ]; then
+            echo "downloaded-artifacts directory does not exist"
+            exit 1
+          fi
+
+          echo "Downloaded artifacts:"
+          find downloaded-artifacts -type f -maxdepth 3 -print | sort || true
+
+          while IFS= read -r -d '' file; do
+            base_name="$(basename "$file")"
+            parent_name="$(basename "$(dirname "$file")")"
+            destination="staged/$base_name"
+
+            if [ -e "$destination" ]; then
+              destination="staged/${parent_name}-${base_name}"
+            fi
+
+            cp "$file" "$destination"
+          done < <(find downloaded-artifacts -type f -print0)
+
+          echo "Staged release assets:"
+          ls -lah staged || true
+
+          if [ -z "$(ls -A staged 2>/dev/null || true)" ]; then
+            echo "No staged release assets found"
+            exit 1
+          fi
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$TAG_NAME" ]; then
+            echo "TAG_NAME is empty"
+            exit 1
+          fi
+
+          if [ -z "$(ls -A staged 2>/dev/null || true)" ]; then
+            echo "No files found in staged/"
+            exit 1
+          fi
+
+          echo "Preparing release for tag: $TAG_NAME"
+
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Release already exists. Uploading assets with clobber enabled."
+
+            if [[ "$TAG_NAME" == *-* ]]; then
+              gh release edit "$TAG_NAME" --prerelease
+            fi
+
+            gh release upload "$TAG_NAME" staged/* --clobber
+          else
+            echo "Release does not exist. Creating a new release."
+
+            create_args=(
+              release create "$TAG_NAME"
+              staged/*
+              --title "$TAG_NAME"
+              --generate-notes
+            )
+
+            if [[ "$TAG_NAME" == *-* ]]; then
+              create_args+=(--prerelease)
+            fi
+
+            gh "${create_args[@]}"
+          fi
