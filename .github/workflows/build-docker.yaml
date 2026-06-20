@@ -1,0 +1,264 @@
+name: build-docker
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/fyom
+  DOCKERFILE: docker/Dockerfile
+  BUILD_COMMAND: task build
+
+jobs:
+  preflight:
+    name: preflight
+    runs-on: ubuntu-latest
+
+    outputs:
+      should_build: ${{ steps.detect.outputs.should_build }}
+      release_tag_on_sha: ${{ steps.detect.outputs.release_tag_on_sha }}
+      matched_release_tags: ${{ steps.detect.outputs.matched_release_tags }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect duplicate branch/tag trigger
+        id: detect
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          echo "EVENT_NAME=$EVENT_NAME"
+          echo "REF_TYPE=$REF_TYPE"
+          echo "REF_NAME=$REF_NAME"
+          echo "SHA=$SHA"
+
+          release_tag_on_sha="false"
+          matched_release_tags=""
+
+          git fetch --force --tags origin '+refs/tags/v*:refs/tags/v*'
+
+          matched_release_tags="$(git tag --points-at "$SHA" --list 'v*' | tr '\n' ' ' | sed 's/[[:space:]]*$//' || true)"
+
+          if [ -n "$matched_release_tags" ]; then
+            release_tag_on_sha="true"
+          fi
+
+          should_build="true"
+
+          # Skip duplicate branch-side build when the same commit already has a release tag.
+          if [ "$EVENT_NAME" = "push" ] && [ "$REF_TYPE" = "branch" ] && [ "$REF_NAME" = "main" ] && [ "$release_tag_on_sha" = "true" ]; then
+            should_build="false"
+          fi
+
+          echo "release_tag_on_sha=$release_tag_on_sha"
+          echo "matched_release_tags=$matched_release_tags"
+          echo "should_build=$should_build"
+
+          {
+            echo "release_tag_on_sha=$release_tag_on_sha"
+            echo "matched_release_tags=$matched_release_tags"
+            echo "should_build=$should_build"
+          } >> "$GITHUB_OUTPUT"
+
+  docker-build:
+    name: docker-build
+    runs-on: ubuntu-latest
+    needs:
+      - preflight
+
+    if: needs.preflight.outputs.should_build == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set lowercase image name
+        id: image
+        shell: bash
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        run: |
+          set -euo pipefail
+
+          image_name="$(echo "$IMAGE_NAME" | tr '[:upper:]' '[:lower:]')"
+
+          echo "image_name=$image_name" >> "$GITHUB_OUTPUT"
+          echo "Image name: $image_name"
+
+      - name: Set Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.image_name }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=ref,event=pr
+            type=sha,prefix=sha-
+          labels: |
+            org.opencontainers.image.title=fyom
+            org.opencontainers.image.description=fyom server container image
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build Docker image for validation
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: fyom:ci
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ github.run_id }}
+            BUILD_COMMAND=${{ env.BUILD_COMMAND }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test Docker image
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker image inspect fyom:ci >/dev/null
+
+          container_id="$(docker run -d \
+            --name fyom-smoke-test \
+            -p 18080:8080 \
+            fyom:ci)"
+
+          cleanup() {
+            docker logs fyom-smoke-test || true
+            docker rm -f "$container_id" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          sleep 5
+
+          if ! docker ps --format '{{.Names}}' | grep -qx 'fyom-smoke-test'; then
+            echo "Container exited during smoke test."
+            exit 1
+          fi
+
+          echo "Container started successfully."
+
+      - name: Build and push Docker image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ github.run_id }}
+            BUILD_COMMAND=${{ env.BUILD_COMMAND }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  docker-artifact:
+    name: docker-artifact
+    runs-on: ubuntu-latest
+    needs:
+      - preflight
+
+    if: >
+      needs.preflight.outputs.should_build == 'true' &&
+      startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set lowercase image name
+        id: image
+        shell: bash
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        run: |
+          set -euo pipefail
+
+          image_name="$(echo "$IMAGE_NAME" | tr '[:upper:]' '[:lower:]')"
+
+          echo "image_name=$image_name" >> "$GITHUB_OUTPUT"
+          echo "Image name: $image_name"
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image tarball
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ env.DOCKERFILE }}
+          platforms: linux/amd64
+          push: false
+          tags: ${{ steps.image.outputs.image_name }}:${{ github.ref_name }}
+          outputs: type=docker,dest=/tmp/fyom-${{ github.ref_name }}-linux-amd64.tar
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ github.run_id }}
+            BUILD_COMMAND=${{ env.BUILD_COMMAND }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Compress Docker image tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gzip -9 /tmp/fyom-${{ github.ref_name }}-linux-amd64.tar
+
+          ls -lah /tmp/fyom-${{ github.ref_name }}-linux-amd64.tar.gz
+
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-linux-amd64
+          path: /tmp/fyom-${{ github.ref_name }}-linux-amd64.tar.gz
+          if-no-files-found: error
+          retention-days: 7

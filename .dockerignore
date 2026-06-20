@@ -1,0 +1,41 @@
+.git
+.github
+
+# Node / pnpm
+node_modules
+web/node_modules
+.pnpm-store
+web/.pnpm-store
+
+# Build outputs
+dist
+build
+target
+src-tauri/target
+web/dist
+web/build
+tmp
+
+# Nix outputs
+result
+result-*
+.nix-profile
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+
+# OS / editor
+.DS_Store
+.idea
+.vscode
+
+# Local runtime data
+data
+.cache
+
+# Docker artifacts
+*.tar
+*.tar.gz
