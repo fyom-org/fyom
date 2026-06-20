@@ -270,6 +270,7 @@
     "progressUpdateFailed": "Progress update failed.",
     "browserPlaybackFailed": "Browser playback failed for this media.",
     "playbackFailed": "Playback failed for this media.",
+    "playingExternally": "Playing externally",
     "play": "Play",
     "pause": "Pause",
     "seek": "Seek",

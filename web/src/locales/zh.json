@@ -270,6 +270,7 @@
     "progressUpdateFailed": "进度更新失败。",
     "browserPlaybackFailed": "此媒体的浏览器播放失败。",
     "playbackFailed": "此媒体播放失败。",
+    "playingExternally": "正在外部播放器中播放",
     "play": "播放",
     "pause": "暂停",
     "seek": "跳转",

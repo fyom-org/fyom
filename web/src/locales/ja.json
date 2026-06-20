@@ -270,6 +270,7 @@
     "progressUpdateFailed": "進捗の更新に失敗しました。",
     "browserPlaybackFailed": "このメディアのブラウザ再生に失敗しました。",
     "playbackFailed": "このメディアの再生に失敗しました。",
+    "playingExternally": "外部での再生",
     "play": "再生",
     "pause": "一時停止",
     "seek": "シーク",
