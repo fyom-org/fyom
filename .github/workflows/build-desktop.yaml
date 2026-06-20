@@ -14,8 +14,8 @@ permissions:
   actions: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -66,8 +66,7 @@ jobs:
 
           should_build="true"
 
-          # If this is the branch-side run for main, and the same commit already has a v* tag,
-          # skip the expensive platform builds. The tag-side run will do the real build/release.
+          # Skip duplicate branch-side build when the same commit already has a release tag.
           if [ "$EVENT_NAME" = "push" ] && [ "$REF_TYPE" = "branch" ] && [ "$REF_NAME" = "main" ] && [ "$release_tag_on_sha" = "true" ]; then
             should_build="false"
           fi
@@ -82,12 +81,46 @@ jobs:
             echo "should_build=$should_build"
           } >> "$GITHUB_OUTPUT"
 
-  build-linux:
+  lint-test-nix:
+    name: lint-test-nix
+    runs-on: ubuntu-latest
+
+    needs:
+      - preflight
+
+    if: needs.preflight.outputs.should_build == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v14
+
+      - name: Show Nix version
+        shell: bash
+        run: nix --version
+
+      - name: Run lint and test gates in Nix dev shell
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          nix develop --command bash -lc '
+            set -euo pipefail
+            pnpm --dir web install --frozen-lockfile
+            task ci:quality
+          '
+
+  build-linux-nix:
     name: build-linux-nix
     runs-on: ubuntu-latest
     needs:
       - preflight
-    if: needs.preflight.outputs.should_build == 'true'
+      - lint-test-nix
+    if: >
+      needs.preflight.outputs.should_build == 'true' &&
+      needs.lint-test-nix.result == 'success'
 
     steps:
       - name: Checkout repository
@@ -152,7 +185,10 @@ jobs:
     runs-on: macos-latest
     needs:
       - preflight
-    if: needs.preflight.outputs.should_build == 'true'
+      - lint-test-nix
+    if: >
+      needs.preflight.outputs.should_build == 'true' &&
+      needs.lint-test-nix.result == 'success'
 
     steps:
       - name: Checkout repository
@@ -255,7 +291,10 @@ jobs:
     runs-on: windows-latest
     needs:
       - preflight
-    if: needs.preflight.outputs.should_build == 'true'
+      - lint-test-nix
+    if: >
+      needs.preflight.outputs.should_build == 'true' &&
+      needs.lint-test-nix.result == 'success'
 
     steps:
       - name: Checkout repository
@@ -365,13 +404,15 @@ jobs:
 
     needs:
       - preflight
-      - build-linux
+      - lint-test-nix
+      - build-linux-nix
       - build-macos
       - build-windows
 
     if: >
       startsWith(github.ref, 'refs/tags/v') &&
-      needs.build-linux.result == 'success' &&
+      needs.lint-test-nix.result == 'success' &&
+      needs.build-linux-nix.result == 'success' &&
       needs.build-macos.result == 'success' &&
       needs.build-windows.result == 'success'
 

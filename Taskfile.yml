@@ -16,45 +16,8 @@ tasks:
       - task -a
 
   # ================================================
-  # Development
-  # ================================================
-
-  dev:
-    desc: "Run Go backend with Air hot-reload"
-    cmds:
-      - air -c .air.toml
-
-  dev:web:
-    desc: "Run Vite dev server"
-    dir: web
-    cmds:
-      - pnpm run dev -- --host
-
-  # ================================================
-  # Preview
-  # ================================================
-
-  preview:
-    desc: "Run Go backend preview"
-    cmds:
-      - CGO_ENABLED=0 go run cmd/fyom/main.go --db-path ./build/fyom.db
-
-  preview:web:
-    desc: "Run Vite preview server"
-    dir: web
-    cmds:
-      - pnpm run preview
-
-  # ================================================
   # Build
   # ================================================
-
-  build:web:
-    desc: "Build frontend for production"
-    dir: web
-    cmds:
-      - pnpm run build:full
-      - node ../scripts/delete-sourcemaps.js dist
 
   build:
     desc: "Build fyom backend binary with embedded frontend"
@@ -84,9 +47,49 @@ tasks:
         -o {{.BUILD_DIR}}/{{.BINARY_NAME}}
         {{.CMD_PATH}}
 
+  build:web:
+    desc: "Build frontend for production"
+    dir: web
+    cmds:
+      - pnpm run build:full
+      - node ../scripts/delete-sourcemaps.js dist
+
+  build:desktop:
+    desc: "Build Tauri desktop app bundle"
+    deps: [sidecar]
+    cmds:
+      - cd src-tauri && cargo-tauri build
+
+  build:tarball:
+    desc: "Build Linux tar.gz artifact"
+    cmds:
+      - |
+        bash <<'EOF'
+        set -euo pipefail
+
+        binary="src-tauri/target/release/fyom"
+
+        if [ ! -f "$binary" ]; then
+          echo "Desktop binary not found: $binary"
+          echo "Run: task build:desktop"
+          exit 1
+        fi
+
+        rm -rf release/fyom-linux-x86_64
+        mkdir -p release/fyom-linux-x86_64
+
+        cp "$binary" release/fyom-linux-x86_64/
+        tar -czf release/fyom-linux-x86_64.tar.gz -C release fyom-linux-x86_64
+        EOF
+
   # ================================================
-  # Desktop
+  # Development & Preview
   # ================================================
+
+  dev:
+    desc: "Run Go backend (with embed web) with Air hot-reload"
+    cmds:
+      - air -c .air.toml
 
   dev:desktop:
     desc: "Run Tauri desktop dev mode with external mpv player"
@@ -116,24 +119,66 @@ tasks:
     cmds:
       - cargo-tauri dev
 
-  build:desktop:
-    desc: "Build Tauri desktop app bundle"
-    deps: [sidecar]
+  dev:web:
+    desc: "Run Vite dev server"
+    dir: web
     cmds:
-      - cd src-tauri && cargo-tauri build
+      - pnpm run dev -- --host
 
-  build:tarball:
-    desc: "Build Linux tar.gz artifact"
+  preview:
+    desc: "Run Go backend preview"
     cmds:
-      - mkdir -p release/fyom-linux-x86_64
-      - cp src-tauri/target/release/fyom release/fyom-linux-x86_64/
-      - tar -czf release/fyom-linux-x86_64.tar.gz -C release fyom-linux-x86_64
+      - CGO_ENABLED=0 go run cmd/fyom/main.go --db-path ./build/fyom.db
+
+  preview:web:
+    desc: "Run Vite preview server"
+    dir: web
+    cmds:
+      - pnpm run preview
 
   # ================================================
   # Test
   # ================================================
 
   test:
+    desc: "Run all tests for backend, web frontend and tauri shell"
+    deps:
+      - test:go
+      - test:web
+      - test:rust
+
+  test:coverage:
+    desc: "Run Go coverage for project packages"
+    cmds:
+      - |
+        bash <<'EOF'
+        set -euo pipefail
+
+        mapfile -t packages < <(go list ./...)
+
+        filtered=()
+        for package in "${packages[@]}"; do
+          case "$package" in
+            *web/node_modules*)
+              continue
+              ;;
+          esac
+
+          filtered+=("$package")
+        done
+
+        if [ "${#filtered[@]}" -eq 0 ]; then
+          echo "No Go packages found for coverage."
+          exit 1
+        fi
+
+        go test -coverprofile=coverage.out "${filtered[@]}"
+        go tool cover -func=coverage.out
+        EOF
+    env:
+      CGO_ENABLED: "0"
+
+  test:go:
     desc: "Run all Go tests for project packages"
     cmds:
       - |
@@ -226,41 +271,23 @@ tasks:
     env:
       CGO_ENABLED: "1"
 
-  coverage:
-    desc: "Run Go coverage for project packages"
+  test:rust:
+    desc: "Run Rust check and tests"
+    dir: src-tauri
     cmds:
-      - |
-        bash <<'EOF'
-        set -euo pipefail
+      - cargo check --all-targets --all-features
+      - cargo test --all-features
 
-        mapfile -t packages < <(go list ./...)
-
-        filtered=()
-        for package in "${packages[@]}"; do
-          case "$package" in
-            *web/node_modules*)
-              continue
-              ;;
-          esac
-
-          filtered+=("$package")
-        done
-
-        if [ "${#filtered[@]}" -eq 0 ]; then
-          echo "No Go packages found for coverage."
-          exit 1
-        fi
-
-        go test -coverprofile=coverage.out "${filtered[@]}"
-        go tool cover -func=coverage.out
-        EOF
-    env:
-      CGO_ENABLED: "0"
-
-  smoke:
+  test:smoke:
     desc: "Run production smoke test"
     cmds:
       - bash scripts/smoke_test.sh
+
+  test:web:
+    desc: "Run web tests"
+    dir: web
+    cmds:
+      - pnpm run test
 
   # ================================================
   # Lint
@@ -268,9 +295,16 @@ tasks:
 
   lint:
     desc: "Run all linters"
+    cmds:
+      - task lint:go:config
+      - task lint:all
+
+  lint:all:
+    desc: "Run language linters"
     deps:
       - lint:go
       - lint:web
+      - lint:rust
 
   lint:go:
     desc: "Run Go linter for project packages"
@@ -321,6 +355,13 @@ tasks:
     cmds:
       - golangci-lint config verify
 
+  lint:rust:
+    desc: "Run Rust formatter and clippy"
+    dir: src-tauri
+    cmds:
+      - cargo fmt -- --check
+      - cargo clippy --all-targets --all-features -- -D warnings
+
   lint:web:
     desc: "Run ESLint for web"
     dir: web
@@ -346,12 +387,29 @@ tasks:
   # ================================================
 
   ci:
+    desc: "Run CI quality then build"
+    cmds:
+      - task ci:quality
+      - task ci:build
+      - task ci:build:desktop
+
+  ci:build:
+    desc: "Run CI build suite"
+    cmds:
+      - task build
+      - task build:desktop
+      - task build:tarball
+
+  ci:build:desktop:
     desc: "Run CI verification suite"
     deps:
-      - lint:go:config
+      - build:desktop
+
+  ci:quality:
+    desc: "Run CI quality gates without producing release artifacts"
+    deps:
       - lint
       - test
-      - build
 
   # ================================================
   # Cleanup
