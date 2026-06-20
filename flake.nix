@@ -28,7 +28,7 @@
         isLinux = stdenv.isLinux;
         isDarwin = stdenv.isDarwin;
 
-        nodejs = if pkgs ? nodejs_22 then pkgs.nodejs_22 else pkgs.nodejs_20;
+        nodejs = if pkgs ? nodejs_24 then pkgs.nodejs_24 else pkgs.nodejs_26;
 
         webkitgtk = if pkgs ? webkitgtk_4_1 then pkgs.webkitgtk_4_1 else pkgs.webkitgtk;
 
@@ -150,13 +150,6 @@
           gsettings-desktop-schemas
           adwaita-icon-theme
           hicolor-icon-theme
-
-          # Phase 2 native playback local-dev runtime.
-          #
-          # Release installers still consume fyom-org/fork-mpv tarballs via
-          # scripts/setup_runtime_libs.* and scripts/bundle_runtime_libs_*.
-          mpv
-          libass
         ];
 
         linuxPackages = lib.optionals isLinux linuxRuntimeLibs;
@@ -185,9 +178,7 @@
 
         linuxShellHook = lib.optionalString isLinux ''
           export RUST_BACKTRACE="1"
-
           export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
-
           export LD_LIBRARY_PATH="${linuxLibraryPath}:''${LD_LIBRARY_PATH:-}"
           export PKG_CONFIG_PATH="${linuxPkgConfigPath}:''${PKG_CONFIG_PATH:-}"
 
@@ -216,16 +207,11 @@
           export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
           export NIX_PLAYWRIGHT_VERSION="${pkgs.playwright-driver.version}"
 
-          if pkg-config --exists mpv 2>/dev/null; then
-            export MPV_LIB_DIR="$(pkg-config --variable=libdir mpv)"
-          fi
-
           echo "fyom Nix dev shell"
           echo "  platform: linux"
           echo "  node: $(node --version 2>/dev/null || true)"
           echo "  go: $(go version 2>/dev/null || true)"
           echo "  rustc: $(rustc --version 2>/dev/null || true)"
-          echo "  MPV_LIB_DIR: ''${MPV_LIB_DIR:-not set}"
         '';
 
         darwinShellHook = lib.optionalString isDarwin ''
@@ -239,23 +225,12 @@
             export MACOSX_DEPLOYMENT_TARGET="13.0"
           fi
 
-          # macOS native playback development uses fyom-org/fork-mpv runtime
-          # artifacts instead of Nix-provided libmpv.
-          #
-          # Run one of:
-          #   node scripts/setup_runtime_libs.mjs --platform macos
-          #   node scripts/setup_runtime_libs.mjs --platform darwin
-          #
-          # depending on the platform names supported by the current scripts.
-          unset MPV_LIB_DIR
-
           echo "fyom Nix dev shell"
           echo "  platform: darwin"
           echo "  node: $(node --version 2>/dev/null || true)"
           echo "  go: $(go version 2>/dev/null || true)"
           echo "  rustc: $(rustc --version 2>/dev/null || true)"
           echo "  SDKROOT: ''${SDKROOT:-not set}"
-          echo "  MPV_LIB_DIR: intentionally unset on macOS"
         '';
 
       in
