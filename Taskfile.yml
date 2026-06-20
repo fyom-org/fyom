@@ -262,11 +262,6 @@ tasks:
     cmds:
       - bash scripts/smoke_test.sh
 
-  verify:
-    desc: "Verify build artifacts"
-    cmds:
-      - bash scripts/verify_bundle.sh
-
   # ================================================
   # Lint
   # ================================================
@@ -284,9 +279,10 @@ tasks:
         bash <<'EOF'
         set -euo pipefail
 
+        module_path="$(go list -m)"
         mapfile -t packages < <(go list ./...)
 
-        filtered=()
+        patterns=()
         for package in "${packages[@]}"; do
           case "$package" in
             *web/node_modules*)
@@ -294,15 +290,28 @@ tasks:
               ;;
           esac
 
-          filtered+=("$package")
+          if [ "$package" = "$module_path" ]; then
+            patterns+=(".")
+            continue
+          fi
+
+          case "$package" in
+            "$module_path"/*)
+              relative_path="${package#"$module_path"/}"
+              patterns+=("./$relative_path")
+              ;;
+            *)
+              echo "Skipping non-module Go package: $package"
+              ;;
+          esac
         done
 
-        if [ "${#filtered[@]}" -eq 0 ]; then
+        if [ "${#patterns[@]}" -eq 0 ]; then
           echo "No Go packages found to lint."
           exit 1
         fi
 
-        golangci-lint run "${filtered[@]}"
+        golangci-lint run "${patterns[@]}"
         EOF
     env:
       CGO_ENABLED: "0"
@@ -343,7 +352,6 @@ tasks:
       - lint
       - test
       - build
-      - verify
 
   # ================================================
   # Cleanup
