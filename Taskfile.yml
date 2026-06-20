@@ -234,9 +234,46 @@ tasks:
     cmds:
       - task: _build:binary
 
+  build:tauri-sidecar:
+    desc: "Build fyom sidecar binary for Tauri bundling"
+    deps:
+      - build:web:dist
+    cmds:
+      - |
+        bash <<'EOF'
+        set -euo pipefail
+
+        TARGET_TRIPLE="${TAURI_TARGET_TRIPLE:-}"
+        if [ -z "$TARGET_TRIPLE" ]; then
+          echo "TAURI_TARGET_TRIPLE is not set; cannot determine sidecar binary name."
+          echo "Set it to the target triple (e.g., x86_64-unknown-linux-gnu) and retry."
+          exit 1
+        fi
+
+        case "$TARGET_TRIPLE" in
+          *windows*)  EXT=".exe" ;;
+          *)          EXT="" ;;
+        esac
+
+        OUTPUT="src-tauri/binaries/fyom-server-${TARGET_TRIPLE}${EXT}"
+
+        mkdir -p src-tauri/binaries
+
+        echo "Building Tauri sidecar binary: ${OUTPUT}"
+        echo "  target=${TARGET_TRIPLE}"
+
+        CGO_ENABLED=0 go build \
+          -ldflags "{{.LD_FLAGS}}" \
+          -o "${OUTPUT}" \
+          "{{.CMD_PATH}}"
+
+        echo "Tauri sidecar binary built: ${OUTPUT}"
+        ls -la "${OUTPUT}"
+        EOF
+
   build:desktop:
     desc: "Build Tauri desktop app bundle"
-    deps: [build:sidecar]
+    deps: [build:tauri-sidecar]
     cmds:
       - cd src-tauri && cargo-tauri build
 

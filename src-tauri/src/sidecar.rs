@@ -365,47 +365,318 @@ fn spawn_stderr_drain_task(
 // Binary discovery
 // -----------------------------------------------------------------------------
 
-fn find_sidecar_binary() -> Result<PathBuf> {
+/// Sidecar binary launch mode.
+///
+/// In debug/dev builds, the binary is resolved from FYOM_BIN env var or
+/// limited dev-only fallback paths. In release/packaged builds, the binary
+/// is resolved from the Tauri-bundled external binary directory.
+#[derive(Debug, Clone)]
+pub enum SidecarLaunchMode {
+    /// Explicit path from FYOM_BIN env var (dev or packaged override).
+    DevEnvPath(PathBuf),
+    /// Limited dev-only fallback search (debug builds only).
+    DevFallbackPath(PathBuf),
+    /// Tauri-bundled external binary (release/packaged builds).
+    TauriBundled {
+        /// Resolved absolute path to the bundled binary.
+        path: PathBuf,
+        /// Target triple the binary was built for.
+        target_triple: String,
+    },
+}
+
+/// Resolve the sidecar binary launch mode.
+///
+/// Resolution order:
+///
+/// 1. `FYOM_BIN` env var — explicit override for any build mode.
+/// 2. In release builds: resolve from Tauri bundled external binary.
+/// 3. In debug builds: limited dev-only fallback paths.
+///
+/// Release builds never search source tree or target/ directories.
+fn resolve_sidecar_launch_mode() -> Result<SidecarLaunchMode> {
+    // 1. FYOM_BIN explicit override — always wins.
     if let Ok(value) = std::env::var("FYOM_BIN") {
         let path = PathBuf::from(&value);
 
-        if path.exists() {
-            return Ok(path);
+        if !path.exists() {
+            bail!("BinaryNotFound: FYOM_BIN={value} does not exist");
         }
 
-        bail!("FYOM_BIN={value} does not exist");
+        let path = std::fs::canonicalize(&path).map_err(|error| {
+            anyhow!("BinaryNotFound: failed to resolve FYOM_BIN={value}: {error}")
+        })?;
+
+        ensure_executable(&path)?;
+
+        return Ok(SidecarLaunchMode::DevEnvPath(path));
     }
 
+    // 2. Release/packaged builds: use Tauri bundled external binary.
+    //    The `custom-protocol` feature flag is set by `cargo-tauri` in release.
+    #[cfg(not(debug_assertions))]
+    {
+        return resolve_tauri_bundled_binary();
+    }
+
+    // 3. Debug builds: limited dev-only fallback.
+    #[cfg(debug_assertions)]
+    {
+        match resolve_tauri_bundled_binary() {
+            Ok(mode) => return Ok(mode),
+            Err(_) => {
+                // In debug builds, allow limited dev fallback if Tauri bundled
+                // binary is not available (e.g., running without packaging).
+            }
+        }
+
+        resolve_dev_fallback_binary().map(SidecarLaunchMode::DevFallbackPath)
+    }
+}
+
+/// Resolve the Tauri-bundled external binary path.
+///
+/// The binary is expected at `src-tauri/binaries/fyom-<target-triple>`
+/// (without `.exe` on non-Windows). The target triple is derived from
+/// Tauri's target triple for the current platform.
+#[cfg(not(debug_assertions))]
+fn resolve_tauri_bundled_binary() -> Result<SidecarLaunchMode> {
+    resolve_tauri_bundled_binary_inner()
+}
+
+#[cfg(debug_assertions)]
+fn resolve_tauri_bundled_binary() -> Result<SidecarLaunchMode> {
+    resolve_tauri_bundled_binary_inner()
+}
+
+fn resolve_tauri_bundled_binary_inner() -> Result<SidecarLaunchMode> {
+    let target_triple = tauri_target_triple();
+    let binary_name = if target_triple.contains("windows") {
+        format!("fyom-server-{target_triple}.exe")
+    } else {
+        format!("fyom-server-{target_triple}")
+    };
+
+    // Search for the bundled binary relative to the resource directory.
+    // In a packaged app, Tauri places external binaries alongside the resource
+    // directory. We search several candidate locations.
+    let candidates = [
+        // Standard Tauri external binary location (next to resources).
+        format!("../binaries/{binary_name}"),
+        // Alternative: directly in the resource directory.
+        format!("./binaries/{binary_name}"),
+        // Alternative: next to the executable.
+        format!("./{binary_name}"),
+    ];
+
+    // Try to resolve from the app's resource directory first.
+    if let Some(resource_dir) = tauri_resource_dir() {
+        for candidate in &candidates {
+            let path = resource_dir.join(candidate);
+            if path.is_file() {
+                return Ok(SidecarLaunchMode::TauriBundled {
+                    path,
+                    target_triple,
+                });
+            }
+        }
+    }
+
+    // Fallback: resolve relative to the executable directory.
+    let exe_path = std::env::current_exe().map_err(|error| {
+        anyhow!("SidecarCreateCommandFailed: failed to get current executable: {error}")
+    })?;
+    let exe_dir = exe_path.parent().unwrap_or(Path::new("."));
+
+    for candidate in &candidates {
+        let path = exe_dir.join(candidate);
+        if path.is_file() {
+            return Ok(SidecarLaunchMode::TauriBundled {
+                path,
+                target_triple,
+            });
+        }
+    }
+
+    bail!(
+        "BinaryNotFound: Tauri bundled sidecar binary not found (target={target_triple}, name={binary_name}); \
+         ensure tauri.conf.json declares bundle.externalBin and the binary is placed in src-tauri/binaries/"
+    )
+}
+
+/// Get the Tauri target triple for the current platform.
+///
+/// The `TARGET` env var is set by `cargo-tauri` at build time. When running
+/// plain `cargo build`, it may not be set. In that case, we fall back to
+/// `cfg!(target_os)` and `cfg!(target_arch)` to construct a reasonable
+/// target triple.
+fn tauri_target_triple() -> String {
+    if let Ok(target) = std::env::var("TARGET") {
+        return target;
+    }
+
+    // Fallback: construct from cfg! macros when TARGET is not set
+    // (e.g., during plain `cargo build` without cargo-tauri).
+    let os = if cfg!(target_os = "linux") {
+        "unknown-linux-gnu"
+    } else if cfg!(target_os = "macos") {
+        "apple-darwin"
+    } else if cfg!(target_os = "windows") {
+        "pc-windows-msvc"
+    } else {
+        "unknown"
+    };
+
+    let arch = if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else {
+        "unknown"
+    };
+
+    format!("{arch}-{os}")
+}
+
+/// Try to get the Tauri resource directory.
+///
+/// Returns None if the Tauri runtime is not available (e.g., in tests).
+#[cfg(not(test))]
+fn tauri_resource_dir() -> Option<PathBuf> {
+    // In a packaged Tauri app, we can use the resource directory.
+    // The resource directory is typically the directory containing the app's
+    // resources, and external binaries are placed alongside it.
+    // We use a relative path from the executable as a practical approach.
+    let exe_path = std::env::current_exe().ok()?;
+    let exe_dir = exe_path.parent()?;
+
+    // On macOS, the executable is in Contents/MacOS/ and resources are in
+    // Contents/Resources/.
+    #[cfg(target_os = "macos")]
+    {
+        let resources_dir = exe_dir.join("../Resources");
+        if resources_dir.is_dir() {
+            return Some(resources_dir);
+        }
+    }
+
+    // On Linux/Windows, resources are typically next to the executable.
+    Some(exe_dir.to_path_buf())
+}
+
+#[cfg(test)]
+fn tauri_resource_dir() -> Option<PathBuf> {
+    None
+}
+
+/// Limited dev-only binary fallback search.
+///
+/// Only active in debug builds when FYOM_BIN is not set and the Tauri
+/// bundled binary is not available. Searches common dev build locations.
+fn resolve_dev_fallback_binary() -> Result<PathBuf> {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
 
+    // Dev-only candidates: source tree build output paths.
+    // These are intentionally limited and never include target/debug paths
+    // that could match stale binaries.
     let candidates = [
         manifest_dir.join("../../build/fyom"),
         manifest_dir.join("../build/fyom"),
-        manifest_dir.join("build/fyom"),
-        manifest_dir.join("../../target/debug/fyom"),
-        manifest_dir.join("../target/debug/fyom"),
-        manifest_dir.join("target/debug/fyom"),
     ];
 
-    for candidate in candidates {
-        if candidate.exists() {
-            return Ok(candidate);
+    for candidate in &candidates {
+        if candidate.is_file() {
+            let path = std::fs::canonicalize(candidate).map_err(|error| {
+                anyhow!(
+                    "BinaryNotFound: failed to resolve dev fallback {}: {error}",
+                    candidate.display()
+                )
+            })?;
+
+            ensure_executable(&path)?;
+
+            tracing::warn!(
+                "[sidecar] FYOM_BIN not set; using dev fallback binary={}",
+                path.display()
+            );
+
+            return Ok(path);
         }
     }
 
-    if let Ok(output) = std::process::Command::new("which").arg("fyom").output()
-        && output.status.success()
+    bail!(
+        "BinaryNotFound: FYOM_BIN is not set and dev fallback binary was not found; \
+         run `task build:sidecar` or set FYOM_BIN"
+    )
+}
+
+/// Check that a binary is executable.
+///
+/// On Unix, verifies the executable bit is set. On Windows, always succeeds.
+fn ensure_executable(path: &Path) -> Result<()> {
+    #[cfg(unix)]
     {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        use std::os::unix::fs::PermissionsExt;
 
-        if !path.is_empty() {
-            return Ok(PathBuf::from(path));
+        let metadata = std::fs::metadata(path).map_err(|error| {
+            anyhow!(
+                "PermissionDenied: cannot read metadata for {}: {error}",
+                path.display()
+            )
+        })?;
+
+        let mode = metadata.permissions().mode();
+        if mode & 0o111 == 0 {
+            bail!(
+                "PermissionDenied: {} is not executable (mode={:o}); run `chmod +x {}`",
+                path.display(),
+                mode,
+                path.display()
+            );
         }
     }
 
-    bail!("fyom sidecar binary not found; run `task sidecar` or set FYOM_BIN")
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+
+    Ok(())
+}
+
+/// Log the resolved sidecar launch mode for diagnostics.
+fn log_launch_mode(mode: &SidecarLaunchMode) {
+    match mode {
+        SidecarLaunchMode::DevEnvPath(path) => {
+            tracing::info!("[sidecar] launch_mode=dev-env binary={}", path.display());
+        }
+        SidecarLaunchMode::DevFallbackPath(path) => {
+            tracing::info!(
+                "[sidecar] launch_mode=dev-fallback binary={}",
+                path.display()
+            );
+        }
+        SidecarLaunchMode::TauriBundled {
+            path,
+            target_triple,
+        } => {
+            tracing::info!(
+                "[sidecar] launch_mode=tauri-bundled target={target_triple} binary={}",
+                path.display()
+            );
+        }
+    }
+}
+
+/// Extract the binary path from a launch mode.
+fn binary_path_from_mode(mode: &SidecarLaunchMode) -> &Path {
+    match mode {
+        SidecarLaunchMode::DevEnvPath(path) => path,
+        SidecarLaunchMode::DevFallbackPath(path) => path,
+        SidecarLaunchMode::TauriBundled { path, .. } => path,
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -456,9 +727,12 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &AppState) -> Result<()> 
         existing.shutdown("restart before bootstrap").await;
     }
 
-    let binary_path = find_sidecar_binary()
+    let launch_mode = resolve_sidecar_launch_mode()
         .map_err(|error| anyhow!("failed to locate sidecar binary: {error}"))?;
 
+    log_launch_mode(&launch_mode);
+
+    let binary_path = binary_path_from_mode(&launch_mode);
     let db_path = PathBuf::from(state.desktop_db_path.as_str());
     let app_exe_dir = db_path.parent().unwrap_or(Path::new(""));
 
@@ -471,7 +745,7 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &AppState) -> Result<()> 
         db_path.display()
     );
 
-    let mut child = Command::new(&binary_path)
+    let mut child = Command::new(binary_path)
         .arg("--sidecar")
         .arg("--db-path")
         .arg(&db_path)
