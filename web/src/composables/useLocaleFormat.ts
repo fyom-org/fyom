@@ -284,7 +284,7 @@ export function useLocaleFormat() {
 /**
  * Format a duration for a specific locale, WITHOUT Vue reactivity.
  *
- * Use this from Pinia actions, axios interceptors, or anywhere outside a
+ * Use this from Pinia actions, request interceptors, or anywhere outside a
  * component setup where the `useLocaleFormat()` composable is unavailable.
  */
 export function formatDurationForLocale(locale: LocaleCode, seconds: number): string {

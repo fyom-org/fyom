@@ -35,7 +35,7 @@ import i18n from '@/plugins/i18n';
  *
  * Keep this list in sync across all callers — previously each view had its
  * own copy, and RegisterView was missing the 'request failed with status code'
- * entry, causing axios boilerplate to leak to users.
+ * entry, causing HTTP boilerplate to leak to users.
  */
 const UNSAFE_FRAGMENTS: readonly string[] = [
   'sql',
@@ -65,7 +65,7 @@ export function getHttpStatus(error: unknown): number | undefined {
 }
 
 /**
- * Extract the raw error_code string from an axios-style error object.
+ * Extract the raw error_code string from an API error object.
  *
  * Returns '' if no code is present (legacy server, success response, or
  * network error). The string is the canonical snake_case identifier from
@@ -111,7 +111,7 @@ export function translateErrorCode(code: string): string {
 }
 
 /**
- * Extract the raw error message from an axios-style error object.
+ * Extract the raw error message from an API error object.
  * Returns '' if no message can be found.
  *
  * Does NOT apply the safety filter — callers should use
@@ -156,7 +156,7 @@ export function isSafeUserFacingMessage(message: string): boolean {
 }
 
 /**
- * Extract a safe, user-facing error message from an axios error.
+ * Extract a safe, user-facing error message from an API error.
  *
  * Resolution order (first non-empty result wins):
  *  1. `api_error.<error_code>` translation — if the backend emitted a
@@ -194,7 +194,7 @@ export function getSafeApiErrorMessage(
 }
 
 /**
- * Check if an axios error represents a 401 or 403 (auth failure).
+ * Check if an API error represents a 401 or 403 (auth failure).
  */
 export function isUnauthorizedOrForbidden(error: unknown): boolean {
   const status = getHttpStatus(error);

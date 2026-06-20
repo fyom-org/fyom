@@ -120,7 +120,7 @@ function syncDocumentLang(locale: LocaleCode): void {
 /**
  * Public composable. Safe to call from any component setup function.
  *
- * For non-component callers (e.g. axios interceptors, store actions), use
+ * For non-component callers (e.g. request interceptors, store actions), use
  * the lower-level `setGlobalLocale()` / `getCurrentLocale()` exports below.
  */
 export function useLocale() {
@@ -160,7 +160,7 @@ export function useLocale() {
 
 /**
  * Imperative setter for use outside Vue component setup context
- * (e.g. from a Pinia action or an axios interceptor).
+ * (e.g. from a Pinia action or a request interceptor).
  */
 export function setGlobalLocale(locale: LocaleCode): void {
   if (!isSupportedLocaleImpl(locale)) return;
