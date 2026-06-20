@@ -8,15 +8,16 @@
 
   outputs =
     {
-      self,
       nixpkgs,
       flake-utils,
+      ...
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
       let
         pkgs = import nixpkgs {
           inherit system;
+
           config = {
             allowUnfree = false;
           };
@@ -33,7 +34,6 @@
         webkitgtk = if pkgs ? webkitgtk_4_1 then pkgs.webkitgtk_4_1 else pkgs.webkitgtk;
 
         libsoup = if pkgs ? libsoup_3 then pkgs.libsoup_3 else pkgs.libsoup;
-
       in
       let
         /*
@@ -232,7 +232,6 @@
           echo "  rustc: $(rustc --version 2>/dev/null || true)"
           echo "  SDKROOT: ''${SDKROOT:-not set}"
         '';
-
       in
       {
         devShells.default = pkgs.mkShell {
