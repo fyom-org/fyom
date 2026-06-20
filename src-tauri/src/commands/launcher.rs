@@ -275,9 +275,14 @@ fn resolve_media_url(app_state: &AppState, media_url: &str) -> Result<String, St
 }
 
 fn resolve_sidecar_relative_url(app_state: &AppState, media_url: &str) -> Result<String, String> {
-    let api_base_url = app_state.sidecar_state.get_api_base_url().map_err(|e| {
-        format!("sidecar API is not ready; cannot resolve relative media URL `{media_url}`: {e}")
-    })?;
+    let api_base_url = app_state
+        .sidecar_state
+        .get_api_base_url()
+        .map_err(|error| {
+            format!(
+                "sidecar API is not ready; cannot resolve relative media URL `{media_url}`: {error}"
+            )
+        })?;
 
     let api_base_url = api_base_url.trim_end_matches('/');
     let media_url = media_url.trim_start_matches('/');
@@ -376,7 +381,7 @@ fn launch_system_default_opener(url: &str) -> Result<String, String> {
 
         spawn_detached(command, "`open`")?;
 
-        return Ok("system:open".to_string());
+        Ok("system:open".to_string())
     }
 
     #[cfg(target_os = "linux")]
@@ -386,7 +391,7 @@ fn launch_system_default_opener(url: &str) -> Result<String, String> {
 
         spawn_detached(command, "`xdg-open`")?;
 
-        return Ok("system:xdg-open".to_string());
+        Ok("system:xdg-open".to_string())
     }
 
     #[cfg(target_os = "windows")]
@@ -396,7 +401,7 @@ fn launch_system_default_opener(url: &str) -> Result<String, String> {
 
         spawn_detached(command, "`rundll32.exe url.dll,FileProtocolHandler`")?;
 
-        return Ok("system:rundll32".to_string());
+        Ok("system:rundll32".to_string())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -413,9 +418,9 @@ fn spawn_detached(mut command: Command, launcher_name: &str) -> Result<(), Strin
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    command
-        .spawn()
-        .map_err(|e| format!("failed to launch external player with {launcher_name}: {e}"))?;
+    command.spawn().map_err(|error| {
+        format!("failed to launch external player with {launcher_name}: {error}")
+    })?;
 
     Ok(())
 }
@@ -498,5 +503,5 @@ pub async fn get_api_base_url(state: State<'_, AppState>) -> Result<String, Stri
     state
         .sidecar_state
         .get_api_base_url()
-        .map_err(|e| e.to_string())
+        .map_err(|error| error.to_string())
 }

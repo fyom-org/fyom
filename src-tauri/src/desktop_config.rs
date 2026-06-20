@@ -15,19 +15,11 @@ use serde::{Deserialize, Serialize};
 
 const ENV_DESKTOP_CONFIG: &str = "FYOM_DESKTOP_CONFIG";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopConfig {
     #[serde(default)]
     pub external_player: ExternalPlayerConfig,
-}
-
-impl Default for DesktopConfig {
-    fn default() -> Self {
-        Self {
-            external_player: ExternalPlayerConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,23 +44,18 @@ impl Default for ExternalPlayerConfig {
             kind: ExternalPlayerKind::System,
             program: String::new(),
             args: Vec::new(),
-            append_default_mpv_args: true,
+            append_default_mpv_args: default_append_mpv_args(),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ExternalPlayerKind {
+    #[default]
     System,
     Mpv,
     Custom,
-}
-
-impl Default for ExternalPlayerKind {
-    fn default() -> Self {
-        Self::System
-    }
 }
 
 fn default_append_mpv_args() -> bool {
