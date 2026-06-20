@@ -3,25 +3,41 @@ package service
 // ImportEntityKind represents the semantic type of a media entity during classification.
 type ImportEntityKind string
 
+// ImportEntityUnknown represents an unclassified media entity.
+const ImportEntityUnknown ImportEntityKind = "unknown"
+
+// ImportEntityContainer represents a grouping/container directory that is not itself a media root.
+const ImportEntityContainer ImportEntityKind = "container"
+
+// ImportEntityMovie represents a movie media entity.
+const ImportEntityMovie ImportEntityKind = "movie"
+
 const (
-	ImportEntityUnknown     ImportEntityKind = "unknown"
-	ImportEntityContainer   ImportEntityKind = "container"
-	ImportEntityMovie       ImportEntityKind = "movie"
-	ImportEntityShow        ImportEntityKind = "show"
-	ImportEntitySeason      ImportEntityKind = "season"
-	ImportEntityEpisode     ImportEntityKind = "episode"
-	ImportEntityExtra       ImportEntityKind = "extra"
+	// ImportEntityShow represents a TV show media entity.
+	ImportEntityShow    ImportEntityKind = "show"
+	// ImportEntitySeason represents a season within a TV show.
+	ImportEntitySeason  ImportEntityKind = "season"
+	// ImportEntityEpisode represents an episode within a season.
+	ImportEntityEpisode ImportEntityKind = "episode"
+	// ImportEntityExtra represents extra/supplementary media content.
+	ImportEntityExtra   ImportEntityKind = "extra"
 )
 
 // ImportNodeKind represents the type of a filesystem node.
 type ImportNodeKind string
 
 const (
+	// ImportNodeDir represents a directory node in the filesystem tree.
 	ImportNodeDir      ImportNodeKind = "dir"
+	// ImportNodeVideo represents a video file node.
 	ImportNodeVideo    ImportNodeKind = "video"
+	// ImportNodeNFO represents an NFO metadata file node.
 	ImportNodeNFO      ImportNodeKind = "nfo"
+	// ImportNodeImage represents an image file node (poster, thumbnail, etc.).
 	ImportNodeImage    ImportNodeKind = "image"
+	// ImportNodeSubtitle represents a subtitle file node.
 	ImportNodeSubtitle ImportNodeKind = "subtitle"
+	// ImportNodeOther represents any other file type not categorized above.
 	ImportNodeOther    ImportNodeKind = "other"
 )
 
@@ -109,9 +125,13 @@ type RejectedItem struct {
 type ReconcileAction string
 
 const (
+	// ReconcileCreate indicates a new media item was created during reconciliation.
 	ReconcileCreate ReconcileAction = "create"
+	// ReconcileUpdate indicates an existing media item was updated during reconciliation.
 	ReconcileUpdate ReconcileAction = "update"
+	// ReconcileSkip indicates the candidate was skipped (already up-to-date).
 	ReconcileSkip   ReconcileAction = "skip"
+	// ReconcileReject indicates the candidate was rejected during reconciliation.
 	ReconcileReject ReconcileAction = "reject"
 )
 

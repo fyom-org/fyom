@@ -157,7 +157,7 @@ func parseBootstrapToken(t *testing.T, tokenString string) jwt.MapClaims {
 	parsed, err := jwt.ParseWithClaims(
 		tokenString,
 		jwt.MapClaims{},
-		func(token *jwt.Token) (any, error) {
+		func(_ *jwt.Token) (any, error) {
 			return []byte(bootstrapTestSecret), nil
 		},
 	)

@@ -51,10 +51,7 @@ func Open(dbPath string, maxOpen, maxIdle, maxLifetimeSec int) (*DB, error) {
 		return nil, err
 	}
 
-	dsn, err := sqliteDSN(dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("build sqlite dsn: %w", err)
-	}
+	dsn := sqliteDSN(dbPath)
 
 	sqlDB, err := sql.Open(sqliteDriverName, dsn)
 	if err != nil {
@@ -93,9 +90,9 @@ func Open(dbPath string, maxOpen, maxIdle, maxLifetimeSec int) (*DB, error) {
 //
 // Do not HTML-escape this string. The query separator must be "&", not "&amp;".
 // modernc.org/sqlite supports repeated _pragma query parameters.
-func sqliteDSN(dbPath string) (string, error) {
+func sqliteDSN(dbPath string) string {
 	if strings.HasPrefix(dbPath, "file:") {
-		return dbPath, nil
+		return dbPath
 	}
 
 	u := &url.URL{
@@ -111,7 +108,7 @@ func sqliteDSN(dbPath string) (string, error) {
 	q.Add("_pragma", fmt.Sprintf("wal_autocheckpoint(%d)", defaultSQLiteWALAutocheckpoint))
 	u.RawQuery = q.Encode()
 
-	return u.String(), nil
+	return u.String()
 }
 
 // ensureDatabaseParentDir creates the parent directory for the SQLite database
@@ -323,10 +320,7 @@ func (db *DB) migrate(ctx context.Context) error {
 		return fmt.Errorf("read migrations dir: %w", err)
 	}
 
-	migrations, err := collectMigrations(migrationDir, entries)
-	if err != nil {
-		return err
-	}
+	migrations := collectMigrations(migrationDir, entries)
 
 	for _, m := range migrations {
 		applied, err := db.isMigrationApplied(ctx, m.version)
@@ -351,7 +345,7 @@ type migration struct {
 	path    string
 }
 
-func collectMigrations(migrationDir string, entries []os.DirEntry) ([]migration, error) {
+func collectMigrations(migrationDir string, entries []os.DirEntry) []migration {
 	migrations := make([]migration, 0, len(entries))
 
 	for _, entry := range entries {
@@ -380,7 +374,7 @@ func collectMigrations(migrationDir string, entries []os.DirEntry) ([]migration,
 		return migrations[i].version < migrations[j].version
 	})
 
-	return migrations, nil
+	return migrations
 }
 
 func (db *DB) isMigrationApplied(ctx context.Context, version int) (bool, error) {
@@ -433,7 +427,11 @@ func (db *DB) applyMigration(ctx context.Context, m migration) error {
 		if connErr != nil {
 			return connErr
 		}
-		defer conn.Close()
+		defer func() {
+			if cerr := conn.Close(); cerr != nil {
+				_ = cerr // best-effort close; migration already committed or rolled back
+			}
+		}()
 
 		committed := false
 

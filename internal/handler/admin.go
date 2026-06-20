@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -175,7 +176,11 @@ func (h *AdminHandler) ListMedia(w http.ResponseWriter, r *http.Request) {
 		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			slog.Warn("failed to close rows", "error", cerr)
+		}
+	}()
 
 	items, err := repository.ScanMediaItemRows(rows)
 	if err != nil {
@@ -284,7 +289,11 @@ func (h *AdminHandler) ListMissing(w http.ResponseWriter, r *http.Request) {
 		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			slog.Warn("failed to close rows", "error", cerr)
+		}
+	}()
 
 	var items []model.MediaItem
 	for rows.Next() {
@@ -355,17 +364,20 @@ func (h *AdminHandler) DeleteMissing(w http.ResponseWriter, r *http.Request) {
 		response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 		return
 	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			slog.Warn("rows.Close failed", "error", cerr)
+		}
+	}()
 	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
 			response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 			return
 		}
 		ids = append(ids, id)
 	}
-	rows.Close()
 
 	if len(ids) == 0 {
 		response.Success(w, map[string]interface{}{"deleted_count": 0})

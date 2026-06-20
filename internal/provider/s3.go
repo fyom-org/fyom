@@ -73,7 +73,10 @@ func NewS3Provider(rec model.ProviderRecord) (*S3Provider, error) {
 	}, nil
 }
 
-func (p *S3Provider) ID()   string { return p.id }
+// ID returns the provider identifier.
+func (p *S3Provider) ID() string { return p.id }
+
+// Type returns the provider type string.
 func (p *S3Provider) Type() string { return "s3" }
 
 // SupportsRedirect returns false: S3 presigned URLs are direct links that
@@ -81,6 +84,7 @@ func (p *S3Provider) Type() string { return "s3" }
 // (RemoteFyomProvider in Phase 5 will return true.)
 func (p *S3Provider) SupportsRedirect() bool { return false }
 
+// StreamURL generates a presigned URL for streaming the media item from S3.
 func (p *S3Provider) StreamURL(ctx context.Context, item *model.MediaItem) (string, error) {
 	if item.FilePath == "" {
 		return "", nil
@@ -88,6 +92,7 @@ func (p *S3Provider) StreamURL(ctx context.Context, item *model.MediaItem) (stri
 	return p.presignKey(ctx, item.FilePath, streamURLTTL)
 }
 
+// PosterURL generates a presigned URL for the media item's poster image from S3.
 func (p *S3Provider) PosterURL(ctx context.Context, item *model.MediaItem) (string, error) {
 	if item.PosterPath == "" {
 		return "", nil
@@ -95,6 +100,7 @@ func (p *S3Provider) PosterURL(ctx context.Context, item *model.MediaItem) (stri
 	return p.presignKey(ctx, item.PosterPath, assetURLTTL)
 }
 
+// BackdropURL generates a presigned URL for the media item's backdrop image from S3.
 func (p *S3Provider) BackdropURL(ctx context.Context, item *model.MediaItem) (string, error) {
 	if item.BackdropPath == "" {
 		return "", nil
@@ -102,6 +108,7 @@ func (p *S3Provider) BackdropURL(ctx context.Context, item *model.MediaItem) (st
 	return p.presignKey(ctx, item.BackdropPath, assetURLTTL)
 }
 
+// LogoURL generates a presigned URL for the media item's logo image from S3.
 func (p *S3Provider) LogoURL(ctx context.Context, item *model.MediaItem) (string, error) {
 	if item.LogoPath == "" {
 		return "", nil

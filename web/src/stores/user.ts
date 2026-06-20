@@ -386,11 +386,15 @@ export const useUserStore = defineStore('user', () => {
 
       if (isAuthInvalidStatus(httpStatus)) {
         clearStaleSession();
-        throw new Error('Unable to load authenticated user.');
+        throw error instanceof Error
+          ? new Error('Unable to load authenticated user.', { cause: error })
+          : new Error('Unable to load authenticated user.');
       }
 
       markAuthError('Signed in, but failed to load user profile.');
-      throw error;
+      throw error instanceof Error
+        ? new Error('Failed to load user profile after sign-in.', { cause: error })
+        : new Error('Failed to load user profile after sign-in.');
     }
   }
 

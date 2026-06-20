@@ -20,7 +20,7 @@ func TestImporter_JobCounts_AreCandidateBased_AndNeverExceedTotal(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	lib := &model.Library{
 		Name:           "Test Library",
@@ -39,14 +39,30 @@ func TestImporter_JobCounts_AreCandidateBased_AndNeverExceedTotal(t *testing.T) 
 	seasonDir := filepath.Join(showDir, "Season 01")
 	seasonDir2 := filepath.Join(showDir, "Season 02")
 	seasonDir3 := filepath.Join(showDir, "Season 03")
-	os.MkdirAll(seasonDir, 0755)
-	os.MkdirAll(seasonDir2, 0755)
-	os.MkdirAll(seasonDir3, 0755)
-	os.WriteFile(filepath.Join(showDir, "tvshow.nfo"), []byte(testShowNFO), 0644)
-	os.WriteFile(filepath.Join(seasonDir, "S01E01.mkv"), []byte(""), 0644)
-	os.WriteFile(filepath.Join(seasonDir, "S01E01.nfo"), []byte(testEpisodeNFO), 0644)
-	os.WriteFile(filepath.Join(seasonDir2, "S02E01.mkv"), []byte(""), 0644)
-	os.WriteFile(filepath.Join(seasonDir3, "S03E01.mkv"), []byte(""), 0644)
+	if err := os.MkdirAll(seasonDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(seasonDir2, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(seasonDir3, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(showDir, "tvshow.nfo"), []byte(testShowNFO), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir, "S01E01.mkv"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir, "S01E01.nfo"), []byte(testEpisodeNFO), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir2, "S02E01.mkv"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir3, "S03E01.mkv"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	mediaRepo := repository.NewMediaRepository(db)
 	jobRepo := repository.NewImportJobRepository(db)
@@ -58,7 +74,7 @@ func TestImporter_JobCounts_AreCandidateBased_AndNeverExceedTotal(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	waitForJob(t, ctx, jobRepo, job.ID, 5000000000) // 5s timeout
+	waitForJob(t, jobRepo, job.ID)
 
 	jobFinal, _ := jobRepo.Get(ctx, job.ID)
 	if jobFinal.Status == "error" {
@@ -82,7 +98,7 @@ func TestImporter_JobCounts_AreCandidateBased_AndNeverExceedTotal(t *testing.T) 
 }
 
 func TestAsyncImport_PersistsImportSummaryToJob(t *testing.T) {
-	root := buildFixture_library(t)
+	root := buildFixtureLibrary(t)
 	db := openImporterTestDB(t)
 	lib := createImporterTestLibrary(t, db, root)
 	mediaRepo := repository.NewMediaRepository(db)
@@ -96,7 +112,7 @@ func TestAsyncImport_PersistsImportSummaryToJob(t *testing.T) {
 		t.Fatalf("ImportRequest failed: %v", err)
 	}
 
-	waitForJob(t, ctx, jobRepo, job.ID, 5*time.Second)
+	waitForJob(t, jobRepo, job.ID)
 	time.Sleep(50 * time.Millisecond)
 
 	jobFinal, err := jobRepo.Get(ctx, job.ID)

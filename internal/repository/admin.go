@@ -17,6 +17,7 @@ type AdminStats struct {
 	Imports   ImportStats    `json:"imports"`
 }
 
+// LibraryStats holds aggregate library statistics for the admin dashboard.
 type LibraryStats struct {
 	TotalItems int `json:"total_items"`
 	Movies     int `json:"movies"`
@@ -24,17 +25,20 @@ type LibraryStats struct {
 	Episodes   int `json:"episodes"`
 }
 
+// ProviderStats holds aggregate provider statistics for the admin dashboard.
 type ProviderStats struct {
 	Total   int      `json:"total"`
 	Enabled int      `json:"enabled"`
 	Types   []string `json:"types"`
 }
 
+// UserStats holds aggregate user statistics for the admin dashboard.
 type UserStats struct {
 	Total  int `json:"total"`
 	Admins int `json:"admins"`
 }
 
+// ImportStats holds aggregate import job statistics for the admin dashboard.
 type ImportStats struct {
 	Total   int `json:"total"`
 	Running int `json:"running"`

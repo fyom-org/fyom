@@ -35,7 +35,7 @@ func (imp *Importer) parseShowMetadata(ctx context.Context, c *ImportCandidate) 
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	showNFO, err := ParseShowNFO(f)
 	if err != nil {
@@ -60,7 +60,7 @@ func (imp *Importer) parseMovieMetadata(ctx context.Context, c *ImportCandidate)
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	movieNFO, err := ParseMovieNFO(f)
 	if err != nil {
@@ -85,7 +85,7 @@ func (imp *Importer) parseEpisodeMetadata(ctx context.Context, c *ImportCandidat
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	episodes, err := ParseEpisodeNFOs(f)
 	if err != nil || len(episodes) == 0 {
@@ -219,9 +219,7 @@ func applyShowNFOFields(item *model.MediaItem, nfo *model.NFOTVShow) {
 	item.Tags = stringsToJSON(nfo.Tags)
 	item.MPAA = nfo.MPAA
 
-	if nfo.Status != "" {
-		// passthrough — stored in a dedicated column if present
-	}
+	// nfo.Status is a passthrough — stored in a dedicated column if present.
 
 	if item.Year == 0 && nfo.Premiered != "" && len(nfo.Premiered) >= 4 {
 		if y, err := strconv.Atoi(nfo.Premiered[:4]); err == nil {

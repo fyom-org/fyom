@@ -17,7 +17,7 @@ func TestEnsureLocalProvider_DoesNotRegisterInMemoryProviderTwice(t *testing.T) 
 
 	db, err := repository.Open(filepath.Join(dir, "fyom.db"), 5, 2, 60)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	providerRepo := repository.NewProviderRepository(db)
 

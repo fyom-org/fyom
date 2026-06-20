@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/fyom/fyom/internal/repository"
 )
@@ -90,7 +89,7 @@ func TestNFOFallback_MissingTitle_FallsBackToFilename(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportRequest failed: %v", err)
 	}
-	waitForJob(t, ctx, jobRepo, job.ID, 5*time.Second)
+	waitForJob(t, jobRepo, job.ID)
 
 	jobFinal, _ := jobRepo.Get(ctx, job.ID)
 	if jobFinal.Status == "error" {
@@ -131,7 +130,7 @@ func TestNFOFallback_OldAndNewFormatIDs_NewFormatWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportRequest failed: %v", err)
 	}
-	waitForJob(t, ctx, jobRepo, job.ID, 5*time.Second)
+	waitForJob(t, jobRepo, job.ID)
 
 	var uniqueIDsJSON string
 	err = db.QueryRow(`SELECT unique_ids FROM media_items WHERE library_id = ? AND type = 'movie'`, lib.ID).Scan(&uniqueIDsJSON)
@@ -167,7 +166,7 @@ func TestNFOFallback_OldFormatID_FillsGapWhenNewFormatAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportRequest failed: %v", err)
 	}
-	waitForJob(t, ctx, jobRepo, job.ID, 5*time.Second)
+	waitForJob(t, jobRepo, job.ID)
 
 	var uniqueIDsJSON string
 	err = db.QueryRow(`SELECT unique_ids FROM media_items WHERE library_id = ? AND type = 'movie'`, lib.ID).Scan(&uniqueIDsJSON)

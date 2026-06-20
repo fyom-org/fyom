@@ -33,7 +33,7 @@ func TestFindMovieNFO_PrefersMovieNFO(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open NFO: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	movieNFO, err := ParseMovieNFO(f)
 	if err != nil {
@@ -50,7 +50,7 @@ func TestFindMovieNFO_PrefersMovieNFO(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open Haruhana NFO: %v", err)
 	}
-	defer f2.Close()
+	defer func() { _ = f2.Close() }()
 	haruNFO, _ := ParseMovieNFO(f2)
 	if haruNFO.Title == movieNFO.Title {
 		t.Error("Haruhana NFO should have a different title")
@@ -96,7 +96,7 @@ func TestFindMovieNFO_PrefersMovieNFO_ExternalMedia(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open NFO: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	movieNFO, err := ParseMovieNFO(f)
 	if err != nil {

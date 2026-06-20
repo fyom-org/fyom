@@ -1,3 +1,4 @@
+// Package app provides the main application entry point and runtime configuration.
 package app
 
 import (

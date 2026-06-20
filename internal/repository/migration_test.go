@@ -37,7 +37,7 @@ func TestMigration_EmptyToLatest(t *testing.T) {
 	// Verify media_items table exists with Phase 8 columns
 	rows, err := db.QueryContext(ctx, "PRAGMA table_info(media_items)")
 	require.NoError(t, err)
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	columns := make(map[string]bool)
 	for rows.Next() {
@@ -137,10 +137,10 @@ func TestMigration_PrePhase8ToLatest(t *testing.T) {
 	require.NoError(t, err)
 
 	// Now open via the normal path — this should run remaining migrations (0012-0016)
-	sqlDB.Close()
+	_ = sqlDB.Close()
 	db, err := Open(dbPath, 5, 2, 60)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	ctx := context.Background()
 

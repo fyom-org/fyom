@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/fyom/fyom/internal/model"
@@ -239,7 +240,7 @@ func (r *MediaRepository) Get(ctx context.Context, id string) (*model.MediaItem,
 	var m model.MediaItem
 
 	err := scanMediaRow(r.db.QueryRowContext(ctx, `SELECT `+mediaColumns+` FROM media_items WHERE id = ?`, id), &m)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 
@@ -447,7 +448,7 @@ func (r *MediaRepository) FindExistingItem(ctx context.Context, libraryID, fileP
 		mediaType,
 	).Scan(&id)
 
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 
@@ -471,7 +472,7 @@ func (r *MediaRepository) FindByRootPath(ctx context.Context, libraryID, rootPat
 		mediaType,
 	).Scan(&id)
 
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 

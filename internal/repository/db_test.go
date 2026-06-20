@@ -13,10 +13,7 @@ import (
 func TestSQLiteDSNUsesPragmaParametersAndDoesNotHTMLEscapeAmpersands(t *testing.T) {
 	t.Parallel()
 
-	dsn, err := sqliteDSN(filepath.Join("tmp", "fyom.db"))
-	if err != nil {
-		t.Fatalf("sqliteDSN() error = %v", err)
-	}
+	dsn := sqliteDSN(filepath.Join("tmp", "fyom.db"))
 
 	if strings.Contains(dsn, "&amp;") {
 		t.Fatalf("sqliteDSN() contains HTML-escaped ampersand: %q", dsn)
@@ -43,7 +40,7 @@ func TestOpenAppliesSQLitePragmas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	ctx := context.Background()
 
@@ -98,7 +95,7 @@ func TestIsMigrationAppliedHandlesErrNoRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	applied, err := db.isMigrationApplied(context.Background(), 999999)
 	if err != nil {

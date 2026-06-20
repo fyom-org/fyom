@@ -7,7 +7,10 @@
 package version
 
 var (
+	// Version is the build-time version string, set via -ldflags.
 	Version   = "dev"
+	// Commit is the git commit hash at build time, set via -ldflags.
 	Commit    = "unknown"
+	// BuildTime is the RFC3339 timestamp of when the binary was built, set via -ldflags.
 	BuildTime = "unknown"
 )

@@ -157,6 +157,7 @@ func TestWrap_NilAppError(t *testing.T) {
 	if wrapped.ErrorCode != CodeInternal {
 		t.Errorf("ErrorCode = %q, want %q", wrapped.ErrorCode, CodeInternal)
 	}
+	//nolint:errorlint // identity check: verify wrapped error is the same instance
 	if wrapped.Err != underlying {
 		t.Error("Wrapped Err does not match the underlying error")
 	}
@@ -188,6 +189,7 @@ func TestWrap_PropagatesErrorCode(t *testing.T) {
 	if wrapped.Detail != template.Detail {
 		t.Errorf("Detail = %q, want %q", wrapped.Detail, template.Detail)
 	}
+	//nolint:errorlint // identity check: verify wrapped error is the same instance
 	if wrapped.Err != underlying {
 		t.Error("Wrapped Err does not match the underlying error")
 	}

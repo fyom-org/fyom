@@ -143,11 +143,16 @@ const (
 
 	// ----- Provider ops (5xx) -----
 
-	CodeFailedToCreateProvider     Code = "failed_to_create_provider"
-	CodeFailedToUpdateProvider     Code = "failed_to_update_provider"
-	CodeFailedToDeleteProvider     Code = "failed_to_delete_provider"
+	// CodeFailedToCreateProvider indicates that provider creation failed.
+	CodeFailedToCreateProvider Code = "failed_to_create_provider"
+	// CodeFailedToUpdateProvider indicates that provider update failed.
+	CodeFailedToUpdateProvider Code = "failed_to_update_provider"
+	// CodeFailedToDeleteProvider indicates that provider deletion failed.
+	CodeFailedToDeleteProvider Code = "failed_to_delete_provider"
+	// CodeFailedToLoadProviderConfig indicates that provider config loading failed.
 	CodeFailedToLoadProviderConfig Code = "failed_to_load_provider_config"
-	CodeFailedToCreateS3Client     Code = "failed_to_create_s3_client"
+	// CodeFailedToCreateS3Client indicates that S3 client creation failed.
+	CodeFailedToCreateS3Client Code = "failed_to_create_s3_client"
 
 	// ----- Library ops -----
 

@@ -15,6 +15,8 @@ import (
 // reconcileCandidates takes classified, metadata-parsed candidates and
 // creates or updates database records. It returns a ReconcileResult with
 // counts of accepted/rejected/unknown items.
+//
+//nolint:unparam
 func (imp *Importer) reconcileCandidates(ctx context.Context, candidates []ImportCandidate) (*ReconcileResult, error) {
 	result := &ReconcileResult{
 		Accepted:        make([]ResolvedItem, 0),
@@ -83,7 +85,7 @@ func (imp *Importer) reconcileShow(ctx context.Context, c *ImportCandidate) (*Re
 		f, err := imp.fs.Open(ctx, nfoPath)
 		if err == nil {
 			showNFO, err = ParseShowNFO(f)
-			f.Close()
+			_ = f.Close()
 			if err != nil {
 				showNFO = nil
 			}
@@ -207,7 +209,7 @@ func (imp *Importer) reconcileMovie(ctx context.Context, c *ImportCandidate) (*R
 		f, err := imp.fs.Open(ctx, c.NFOPath)
 		if err == nil {
 			movieNFO, err = ParseMovieNFO(f)
-			f.Close()
+			_ = f.Close()
 			if err == nil && movieNFO != nil {
 				title = movieNFO.Title
 				overview = movieNFO.Plot
@@ -340,7 +342,7 @@ func (imp *Importer) reconcileEpisode(ctx context.Context, c *ImportCandidate) (
 	if imp.fs.Exists(ctx, epNFOPath) {
 		if nf, err := imp.fs.Open(ctx, epNFOPath); err == nil {
 			episodes, err := ParseEpisodeNFOs(nf)
-			nf.Close()
+			_ = nf.Close()
 			if err == nil && len(episodes) > 0 {
 				epNFO := episodes[0]
 				epTitle = epNFO.Title
@@ -410,7 +412,7 @@ func (imp *Importer) reconcileEpisode(ctx context.Context, c *ImportCandidate) (
 	if imp.fs.Exists(ctx, epNFOPath) {
 		if nf, err := imp.fs.Open(ctx, epNFOPath); err == nil {
 			episodes, err := ParseEpisodeNFOs(nf)
-			nf.Close()
+			_ = nf.Close()
 			if err == nil && len(episodes) > 0 {
 				applyEpisodeNFOFields(epItem, &episodes[0])
 			}

@@ -13,7 +13,6 @@ import { promisify } from 'node:util';
 const brotliCompress = promisify(zlib.brotliCompress);
 
 const DIST_DIR = path.join(process.cwd(), 'dist');
-const ASSETS_DIR = path.join(DIST_DIR, 'assets');
 
 // Files to compress (exclude already compressed and source maps)
 const EXTENSIONS_TO_COMPRESS = [

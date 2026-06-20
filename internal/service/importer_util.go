@@ -101,7 +101,7 @@ func (imp *Importer) findMovieNFO(ctx context.Context, dir string) string {
 			if nf, err := imp.fs.Open(ctx, path); err == nil {
 				var movie model.NFOMovie
 				err = xml.NewDecoder(nf).Decode(&movie)
-				nf.Close()
+				_ = nf.Close()
 				if err == nil {
 					return path
 				}
@@ -132,7 +132,7 @@ func (imp *Importer) findMovieNFO(ctx context.Context, dir string) string {
 		}
 		var movie model.NFOMovie
 		err = xml.NewDecoder(f).Decode(&movie)
-		f.Close()
+		_ = f.Close()
 		if err == nil && movie.Title != "" {
 			return path
 		}

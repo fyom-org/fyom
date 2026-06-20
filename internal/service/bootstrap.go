@@ -16,7 +16,9 @@ import (
 type BootstrapMode string
 
 const (
-	BootstrapModeServer  BootstrapMode = "server"
+	// BootstrapModeServer creates an admin with a generated password for server mode.
+	BootstrapModeServer BootstrapMode = "server"
+	// BootstrapModeDesktop creates an admin with auto-auth for desktop mode.
 	BootstrapModeDesktop BootstrapMode = "desktop"
 )
 

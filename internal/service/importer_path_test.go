@@ -20,7 +20,7 @@ func TestImporter_EpisodePrimaryPath_IsRealFilePath_NotDoubleNested(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	lib := &model.Library{
 		Name:           "Test Library",
@@ -36,10 +36,18 @@ func TestImporter_EpisodePrimaryPath_IsRealFilePath_NotDoubleNested(t *testing.T
 
 	showDir := filepath.Join(dir, "Show A")
 	seasonDir := filepath.Join(showDir, "Season 01")
-	os.MkdirAll(seasonDir, 0755)
-	os.WriteFile(filepath.Join(showDir, "tvshow.nfo"), []byte(testShowNFO), 0644)
-	os.WriteFile(filepath.Join(seasonDir, "S01E01.mkv"), []byte(""), 0644)
-	os.WriteFile(filepath.Join(seasonDir, "S01E01.nfo"), []byte(testEpisodeNFO), 0644)
+	if err := os.MkdirAll(seasonDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(showDir, "tvshow.nfo"), []byte(testShowNFO), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir, "S01E01.mkv"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir, "S01E01.nfo"), []byte(testEpisodeNFO), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	mediaRepo := repository.NewMediaRepository(db)
 	jobRepo := repository.NewImportJobRepository(db)
@@ -86,7 +94,7 @@ func TestImporter_ShowPaths_UseRootPathAndNFOPath_NotDirectoryAsFilePath(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	lib := &model.Library{
 		Name:           "Test Library",
@@ -102,10 +110,18 @@ func TestImporter_ShowPaths_UseRootPathAndNFOPath_NotDirectoryAsFilePath(t *test
 
 	showDir := filepath.Join(dir, "Show A")
 	seasonDir := filepath.Join(showDir, "Season 01")
-	os.MkdirAll(seasonDir, 0755)
-	os.WriteFile(filepath.Join(showDir, "tvshow.nfo"), []byte(testShowNFO), 0644)
-	os.WriteFile(filepath.Join(seasonDir, "S01E01.mkv"), []byte(""), 0644)
-	os.WriteFile(filepath.Join(seasonDir, "S01E01.nfo"), []byte(testEpisodeNFO), 0644)
+	if err := os.MkdirAll(seasonDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(showDir, "tvshow.nfo"), []byte(testShowNFO), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir, "S01E01.mkv"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir, "S01E01.nfo"), []byte(testEpisodeNFO), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	mediaRepo := repository.NewMediaRepository(db)
 	jobRepo := repository.NewImportJobRepository(db)

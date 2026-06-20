@@ -73,6 +73,7 @@ func (fs *S3ImportFS) s3LogicalPath(fullKey string) string {
 	return strings.TrimPrefix(fullKey, fs.prefix)
 }
 
+// ReadDir returns a sorted list of directory entries for the given S3 prefix.
 func (fs *S3ImportFS) ReadDir(ctx context.Context, dir string) ([]DirEntry, error) {
 	prefix := fs.s3FullKey(dir)
 	if prefix != "" && !strings.HasSuffix(prefix, "/") {
@@ -121,6 +122,7 @@ func (fs *S3ImportFS) ReadDir(ctx context.Context, dir string) ([]DirEntry, erro
 	return entries, nil
 }
 
+// Open downloads the named object from S3 and returns its body as a ReadCloser.
 func (fs *S3ImportFS) Open(ctx context.Context, name string) (io.ReadCloser, error) {
 	key := fs.s3FullKey(name)
 	resp, err := fs.client.GetObject(ctx, &s3.GetObjectInput{
@@ -133,6 +135,7 @@ func (fs *S3ImportFS) Open(ctx context.Context, name string) (io.ReadCloser, err
 	return resp.Body, nil
 }
 
+// Exists reports whether the named object exists in the S3 bucket.
 func (fs *S3ImportFS) Exists(ctx context.Context, name string) bool {
 	key := fs.s3FullKey(name)
 	_, err := fs.client.HeadObject(ctx, &s3.HeadObjectInput{
@@ -142,6 +145,7 @@ func (fs *S3ImportFS) Exists(ctx context.Context, name string) bool {
 	return err == nil
 }
 
+// Join joins any number of path elements into a single forward-slash-separated path.
 func (fs *S3ImportFS) Join(elem ...string) string {
 	joined := strings.Join(elem, "/")
 	// Replace double slashes (but not :// in URLs)

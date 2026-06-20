@@ -190,18 +190,19 @@ func (h *AdminLibraryHandler) DeleteLibraryWithItems(w http.ResponseWriter, r *h
 		mode = "cascade"
 	}
 
-	if mode == "cascade" {
+	switch mode {
+	case "cascade":
 		if err := h.repo.DeleteWithItems(r.Context(), id); err != nil {
 			response.ErrorCode(w, http.StatusInternalServerError, errors.CodeInternal, "")
 			return
 		}
-	} else if mode == "orphan" {
+	case "orphan":
 		// Move items to an empty placeholder — for now just error since
 		// there's no "default" library concept anymore.
 		// Admins should delete items first, then delete the empty library.
 		response.ErrorCode(w, http.StatusBadRequest, errors.CodeOrphanModeDeleteItemsFirst, "")
 		return
-	} else {
+	default:
 		response.ErrorCode(w, http.StatusBadRequest, errors.CodeInvalidMode, "")
 		return
 	}

@@ -122,7 +122,7 @@ async function loadSettings(): Promise<void> {
     } else if (systemStore.defaultLocale) {
       defaultLocale.value = systemStore.defaultLocale;
     }
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) {
       // Handled centrally by router / store; do not pollute the console
       return;
@@ -147,7 +147,7 @@ async function saveSettings(): Promise<void> {
     });
 
     message.value = t('admin.settings.saved');
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) {
       return;
     }

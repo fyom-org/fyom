@@ -11,37 +11,36 @@ import (
 	"github.com/fyom/fyom/internal/repository"
 )
 
-// helper to create a minimal movie NFO
-func movieNFO(title string) string {
+// movieNFO returns a minimal movie NFO XML for testing.
+func movieNFO() string {
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <movie>
-    <title>` + title + `</title>
+    <title>Movie A</title>
     <year>2020</year>
     <plot>A test movie.</plot>
     <rating>7.5</rating>
 </movie>`
 }
 
-// helper to create a minimal show NFO
-func showNFO(title string) string {
+// showNFO returns a minimal TV show NFO XML for testing.
+func showNFO() string {
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <tvshow>
-    <title>` + title + `</title>
+    <title>Show B</title>
     <year>2022</year>
     <plot>A test show.</plot>
     <rating>8.0</rating>
 </tvshow>`
 }
 
-// helper to create a minimal episode NFO
-func episodeNFO(title string) string {
+// episodeNFO returns a minimal episode NFO XML for testing.
+func episodeNFO() string {
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <episodedetails>
-    <title>` + title + `</title>
+    <title>Episode One</title>
     <season>1</season>
     <episode>1</episode>
-    <plot>First episode.</plot>
-    <rating>7.0</rating>
+    <plot>Test episode.</plot>
 </episodedetails>`
 }
 
@@ -107,14 +106,28 @@ func TestImporter_SourceRootWithOneExtraGroupingDirectory_StillFindsNestedMedia(
 	showDir := filepath.Join(library1Dir, "show-b")
 	seasonDir := filepath.Join(showDir, "Season 01")
 
-	os.MkdirAll(movieDir, 0755)
-	os.MkdirAll(seasonDir, 0755)
+	if err := os.MkdirAll(movieDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(seasonDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
-	os.WriteFile(filepath.Join(movieDir, "movie.nfo"), []byte(movieNFO("Movie A")), 0644)
-	os.WriteFile(filepath.Join(movieDir, "movie-a.mkv"), []byte(""), 0644)
-	os.WriteFile(filepath.Join(showDir, "tvshow.nfo"), []byte(showNFO("Show B")), 0644)
-	os.WriteFile(filepath.Join(seasonDir, "show-b - S01E01.nfo"), []byte(episodeNFO("Episode One")), 0644)
-	os.WriteFile(filepath.Join(seasonDir, "show-b - S01E01.mkv"), []byte(""), 0644)
+	if err := os.WriteFile(filepath.Join(movieDir, "movie.nfo"), []byte(movieNFO()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(movieDir, "movie-a.mkv"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(showDir, "tvshow.nfo"), []byte(showNFO()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir, "show-b - S01E01.nfo"), []byte(episodeNFO()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir, "show-b - S01E01.mkv"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	db, lib := runImportTest(t, groupingDir, "mixed")
 
@@ -130,7 +143,9 @@ func TestImporter_SourceRootWithOneExtraGroupingDirectory_StillFindsNestedMedia(
 	if got := countMediaItems(t, db, lib.ID, "movie"); got != 1 {
 		// verify no duplicate from episode file
 		var dup int
-		db.QueryRow("SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'movie' AND title LIKE '%S01E01%'", lib.ID).Scan(&dup)
+		if err := db.QueryRow("SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'movie' AND title LIKE '%S01E01%'", lib.ID).Scan(&dup); err != nil && err != sql.ErrNoRows {
+			t.Fatal(err)
+		}
 		if dup != 0 {
 			t.Errorf("expected 0 duplicate movies from episode files, got %d", dup)
 		}
@@ -149,14 +164,28 @@ func TestImporter_SourceRootWithMultipleGroupingDirectories_StillFindsNestedMedi
 	showDir := filepath.Join(groupingDir, "show-b")
 	seasonDir := filepath.Join(showDir, "Season 01")
 
-	os.MkdirAll(movieDir, 0755)
-	os.MkdirAll(seasonDir, 0755)
+	if err := os.MkdirAll(movieDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(seasonDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
-	os.WriteFile(filepath.Join(movieDir, "movie.nfo"), []byte(movieNFO("Movie A")), 0644)
-	os.WriteFile(filepath.Join(movieDir, "movie-a.mkv"), []byte(""), 0644)
-	os.WriteFile(filepath.Join(showDir, "tvshow.nfo"), []byte(showNFO("Show B")), 0644)
-	os.WriteFile(filepath.Join(seasonDir, "show-b - S01E01.nfo"), []byte(episodeNFO("Episode One")), 0644)
-	os.WriteFile(filepath.Join(seasonDir, "show-b - S01E01.mkv"), []byte(""), 0644)
+	if err := os.WriteFile(filepath.Join(movieDir, "movie.nfo"), []byte(movieNFO()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(movieDir, "movie-a.mkv"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(showDir, "tvshow.nfo"), []byte(showNFO()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir, "show-b - S01E01.nfo"), []byte(episodeNFO()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir, "show-b - S01E01.mkv"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	db, lib := runImportTest(t, filepath.Join(dir, "media"), "mixed")
 
@@ -172,7 +201,9 @@ func TestImporter_SourceRootWithMultipleGroupingDirectories_StillFindsNestedMedi
 
 	// No duplicate movie from episode file
 	var dup int
-	db.QueryRow("SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'movie' AND title LIKE '%S01E01%'", lib.ID).Scan(&dup)
+	if err := db.QueryRow("SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'movie' AND title LIKE '%S01E01%'", lib.ID).Scan(&dup); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
 	if dup != 0 {
 		t.Errorf("expected 0 duplicate movies from episode files, got %d", dup)
 	}
@@ -187,10 +218,16 @@ func TestImporter_GroupingDirectory_DoesNotBecomeMediaItem(t *testing.T) {
 	wrapperDir := filepath.Join(dir, "wrapper")
 	movieDir := filepath.Join(wrapperDir, "movie-a")
 
-	os.MkdirAll(movieDir, 0755)
+	if err := os.MkdirAll(movieDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
-	os.WriteFile(filepath.Join(movieDir, "movie.nfo"), []byte(movieNFO("Movie A")), 0644)
-	os.WriteFile(filepath.Join(movieDir, "movie-a.mkv"), []byte(""), 0644)
+	if err := os.WriteFile(filepath.Join(movieDir, "movie.nfo"), []byte(movieNFO()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(movieDir, "movie-a.mkv"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	db, lib := runImportTest(t, wrapperDir, "mixed")
 
@@ -207,7 +244,9 @@ func TestImporter_GroupingDirectory_DoesNotBecomeMediaItem(t *testing.T) {
 
 	// Total media items should be exactly 1 (just the movie)
 	var total int
-	db.QueryRow("SELECT COUNT(*) FROM media_items WHERE library_id = ?", lib.ID).Scan(&total)
+	if err := db.QueryRow("SELECT COUNT(*) FROM media_items WHERE library_id = ?", lib.ID).Scan(&total); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
 	if total != 1 {
 		t.Errorf("expected exactly 1 media item, got %d", total)
 	}
@@ -225,14 +264,28 @@ func TestImporter_ShowOnlyLibrary_WithGroupingDirectory_ImportsShowAndRejectsMov
 	showDir := filepath.Join(groupDir, "show-b")
 	seasonDir := filepath.Join(showDir, "Season 01")
 
-	os.MkdirAll(movieDir, 0755)
-	os.MkdirAll(seasonDir, 0755)
+	if err := os.MkdirAll(movieDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(seasonDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
-	os.WriteFile(filepath.Join(movieDir, "movie.nfo"), []byte(movieNFO("Movie A")), 0644)
-	os.WriteFile(filepath.Join(movieDir, "movie-a.mkv"), []byte(""), 0644)
-	os.WriteFile(filepath.Join(showDir, "tvshow.nfo"), []byte(showNFO("Show B")), 0644)
-	os.WriteFile(filepath.Join(seasonDir, "show-b - S01E01.nfo"), []byte(episodeNFO("Episode One")), 0644)
-	os.WriteFile(filepath.Join(seasonDir, "show-b - S01E01.mkv"), []byte(""), 0644)
+	if err := os.WriteFile(filepath.Join(movieDir, "movie.nfo"), []byte(movieNFO()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(movieDir, "movie-a.mkv"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(showDir, "tvshow.nfo"), []byte(showNFO()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir, "show-b - S01E01.nfo"), []byte(episodeNFO()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir, "show-b - S01E01.mkv"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	db, lib := runImportTest(t, groupDir, "show")
 
@@ -262,14 +315,28 @@ func TestImporter_MovieOnlyLibrary_WithGroupingDirectory_ImportsMovieAndRejectsS
 	showDir := filepath.Join(groupDir, "show-b")
 	seasonDir := filepath.Join(showDir, "Season 01")
 
-	os.MkdirAll(movieDir, 0755)
-	os.MkdirAll(seasonDir, 0755)
+	if err := os.MkdirAll(movieDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(seasonDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
-	os.WriteFile(filepath.Join(movieDir, "movie.nfo"), []byte(movieNFO("Movie A")), 0644)
-	os.WriteFile(filepath.Join(movieDir, "movie-a.mkv"), []byte(""), 0644)
-	os.WriteFile(filepath.Join(showDir, "tvshow.nfo"), []byte(showNFO("Show B")), 0644)
-	os.WriteFile(filepath.Join(seasonDir, "show-b - S01E01.nfo"), []byte(episodeNFO("Episode One")), 0644)
-	os.WriteFile(filepath.Join(seasonDir, "show-b - S01E01.mkv"), []byte(""), 0644)
+	if err := os.WriteFile(filepath.Join(movieDir, "movie.nfo"), []byte(movieNFO()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(movieDir, "movie-a.mkv"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(showDir, "tvshow.nfo"), []byte(showNFO()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir, "show-b - S01E01.nfo"), []byte(episodeNFO()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir, "show-b - S01E01.mkv"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	db, lib := runImportTest(t, groupDir, "movie")
 

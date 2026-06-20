@@ -11,7 +11,7 @@ import (
 // ── Test: ImportLibrary returns correct summary ───────────────────────
 
 func TestImportLibrary_ReturnsSummary(t *testing.T) {
-	root := buildFixture_library(t)
+	root := buildFixtureLibrary(t)
 	db := openImporterTestDB(t)
 	lib := createImporterTestLibrary(t, db, root)
 
@@ -61,7 +61,7 @@ func TestImportLibrary_ReturnsSummary(t *testing.T) {
 // ── Test: ImportLibrary second run does not lose data ──────────────────
 
 func TestImportLibrary_SecondRunPreservesData(t *testing.T) {
-	root := buildFixture_library(t)
+	root := buildFixtureLibrary(t)
 	db := openImporterTestDB(t)
 	lib := createImporterTestLibrary(t, db, root)
 
@@ -78,7 +78,9 @@ func TestImportLibrary_SecondRunPreservesData(t *testing.T) {
 	}
 
 	var countAfterFirst int
-	db.QueryRow(`SELECT COUNT(*) FROM media_items WHERE library_id = ?`, lib.ID).Scan(&countAfterFirst)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM media_items WHERE library_id = ?`, lib.ID).Scan(&countAfterFirst); err != nil {
+		t.Fatalf("query count after first: %v", err)
+	}
 	if countAfterFirst < 3 {
 		t.Fatalf("expected at least 3 items after first import, got %d", countAfterFirst)
 	}
@@ -90,7 +92,9 @@ func TestImportLibrary_SecondRunPreservesData(t *testing.T) {
 	}
 
 	var countAfterSecond int
-	db.QueryRow(`SELECT COUNT(*) FROM media_items WHERE library_id = ?`, lib.ID).Scan(&countAfterSecond)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM media_items WHERE library_id = ?`, lib.ID).Scan(&countAfterSecond); err != nil {
+		t.Fatalf("query count after second: %v", err)
+	}
 
 	// The second run must NOT delete or lose any items
 	if countAfterSecond < countAfterFirst {

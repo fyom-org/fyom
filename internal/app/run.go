@@ -131,12 +131,12 @@ _svc := service.BootstrapMode(opts.Mode)
 				"username", bootstrapResult.Username,
 				"password", bootstrapResult.GeneratedPassword,
 			)
-			fmt.Fprintf(os.Stderr, "\n========================================\n")
-			fmt.Fprintf(os.Stderr, " fyom first run — admin credentials\n")
-			fmt.Fprintf(os.Stderr, " username: %s\n", bootstrapResult.Username)
-			fmt.Fprintf(os.Stderr, " password: %s\n", bootstrapResult.GeneratedPassword)
-			fmt.Fprintf(os.Stderr, " change this after first login\n")
-			fmt.Fprintf(os.Stderr, "========================================\n\n")
+			fmt.Fprintf(os.Stderr, "\n========================================\n") //nolint:errcheck
+			fmt.Fprintf(os.Stderr, " fyom first run — admin credentials\n") //nolint:errcheck
+			fmt.Fprintf(os.Stderr, " username: %s\n", bootstrapResult.Username) //nolint:errcheck
+			fmt.Fprintf(os.Stderr, " password: %s\n", bootstrapResult.GeneratedPassword) //nolint:errcheck
+			fmt.Fprintf(os.Stderr, " change this after first login\n") //nolint:errcheck
+			fmt.Fprintf(os.Stderr, "========================================\n\n") //nolint:errcheck
 		case service.BootstrapModeDesktop:
 			slog.Info("fyom desktop first run — auto-created admin",
 				"username", bootstrapResult.Username,
@@ -147,6 +147,7 @@ _svc := service.BootstrapMode(opts.Mode)
 
 	if opts.Mode == RunModeSidecar {
 		time.Sleep(100 * time.Millisecond)
+		//nolint:errcheck
 		fmt.Fprintf(os.Stdout, "FYOM_READY http://%s\n", addr)
 	}
 

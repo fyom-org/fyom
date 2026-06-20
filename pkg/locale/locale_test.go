@@ -126,7 +126,7 @@ func TestSupportedLocales_NoEmptyOrDuplicateEntries(t *testing.T) {
 func TestSupportedLocales_AllLowercase(t *testing.T) {
 	for _, code := range SupportedLocales {
 		for _, r := range code {
-			if !(r >= 'a' && r <= 'z') {
+			if r < 'a' || r > 'z' {
 				t.Errorf("SupportedLocales entry %q contains non-lowercase-ASCII character %q", code, r)
 			}
 		}

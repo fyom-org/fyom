@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -20,7 +19,7 @@ func TestMigrationOrBootstrap_EnsuresLocalProvider_WithForeignKeysEnabled(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Enable foreign keys
 	_, err = db.ExecContext(context.Background(), "PRAGMA foreign_keys = ON")
@@ -64,7 +63,7 @@ func TestMigrationOrBootstrap_EnsuresLocalProvider_WithForeignKeysEnabled(t *tes
 	// Verify the media item was inserted
 	var mediaCount int
 	err = db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM media_items WHERE provider_id = 'local'").Scan(&mediaCount)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil {
 		t.Fatal(err)
 	}
 	if mediaCount != 1 {

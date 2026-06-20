@@ -26,7 +26,7 @@ func newPresignTestSigner() *presign.Signer {
 // buildSignedURL produces a request URL for presignTestPath carrying a valid
 // signature for the given method and expiry. sig is hex (URL-safe), so no
 // escaping is required.
-func buildSignedURL(method string, path string, exp int64, sig string) string {
+func buildSignedURL(_ string, path string, exp int64, sig string) string {
 	return fmt.Sprintf("%s?exp=%d&sig=%s", path, exp, sig)
 }
 

@@ -174,7 +174,7 @@ async function fetchProviders(): Promise<void> {
   try {
     const res = await authRequest.get<ApiEnvelope<Provider[]>>('/admin/providers');
     providers.value = res.data.data || [];
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) {
       return;
     }
@@ -210,7 +210,7 @@ async function createProvider(): Promise<void> {
     form.value = createEmptyForm();
 
     await fetchProviders();
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) {
       return;
     }
@@ -233,7 +233,7 @@ async function deleteProvider(provider: Provider): Promise<void> {
   try {
     await authRequest.delete<ApiEnvelope<null>>(`/admin/providers/${provider.id}`);
     await fetchProviders();
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) {
       return;
     }
@@ -270,7 +270,7 @@ async function toggleEnabled(provider: Provider): Promise<void> {
     });
 
     await fetchProviders();
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) {
       return;
     }

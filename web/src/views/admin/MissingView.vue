@@ -107,7 +107,7 @@ async function loadLibraries(): Promise<void> {
   try {
     const res = await authRequest.get<ApiEnvelope<Library[]>>('/admin/libraries');
     libraries.value = res.data.data || [];
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) {
       return;
     }
@@ -132,7 +132,7 @@ async function fetchMissing(): Promise<void> {
 
     items.value = res.data.data?.items || [];
     total.value = res.data.data?.total || 0;
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) {
       return;
     }
@@ -151,15 +151,15 @@ async function deleteSingle(item: MissingItem): Promise<void> {
   try {
     await authRequest.delete(`/admin/media/${item.id}`);
     await fetchMissing();
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) {
       return;
     }
 
     console.error('[missing] deleteSingle failed:', err);
     error.value =
-      err?.response?.data?.message ||
-      err?.response?.data?.error ||
+      (err as { response?: { data?: { message?: string; error?: string } } })?.response?.data?.message ||
+      (err as { response?: { data?: { message?: string; error?: string } } })?.response?.data?.error ||
       t('admin.missing.removeFailed', { title: item.title });
   } finally {
     deletingId.value = '';
@@ -189,7 +189,7 @@ async function deleteAllMissing(): Promise<void> {
     notifySuccess(t('admin.missing.deletedCount', { n: deletedCount }));
 
     await fetchMissing();
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) {
       return;
     }

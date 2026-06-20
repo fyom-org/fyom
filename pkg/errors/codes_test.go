@@ -160,7 +160,7 @@ func TestCode_NamingConvention(t *testing.T) {
 		// Only [a-z0-9_].
 		for i := 0; i < len(s); i++ {
 			c := s[i]
-			if !(isLowerASCII(c) || (c >= '0' && c <= '9') || c == '_') {
+			if !isLowerASCII(c) && (c < '0' || c > '9') && c != '_' {
 				t.Errorf("Code %q contains invalid character %q at position %d", s, c, i)
 			}
 		}

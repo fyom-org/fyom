@@ -4,7 +4,6 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/fyom/fyom/internal/repository"
 )
@@ -70,7 +69,7 @@ func TestImport_OneBadNFO_DoesNotAbortLibrary(t *testing.T) {
 	}
 
 	// Wait for async import to complete
-	waitForJob(t, ctx, jobRepo, job.ID, 5*time.Second)
+	waitForJob(t, jobRepo, job.ID)
 
 	jobFinal, _ := jobRepo.Get(ctx, job.ID)
 
@@ -85,15 +84,21 @@ func TestImport_OneBadNFO_DoesNotAbortLibrary(t *testing.T) {
 	// - Bad Movie (2021): filename-derived (NFO parse failed, fell through)
 	// - Another Good Movie (2022): NFO-parsed
 	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'movie'`, lib.ID).Scan(&count)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'movie'`, lib.ID).Scan(&count); err != nil {
+		t.Fatalf("query count: %v", err)
+	}
 	if count != 3 {
 		t.Errorf("expected 3 imported items (2 NFO + 1 filename-derived), got %d", count)
 	}
 
 	// Verify the good items have proper NFO metadata
 	var goodTitle, anotherTitle string
-	db.QueryRow(`SELECT title FROM media_items WHERE library_id = ? AND type = 'movie' AND title = 'Movie A'`, lib.ID).Scan(&goodTitle)
-	db.QueryRow(`SELECT title FROM media_items WHERE library_id = ? AND type = 'movie' AND title = 'Another Good Movie'`, lib.ID).Scan(&anotherTitle)
+	if err := db.QueryRow(`SELECT title FROM media_items WHERE library_id = ? AND type = 'movie' AND title = 'Movie A'`, lib.ID).Scan(&goodTitle); err != nil {
+		t.Fatalf("query good title: %v", err)
+	}
+	if err := db.QueryRow(`SELECT title FROM media_items WHERE library_id = ? AND type = 'movie' AND title = 'Another Good Movie'`, lib.ID).Scan(&anotherTitle); err != nil {
+		t.Fatalf("query another title: %v", err)
+	}
 
 	if goodTitle != "Movie A" {
 		t.Errorf("first good movie title = %q, want %q", goodTitle, "Movie A")
@@ -104,7 +109,9 @@ func TestImport_OneBadNFO_DoesNotAbortLibrary(t *testing.T) {
 
 	// The bad movie should have a filename-derived title (not empty, not NFO title)
 	var badTitle string
-	db.QueryRow(`SELECT title FROM media_items WHERE library_id = ? AND type = 'movie' AND title NOT IN ('Movie A', 'Another Good Movie')`, lib.ID).Scan(&badTitle)
+	if err := db.QueryRow(`SELECT title FROM media_items WHERE library_id = ? AND type = 'movie' AND title NOT IN ('Movie A', 'Another Good Movie')`, lib.ID).Scan(&badTitle); err != nil {
+		t.Fatalf("query bad title: %v", err)
+	}
 	if badTitle == "" {
 		t.Error("bad movie should have a non-empty filename-derived title")
 	}

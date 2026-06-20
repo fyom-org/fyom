@@ -226,7 +226,7 @@ async function loadLibraries(): Promise<void> {
   try {
     const res = await authRequest.get<ApiEnvelope<Library[]>>('/admin/libraries');
     libraries.value = res.data.data || [];
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) return;
     console.error('[media] loadLibraries failed', err);
   }
@@ -236,7 +236,7 @@ async function fetchItems(): Promise<void> {
   loading.value = true;
 
   try {
-    const params: Record<string, any> = {
+    const params: Record<string, string | number> = {
       page: page.value,
       limit,
       sort: 'created_at_desc',
@@ -250,7 +250,7 @@ async function fetchItems(): Promise<void> {
 
     items.value = res.data.data.items || [];
     total.value = res.data.data.total || 0;
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) return;
     console.error('[media] fetchItems failed', err);
   } finally {
@@ -262,7 +262,7 @@ async function fetchItems(): Promise<void> {
    Search (debounced)
    ========================= */
 
-function triggerSearch(): void {
+function onSearchInput(): void {
   if (searchDebounce) window.clearTimeout(searchDebounce);
 
   searchDebounce = window.setTimeout(() => {
@@ -309,7 +309,7 @@ async function deleteItem(item: AdminItem): Promise<void> {
   try {
     await authRequest.delete(`/admin/media/${item.id}`);
     await fetchItems();
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (isUnauthorizedOrForbidden(err)) return;
 
     notifyError(t('admin.media.deleteFailed') + getSafeApiErrorMessage(err, 'admin.media.unknownError'));

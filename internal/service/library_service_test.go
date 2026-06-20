@@ -18,7 +18,7 @@ func TestLibraryCreate_PreservesProvidedName_AndDoesNotReplaceWithSourcePath(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	libRepo := repository.NewLibraryRepository(db)
 	sourcePath := filepath.Join(dir, "movies")
@@ -60,7 +60,7 @@ func TestLibraryCreate_EmptyName_DoesNotPersistRawSourcePathAsName(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	libRepo := repository.NewLibraryRepository(db)
 

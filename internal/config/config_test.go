@@ -58,7 +58,7 @@ func TestLoad_EnvOverride(t *testing.T) {
 	t.Setenv("FYOM_SERVER_PORT", "7777")
 	t.Setenv("FYOM_LOG_LEVEL", "warn")
 	t.Setenv("FYOM_DB_PATH", "/tmp/env.db")
-	defer os.Unsetenv("FYOM_DB_PATH")
+	defer func() { _ = os.Unsetenv("FYOM_DB_PATH") }()
 
 	cfg, err := Load("")
 	require.NoError(t, err)

@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/fyom/fyom/internal/repository"
 )
@@ -60,7 +59,7 @@ func TestParseEpisodeNFOs_MultiEpisodeFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open NFO: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	episodes, err := ParseEpisodeNFOs(f)
 	if err != nil {
@@ -105,7 +104,7 @@ func TestImport_MissingSeasonEpisodeNumbers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportRequest failed: %v", err)
 	}
-	waitForJob(t, ctx, jobRepo, job.ID, 5*time.Second)
+	waitForJob(t, jobRepo, job.ID)
 
 	jobFinal, _ := jobRepo.Get(ctx, job.ID)
 	if jobFinal.Status == "error" {
@@ -149,7 +148,7 @@ func TestImport_SpecialEpisode_Season00(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportRequest failed: %v", err)
 	}
-	waitForJob(t, ctx, jobRepo, job.ID, 5*time.Second)
+	waitForJob(t, jobRepo, job.ID)
 
 	jobFinal, _ := jobRepo.Get(ctx, job.ID)
 	if jobFinal.Status == "error" {
@@ -193,7 +192,7 @@ func TestImport_EpisodeBackdropFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportRequest failed: %v", err)
 	}
-	waitForJob(t, ctx, jobRepo, job.ID, 5*time.Second)
+	waitForJob(t, jobRepo, job.ID)
 
 	jobFinal, _ := jobRepo.Get(ctx, job.ID)
 	if jobFinal.Status == "error" {

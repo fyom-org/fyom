@@ -2,7 +2,7 @@ import { test, expect } from './e2e/fixtures';
 
 test.describe('fyom bootstrap and auth lifecycle (routing behavior)', () => {
   
-  test('Scenario 1: Anonymous cold start → redirects to /login', async ({ freshPage, baseURL }) => {
+  test('Scenario 1: Anonymous cold start → redirects to /login', async ({ freshPage, baseURL: _baseURL }) => {
     // The fixture already navigated to / and cleared storage
     // Wait for client-side redirect to /login
     await freshPage.waitForURL('**/login', { timeout: 15000 });

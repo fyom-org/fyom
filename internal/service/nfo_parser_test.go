@@ -45,7 +45,7 @@ func TestNFOParser_ParseEpisodeNFO_UsesEpisodeTitleAndMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	episodes, err := ParseEpisodeNFOs(f)
 	if err != nil {
@@ -151,7 +151,7 @@ func TestNFOParser_ParseMovieNFO_MapsIMDBTMDBTVDBCorrectly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	movie, err := ParseMovieNFO(f)
 	if err != nil {

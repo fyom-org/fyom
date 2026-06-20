@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -88,7 +89,7 @@ func writeFileHelper(t *testing.T, path, content string) {
 	}
 }
 
-func buildFixture_library(t *testing.T) string {
+func buildFixtureLibrary(t *testing.T) string {
 	root := t.TempDir()
 
 	// Movie
@@ -134,12 +135,12 @@ func createImporterTestLibrary(t *testing.T, db *repository.DB, sourcePath strin
 	return lib
 }
 
-// waitForJob polls the job status until it reaches a terminal state or timeout.
-func waitForJob(t *testing.T, ctx context.Context, jobRepo *repository.ImportJobRepository, jobID string, timeout time.Duration) {
+// waitForJob polls the import job repository until the job reaches a terminal state.
+func waitForJob(t *testing.T, jobRepo *repository.ImportJobRepository, jobID string) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		j, _ := jobRepo.Get(ctx, jobID)
+		j, _ := jobRepo.Get(context.Background(), jobID)
 		if j != nil && (j.Status == "done" || j.Status == "error") {
 			return
 		}
@@ -155,7 +156,7 @@ func waitForJob(t *testing.T, ctx context.Context, jobRepo *repository.ImportJob
 // DB writes are committed.
 
 func TestImport_Idempotent(t *testing.T) {
-	root := buildFixture_library(t)
+	root := buildFixtureLibrary(t)
 	db := openImporterTestDB(t)
 	lib := createImporterTestLibrary(t, db, root)
 
@@ -173,16 +174,22 @@ func TestImport_Idempotent(t *testing.T) {
 	}
 
 	var countAfterFirst int
-	db.QueryRow(`SELECT COUNT(*) FROM media_items WHERE library_id = ?`, lib.ID).Scan(&countAfterFirst)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM media_items WHERE library_id = ?`, lib.ID).Scan(&countAfterFirst); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
 
 	var actorsJSON1, uniqueIDsJSON1, genresJSON1 string
-	db.QueryRow(`SELECT actors, unique_ids, genres FROM media_items
+	if err := db.QueryRow(`SELECT actors, unique_ids, genres FROM media_items
 	             WHERE library_id = ? AND type = 'movie'`, lib.ID).
-		Scan(&actorsJSON1, &uniqueIDsJSON1, &genresJSON1)
+		Scan(&actorsJSON1, &uniqueIDsJSON1, &genresJSON1); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
 
 	// Capture the show's ID on run 1 for Task 3 verification
 	var showID1 string
-	db.QueryRow(`SELECT id FROM media_items WHERE library_id = ? AND type = 'show'`, lib.ID).Scan(&showID1)
+	if err := db.QueryRow(`SELECT id FROM media_items WHERE library_id = ? AND type = 'show'`, lib.ID).Scan(&showID1); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
 
 	// Second import — re-scan same directory, nothing changed on disk
 	summary2, err := importer.ImportLibrary(ctx, lib.ID)
@@ -191,7 +198,9 @@ func TestImport_Idempotent(t *testing.T) {
 	}
 
 	var countAfterSecond int
-	db.QueryRow(`SELECT COUNT(*) FROM media_items WHERE library_id = ?`, lib.ID).Scan(&countAfterSecond)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM media_items WHERE library_id = ?`, lib.ID).Scan(&countAfterSecond); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
 
 	// Core idempotency assertion: item count must not change
 	if countAfterSecond != countAfterFirst {
@@ -199,9 +208,11 @@ func TestImport_Idempotent(t *testing.T) {
 	}
 
 	var actorsJSON2, uniqueIDsJSON2, genresJSON2 string
-	db.QueryRow(`SELECT actors, unique_ids, genres FROM media_items
+	if err := db.QueryRow(`SELECT actors, unique_ids, genres FROM media_items
 	             WHERE library_id = ? AND type = 'movie'`, lib.ID).
-		Scan(&actorsJSON2, &uniqueIDsJSON2, &genresJSON2)
+		Scan(&actorsJSON2, &uniqueIDsJSON2, &genresJSON2); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
 
 	if actorsJSON1 != actorsJSON2 {
 		t.Errorf("actors JSON changed on re-import:\n  first:  %s\n  second: %s", actorsJSON1, actorsJSON2)
@@ -215,21 +226,27 @@ func TestImport_Idempotent(t *testing.T) {
 
 	// Task 3: show ID must be stable across runs
 	var showID2 string
-	db.QueryRow(`SELECT id FROM media_items WHERE library_id = ? AND type = 'show'`, lib.ID).Scan(&showID2)
+	if err := db.QueryRow(`SELECT id FROM media_items WHERE library_id = ? AND type = 'show'`, lib.ID).Scan(&showID2); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
 	if showID1 != showID2 {
 		t.Errorf("show ID changed between runs: %s -> %s", showID1, showID2)
 	}
 
 	// Task 3: exactly 1 show row per show directory (no orphans)
 	var showCount int
-	db.QueryRow(`SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'show'`, lib.ID).Scan(&showCount)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'show'`, lib.ID).Scan(&showCount); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
 	if showCount != 1 {
 		t.Errorf("expected exactly 1 show row, got %d", showCount)
 	}
 
 	// Task 3: episode's parent_id must point to the stable show ID
 	var episodeParentID string
-	db.QueryRow(`SELECT parent_id FROM media_items WHERE library_id = ? AND type = 'episode'`, lib.ID).Scan(&episodeParentID)
+	if err := db.QueryRow(`SELECT parent_id FROM media_items WHERE library_id = ? AND type = 'episode'`, lib.ID).Scan(&episodeParentID); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
 	if episodeParentID != showID1 {
 		t.Errorf("episode parent_id = %q, expected %q (the stable show ID)", episodeParentID, showID1)
 	}

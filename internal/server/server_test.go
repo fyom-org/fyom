@@ -43,10 +43,10 @@ func TestServer_Shutdown_Idempotent(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// First shutdown
-	srv.httpServer.Close()
+	_ = srv.httpServer.Close()
 
 	// Second shutdown should not panic
-	srv.httpServer.Close()
+	_ = srv.httpServer.Close()
 
 	// Wait a bit for cleanup
 	time.Sleep(50 * time.Millisecond)

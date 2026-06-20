@@ -101,7 +101,7 @@ func (imp *Importer) classifyTree(ctx context.Context, node *FSNode, walkCtx *Wa
 // container that should be traversed transparently rather than classified as a
 // media root. A container has subdirectories but no direct indication of being
 // a movie/show root (no NFO, no direct video files at this level).
-func (imp *Importer) isTransparentContainer(node *FSNode, walkCtx *WalkContext) bool {
+func (imp *Importer) isTransparentContainer(node *FSNode, _ *WalkContext) bool {
 	// Must have subdirectories to be a container
 	hasSubdirs := false
 	hasDirectVideo := false
@@ -248,7 +248,7 @@ func (imp *Importer) classifyMovieDir(ctx context.Context, node *FSNode, nfoPath
 
 // classifyMovieDirNoNFO creates a movie candidate from a directory with video files
 // but no valid NFO. The title is derived from the video filename.
-func (imp *Importer) classifyMovieDirNoNFO(ctx context.Context, node *FSNode, walkCtx *WalkContext, result *ClassificationResult) {
+func (imp *Importer) classifyMovieDirNoNFO(_ context.Context, node *FSNode, walkCtx *WalkContext, result *ClassificationResult) {
 	// Enforce library type policy: show-only libraries don't import movies
 	if imp.libraryType == "show" {
 		result.Rejected = append(result.Rejected, RejectedItem{
@@ -351,7 +351,7 @@ func (imp *Importer) classifyEpisodeDir(ctx context.Context, node *FSNode, walkC
 }
 
 // classifyEpisodeFile creates an episode candidate from a video file node.
-func (imp *Importer) classifyEpisodeFile(ctx context.Context, node *FSNode, walkCtx *WalkContext, result *ClassificationResult) *ImportCandidate {
+func (imp *Importer) classifyEpisodeFile(ctx context.Context, node *FSNode, walkCtx *WalkContext, _ *ClassificationResult) *ImportCandidate {
 	season, episode := extractEpisodeInfo(node.Name)
 
 	if season == 0 && walkCtx.SeasonNumber != nil {
@@ -375,7 +375,7 @@ func (imp *Importer) classifyEpisodeFile(ctx context.Context, node *FSNode, walk
 		PrimaryPath:   node.Path,
 		NFOPath:       nfoPath,
 		ShowID:        walkCtx.ShowID,
-		SeasonNumber:  walkCtx.SeasonNumber,
+		SeasonNumber:  repository.IntPtr(season),
 		EpisodeNumber: repository.IntPtr(episode),
 		Confidence:    80,
 		Evidence: []ImportEvidence{

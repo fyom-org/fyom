@@ -4,7 +4,9 @@ package app
 type RunMode string
 
 const (
-	RunModeServer  RunMode = "server"
+	// RunModeServer is the primary server mode that listens for HTTP requests.
+	RunModeServer RunMode = "server"
+	// RunModeSidecar is the lightweight companion mode for desktop integration.
 	RunModeSidecar RunMode = "sidecar"
 )
 

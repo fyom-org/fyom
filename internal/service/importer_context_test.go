@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,7 +42,7 @@ func TestImporter_ShowSubtreeClaimsEpisodeFiles_NoDuplicateMovieImport(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	lib := &model.Library{
 		Name:           "Test Library",
@@ -58,10 +59,18 @@ func TestImporter_ShowSubtreeClaimsEpisodeFiles_NoDuplicateMovieImport(t *testin
 	// Create show fixture
 	showDir := filepath.Join(dir, "Show A")
 	seasonDir := filepath.Join(showDir, "Season 01")
-	os.MkdirAll(seasonDir, 0755)
-	os.WriteFile(filepath.Join(showDir, "tvshow.nfo"), []byte(testShowNFO), 0644)
-	os.WriteFile(filepath.Join(seasonDir, "Show A - S01E01.mkv"), []byte(""), 0644)
-	os.WriteFile(filepath.Join(seasonDir, "Show A - S01E01.nfo"), []byte(testEpisodeNFO), 0644)
+	if err := os.MkdirAll(seasonDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(showDir, "tvshow.nfo"), []byte(testShowNFO), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir, "Show A - S01E01.mkv"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir, "Show A - S01E01.nfo"), []byte(testEpisodeNFO), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	mediaRepo := repository.NewMediaRepository(db)
 	jobRepo := repository.NewImportJobRepository(db)
@@ -78,32 +87,44 @@ func TestImporter_ShowSubtreeClaimsEpisodeFiles_NoDuplicateMovieImport(t *testin
 	}
 
 	var showCount int
-	db.QueryRow("SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'show'", lib.ID).Scan(&showCount)
+	if err := db.QueryRow("SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'show'", lib.ID).Scan(&showCount); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
 	if showCount != 1 {
 		t.Errorf("expected 1 show, got %d", showCount)
 	}
 
 	var episodeCount int
-	db.QueryRow("SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'episode'", lib.ID).Scan(&episodeCount)
+	if err := db.QueryRow("SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'episode'", lib.ID).Scan(&episodeCount); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
 	if episodeCount != 1 {
 		t.Errorf("expected 1 episode, got %d", episodeCount)
 	}
 
 	var movieCount int
-	db.QueryRow("SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'movie'", lib.ID).Scan(&movieCount)
+	if err := db.QueryRow("SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'movie'", lib.ID).Scan(&movieCount); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
 	if movieCount != 0 {
 		t.Errorf("expected 0 movies, got %d", movieCount)
 	}
 
 	var showID, epParentID string
-	db.QueryRow("SELECT id FROM media_items WHERE library_id = ? AND type = 'show'", lib.ID).Scan(&showID)
-	db.QueryRow("SELECT parent_id FROM media_items WHERE library_id = ? AND type = 'episode'", lib.ID).Scan(&epParentID)
+	if err := db.QueryRow("SELECT id FROM media_items WHERE library_id = ? AND type = 'show'", lib.ID).Scan(&showID); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow("SELECT parent_id FROM media_items WHERE library_id = ? AND type = 'episode'", lib.ID).Scan(&epParentID); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
 	if epParentID != showID {
 		t.Errorf("episode parent_id = %s, expected %s", epParentID, showID)
 	}
 
 	var epTitle string
-	db.QueryRow("SELECT title FROM media_items WHERE library_id = ? AND type = 'episode'", lib.ID).Scan(&epTitle)
+	if err := db.QueryRow("SELECT title FROM media_items WHERE library_id = ? AND type = 'episode'", lib.ID).Scan(&epTitle); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
 	if epTitle != "Episode One" {
 		t.Errorf("episode title = %q, expected %q", epTitle, "Episode One")
 	}
@@ -118,7 +139,7 @@ func TestImporter_OrphanSeasonDirectory_IsRejectedOrIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	lib := &model.Library{
 		Name:           "Test Library",
@@ -133,8 +154,12 @@ func TestImporter_OrphanSeasonDirectory_IsRejectedOrIgnored(t *testing.T) {
 	}
 
 	seasonDir := filepath.Join(dir, "Season 01")
-	os.MkdirAll(seasonDir, 0755)
-	os.WriteFile(filepath.Join(seasonDir, "E01.mkv"), []byte(""), 0644)
+	if err := os.MkdirAll(seasonDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir, "E01.mkv"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	mediaRepo := repository.NewMediaRepository(db)
 	jobRepo := repository.NewImportJobRepository(db)
@@ -146,11 +171,15 @@ func TestImporter_OrphanSeasonDirectory_IsRejectedOrIgnored(t *testing.T) {
 		t.Fatal(err)
 	}
 	// An orphan season directory with a video file will produce a filename-fallback
-	// movie candidate. This is acceptable — the key is it does NOT produce a show
+	// movie candidate. This is acceptable -- the key is it does NOT produce a show
 	// or episode. The directory is treated as a standalone movie with filename-derived title.
 	var showCount, episodeCount int
-	db.QueryRow("SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'show'", lib.ID).Scan(&showCount)
-	db.QueryRow("SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'episode'", lib.ID).Scan(&episodeCount)
+	if err := db.QueryRow("SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'show'", lib.ID).Scan(&showCount); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow("SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'episode'", lib.ID).Scan(&episodeCount); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
 	if showCount != 0 {
 		t.Errorf("expected 0 shows from orphan season, got %d", showCount)
 	}
@@ -168,7 +197,7 @@ func TestImporter_MixedLibrary_AmbiguousDirectory_DoesNotDefaultToMovie(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	lib := &model.Library{
 		Name:           "Test Library",
@@ -183,8 +212,12 @@ func TestImporter_MixedLibrary_AmbiguousDirectory_DoesNotDefaultToMovie(t *testi
 	}
 
 	ambigDir := filepath.Join(dir, "Ambiguous Folder")
-	os.MkdirAll(ambigDir, 0755)
-	os.WriteFile(filepath.Join(ambigDir, "random_video.mkv"), []byte(""), 0644)
+	if err := os.MkdirAll(ambigDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ambigDir, "random_video.mkv"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	mediaRepo := repository.NewMediaRepository(db)
 	jobRepo := repository.NewImportJobRepository(db)
@@ -197,13 +230,17 @@ func TestImporter_MixedLibrary_AmbiguousDirectory_DoesNotDefaultToMovie(t *testi
 	}
 
 	var movieCount int
-	db.QueryRow("SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'movie'", lib.ID).Scan(&movieCount)
+	if err := db.QueryRow("SELECT COUNT(*) FROM media_items WHERE library_id = ? AND type = 'movie'", lib.ID).Scan(&movieCount); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
 	if movieCount != 1 {
 		t.Errorf("expected 1 movie (filename fallback) in mixed library, got %d", movieCount)
 	}
 
 	var title string
-	db.QueryRow("SELECT title FROM media_items WHERE library_id = ? AND type = 'movie'", lib.ID).Scan(&title)
+	if err := db.QueryRow("SELECT title FROM media_items WHERE library_id = ? AND type = 'movie'", lib.ID).Scan(&title); err != nil && err != sql.ErrNoRows {
+		t.Fatal(err)
+	}
 	if title == "" {
 		t.Error("movie title should not be empty")
 	}

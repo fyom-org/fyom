@@ -83,31 +83,18 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
-import { useI18n } from 'vue-i18n';
 import { getLibraries, type Library } from '@/api/library';
 import { useUserStore } from '@/stores/user';
 
 const MOBILE_BREAKPOINT = 768;
 
-const router = useRouter();
 const userStore = useUserStore();
-const { t } = useI18n();
 
 const libraries = ref<Library[]>([]);
 const isMobile = ref(getInitialIsMobile());
 const sidebarOpen = ref(!isMobile.value);
-const loggingOut = ref(false);
 
 const isAdmin = computed(() => userStore.isAdmin);
-
-const username = computed(() => {
-  return userStore.user?.username?.trim() || t('common.member');
-});
-
-const roleLabel = computed(() => {
-  return userStore.user?.role || t('common.member');
-});
 
 onMounted(() => {
   window.addEventListener('resize', handleResize);

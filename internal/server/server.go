@@ -25,6 +25,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// Server wraps the HTTP server and all its dependencies for graceful startup and shutdown.
 type Server struct {
 	httpServer         *http.Server
 	router             *chi.Mux
@@ -41,6 +42,8 @@ type Server struct {
 	shutdownCh         chan struct{}
 }
 
+// New creates a new Server with the given configuration and dependencies.
+// It sets up the HTTP router, registers all routes, and initializes handlers.
 func New(
 	cfg *config.Config,
 	logger *slog.Logger,
@@ -441,6 +444,8 @@ func isImmutableAsset(name string) bool {
 	return true
 }
 
+// Run starts the HTTP server and blocks until shutdown.
+// It handles graceful shutdown on SIGINT/SIGTERM, waiting for in-flight imports to complete.
 func (s *Server) Run() error {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
