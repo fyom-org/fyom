@@ -552,6 +552,17 @@ Current client-side genre filtering is unaffected.
 > desktop playback milestone. Only blocker-level fixes discovered while
 > enabling desktop playback should be done before that milestone.
 
+- [x] **Replace axios with ofetch in frontend HTTP layer**
+  - Removed `axios` dependency, added `ofetch: 1.5.1`
+  - Rewrote `web/src/api/request.ts` with ofetch-based adapter preserving
+    auth token injection, Accept-Language header, 401/403 auth failure
+    event dispatch, 10s timeout, and browser-only guards
+  - Replaced axios `params` → ofetch `query` in `web/src/api/library.ts`
+  - Replaced `AxiosError` type import with duck-type `isApiError` guard
+    in `web/src/lib/api/errors.ts`
+  - Updated Vite manual chunk name from `axios` to `ofetch`
+  - All 149 frontend tests pass, lint clean, build passes
+
 - [ ] Add production-mode frontend smoke test:
       load app, login, open library, open media detail,
       open episode detail, open settings
@@ -931,7 +942,7 @@ existing `message` field is retained for logs and as a fallback.
   - Create `web/src/plugins/i18n.ts` (vue-i18n initialization)
   - Create `web/src/composables/useLocale.ts` (locale detection + switching)
   - Wire `app.use(i18n)` in `web/src/main.ts`
-  - Add `Accept-Language` header to axios instance in `web/src/api/request.ts`
+  - Add `Accept-Language` header to HTTP client in `web/src/api/request.ts`
   - Create `docs/i18n.md` with namespace conventions, non-goals, and
     contributor guide
   - *Verification:* `pnpm run dev` boots, all strings still English, no
