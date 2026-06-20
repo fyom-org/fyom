@@ -1,5 +1,9 @@
 version: "2"
 
+run:
+  timeout: 5m
+  tests: true
+
 linters:
   enable:
     - errcheck
@@ -16,6 +20,7 @@ linters:
     - prealloc
     - unconvert
     - unparam
+
   disable:
     - gocyclo
     - funlen
