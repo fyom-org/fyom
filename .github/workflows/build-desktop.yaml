@@ -22,9 +22,72 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  preflight:
+    name: preflight
+    runs-on: ubuntu-latest
+
+    outputs:
+      should_build: ${{ steps.detect.outputs.should_build }}
+      release_tag_on_sha: ${{ steps.detect.outputs.release_tag_on_sha }}
+      matched_release_tags: ${{ steps.detect.outputs.matched_release_tags }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect duplicate branch/tag trigger
+        id: detect
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          echo "EVENT_NAME=$EVENT_NAME"
+          echo "REF_TYPE=$REF_TYPE"
+          echo "REF_NAME=$REF_NAME"
+          echo "SHA=$SHA"
+
+          release_tag_on_sha="false"
+          matched_release_tags=""
+
+          git fetch --force --tags origin '+refs/tags/v*:refs/tags/v*'
+
+          matched_release_tags="$(git tag --points-at "$SHA" --list 'v*' | tr '\n' ' ' | sed 's/[[:space:]]*$//' || true)"
+
+          if [ -n "$matched_release_tags" ]; then
+            release_tag_on_sha="true"
+          fi
+
+          should_build="true"
+
+          # If this is the branch-side run for main, and the same commit already has a v* tag,
+          # skip the expensive platform builds. The tag-side run will do the real build/release.
+          if [ "$EVENT_NAME" = "push" ] && [ "$REF_TYPE" = "branch" ] && [ "$REF_NAME" = "main" ] && [ "$release_tag_on_sha" = "true" ]; then
+            should_build="false"
+          fi
+
+          echo "release_tag_on_sha=$release_tag_on_sha"
+          echo "matched_release_tags=$matched_release_tags"
+          echo "should_build=$should_build"
+
+          {
+            echo "release_tag_on_sha=$release_tag_on_sha"
+            echo "matched_release_tags=$matched_release_tags"
+            echo "should_build=$should_build"
+          } >> "$GITHUB_OUTPUT"
+
   build-linux:
     name: build-linux-nix
     runs-on: ubuntu-latest
+    needs:
+      - preflight
+    if: needs.preflight.outputs.should_build == 'true'
 
     steps:
       - name: Checkout repository
@@ -87,6 +150,9 @@ jobs:
   build-macos:
     name: build-macos-native
     runs-on: macos-latest
+    needs:
+      - preflight
+    if: needs.preflight.outputs.should_build == 'true'
 
     steps:
       - name: Checkout repository
@@ -95,7 +161,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 11
           run_install: false
 
       - name: Setup Node
@@ -187,6 +253,9 @@ jobs:
   build-windows:
     name: build-windows-native
     runs-on: windows-latest
+    needs:
+      - preflight
+    if: needs.preflight.outputs.should_build == 'true'
 
     steps:
       - name: Checkout repository
@@ -195,7 +264,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 11
           run_install: false
 
       - name: Setup Node
@@ -295,11 +364,16 @@ jobs:
     runs-on: ubuntu-latest
 
     needs:
+      - preflight
       - build-linux
       - build-macos
       - build-windows
 
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: >
+      startsWith(github.ref, 'refs/tags/v') &&
+      needs.build-linux.result == 'success' &&
+      needs.build-macos.result == 'success' &&
+      needs.build-windows.result == 'success'
 
     permissions:
       contents: write
