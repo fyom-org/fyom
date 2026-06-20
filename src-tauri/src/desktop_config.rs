@@ -93,6 +93,8 @@ fn default_append_mpv_args() -> bool {
 pub enum DesktopConfigSource {
     ExplicitEnv,
     PlatformUser,
+
+    #[cfg(debug_assertions)]
     DevFallback,
 }
 
@@ -101,6 +103,8 @@ impl fmt::Display for DesktopConfigSource {
         match self {
             Self::ExplicitEnv => formatter.write_str("explicit-env"),
             Self::PlatformUser => formatter.write_str("platform-user"),
+
+            #[cfg(debug_assertions)]
             Self::DevFallback => formatter.write_str("dev-fallback"),
         }
     }
@@ -259,11 +263,8 @@ fn resolve_desktop_config_path_with_env_and_probe<E: EnvProvider, F: ConfigFileP
     //
     // Empty or whitespace-only values are treated as unset.
     // Non-empty values are explicit and must not silently fall back.
-    if let Some(value) = env.var_os(ENV_DESKTOP_CONFIG) {
-        if !os_string_is_blank(&value) {
-            let path = PathBuf::from(value);
-            return resolve_explicit_config_path(path, files);
-        }
+    if let Some(path) = explicit_config_path_from_env(env) {
+        return resolve_explicit_config_path(path, files);
     }
 
     // 2. Platform user config path.
@@ -302,6 +303,10 @@ fn resolve_desktop_config_path_with_env_and_probe<E: EnvProvider, F: ConfigFileP
 
     // 4. No config found.
     Ok(None)
+}
+
+fn explicit_config_path_from_env<E: EnvProvider>(env: &E) -> Option<PathBuf> {
+    non_blank_env(env, ENV_DESKTOP_CONFIG).map(PathBuf::from)
 }
 
 fn resolve_explicit_config_path<F: ConfigFileProbe>(
