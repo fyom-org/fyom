@@ -54,12 +54,18 @@ tasks:
 
         mode="{{.MODE}}"
         empty_message="{{.EMPTY_MESSAGE}}"
+        packages_file=""
+
+        cleanup() {
+          if [ -n "$packages_file" ] && [ -f "$packages_file" ]; then
+            rm -f "$packages_file"
+          fi
+        }
+
+        trap cleanup EXIT
 
         load_go_packages() {
-          local packages_file
-
           packages_file="$(mktemp)"
-          trap 'rm -f "$packages_file"' EXIT
 
           if ! go list ./... > "$packages_file"; then
             echo
