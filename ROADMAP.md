@@ -326,15 +326,6 @@ Current client-side genre filtering is unaffected.
 
 ## Phase 9: Stabilization & Release Readiness
 
-> **Execution Strategy:** Phase 9.1 and 9.2 are complete. The next major
-> product milestone is **Tauri shell + sidecar + libmpv** — desktop-native
-> playback is the biggest practical value unlock for fyom. Phase 9.3 and
-> 9.6 have been elevated: auth truth, authorization boundaries,
-> session rehydration, and self-hosted safety are now concrete
-> pre-desktop requirements. Only the remaining 9.4 polish items and
-> non-critical 9.6 extras stay deferred until after the desktop
-> playback milestone.
-
 ### 9.1 Static Asset & Build Reliability
 
 - [x] Add regression tests for embedded static asset serving
@@ -486,14 +477,6 @@ Current client-side genre filtering is unaffected.
 
 ### 9.3 API Contract & Test Cleanup
 
-> **Priority:** before further desktop/native expansion, fyom must harden
-> auth truth, authorization boundaries, and stale-session behavior.
-> This section is no longer only hygiene. The minimum required scope is:
-> - admin vs non-admin authorization coverage
-> - deleted/missing-user token rejection
-> - setup/bootstrap state must not inherit old auth
-> - API/auth contract tests must reflect current DB-backed identity truth
->
 > The goal is not enterprise IAM completeness. The goal is to ensure fyom's
 > core security invariants hold under realistic self-hosted usage:
 > browser local storage, long-lived sessions, DB resets, setup re-entry,
@@ -548,10 +531,6 @@ Current client-side genre filtering is unaffected.
 
 ### 9.4 Frontend Reliability & UX Polish
 
-> **Priority:** most of 9.4 is intentionally deferred until after the
-> desktop playback milestone. Only blocker-level fixes discovered while
-> enabling desktop playback should be done before that milestone.
-
 - [x] **Replace axios with ofetch in frontend HTTP layer**
   - Removed `axios` dependency, added `ofetch: 1.5.1`
   - Rewrote `web/src/api/request.ts` with ofetch-based adapter preserving
@@ -592,10 +571,6 @@ Current client-side genre filtering is unaffected.
 
 ### 9.5 Observability & Diagnostics
 
-> **Priority:** the pre-desktop guardrail subset is `/healthz`, `/readyz`,
-> and `/version`. The remaining structured logging / diagnostics work
-> can follow after the desktop playback milestone.
-
 - [x] Add `/healthz` endpoint
 - [x] Add `/readyz` endpoint for future Tauri sidecar readiness
 - [x] Add `/version` endpoint:
@@ -623,7 +598,6 @@ Current client-side genre filtering is unaffected.
 
 ### 9.6 Configuration & Data Safety
 
-> **Priority:** before broader desktop/native and public-network usage,
 > fyom should provide safe operational defaults for self-hosted users.
 > The minimum target is not "perfect security", but reliable safety rails:
 > - predictable config precedence
@@ -683,9 +657,6 @@ Current client-side genre filtering is unaffected.
 
 ### 9.7 Native Playback Failure Fallback (Pre-Desktop Guardrail)
 
-> **Priority:** guardrail-only before desktop. Ensures no black screen if native
-> player init fails. Full libmpv implementation remains in Production Phase 2.
-
 - [x] Add explicit native player state model:
       `idle / initializing / ready / failed / unavailable`
 - [x] Add `attempted` flag to distinguish browser-by-default from
@@ -721,11 +692,6 @@ Current client-side genre filtering is unaffected.
 
 ### 9.8 First-Run Bootstrap & Entry Routing Simplification
 
-> **Priority:** high. The historical `/setup` browser flow has become a
-> disproportionate source of frontend route complexity and state-machine
-> fragility. fyom should stop treating first-run bootstrap as a browser
-> route concern and instead move initial admin provisioning into the backend.
->
 > The goal of this phase is to:
 > - remove `/setup` from normal frontend routing
 > - simplify production entry semantics to `anonymous -> /login`,
@@ -1172,7 +1138,25 @@ errors), `web/src/main.ts`, `web/index.html`, `pkg/response/response.go`,
 
 # Production: Scaling & Ecosystem
 
-## Production Phase 1: Desktop Shell & Tauri & fyom-desktop config
+## Production Phase 1: Desktop Shell & Tauri & fyom-desktop config ✅
+
+> Phase 1 desktop runtime is now functionally in place.
+> Tauri shell, Go sidecar bootstrap, desktop DB path handling, tray/window lifecycle,
+> explicit sidecar shutdown on real quit, runtime-aware frontend API routing,
+> desktop auth flow hardening, media/resource URL normalization, and external
+> player based desktop playback are implemented.
+>
+> fyom Desktop now treats playback as an external-player responsibility instead
+> of embedding mpv into the Tauri window. This establishes a cleaner and more
+> portable product boundary: fyom Desktop owns the media library shell and local
+> orchestration, the Go sidecar owns server/API/data responsibilities, and mpv or
+> another configured external player owns native media playback.
+>
+> Desktop player configuration is intentionally Tauri-local and separate from
+> the Go backend `fyom.yaml`. The launcher resolves player configuration in the
+> following order: explicit environment overrides, `configs/fyom-desktop.json`,
+> then the platform default opener.
+>
 
 - [x] Tauri 2 desktop shell (wrapping the Web UI)
 - [x] Go sidecar `--sidecar` mode with fixed loopback port `127.0.0.1:27403`
@@ -1193,49 +1177,16 @@ errors), `web/src/main.ts`, `web/index.html`, `pkg/response/response.go`,
 - [x] mpv supported as a desktop-managed external player / sidecar-style launcher target
 - [x] Go backend remains isolated from local desktop player configuration
 - [x] Build workflow: `task sidecar`, `task dev:desktop`, `task dev:desktop-mpv`, `task build:desktop`
-
-- [ ] Production-ready desktop config path resolution
-- [ ] Platform user config path support for `fyom-desktop.json`
+- [x] Production-ready desktop config path resolution
+- [x] Platform user config path support for `fyom-desktop.json`
   - Windows: `%APPDATA%\fyom\fyom-desktop.json`
   - macOS: `~/Library/Application Support/fyom/fyom-desktop.json`
   - Linux: `${XDG_CONFIG_HOME:-~/.config}/fyom/fyom-desktop.json`
-- [ ] Keep `FYOM_DESKTOP_CONFIG` as the highest-priority explicit override
-- [ ] Keep dev fallback support for repo-local `configs/fyom-desktop.json`
-- [ ] Stop relying on process current working directory for production config discovery
-- [ ] Ensure desktop player config remains Tauri-local and separate from Go backend `fyom.yaml`
 
-> Phase 1 desktop runtime is now functionally in place.
-> Tauri shell, Go sidecar bootstrap, desktop DB path handling, tray/window lifecycle,
-> explicit sidecar shutdown on real quit, runtime-aware frontend API routing,
-> desktop auth flow hardening, media/resource URL normalization, and external
-> player based desktop playback are implemented.
->
-> fyom Desktop now treats playback as an external-player responsibility instead
-> of embedding mpv into the Tauri window. This establishes a cleaner and more
-> portable product boundary: fyom Desktop owns the media library shell and local
-> orchestration, the Go sidecar owns server/API/data responsibilities, and mpv or
-> another configured external player owns native media playback.
->
-> Desktop player configuration is intentionally Tauri-local and separate from
-> the Go backend `fyom.yaml`. The launcher resolves player configuration in the
-> following order: explicit environment overrides, `configs/fyom-desktop.json`,
-> then the platform default opener.
->
-
-Remaining work in this phase should stay limited to runtime polish,
-production packaging hardening, platform config path stabilization, and
-follow-up diagnostics. In particular, the desktop-local `fyom-desktop.json`
-lookup must be moved from dev-oriented relative paths to stable platform user
-config directories:
-
-- Windows: `%APPDATA%\fyom\fyom-desktop.json`
-- macOS: `~/Library/Application Support/fyom/fyom-desktop.json`
-- Linux: `${XDG_CONFIG_HOME:-~/.config}/fyom/fyom-desktop.json`
-
-`FYOM_DESKTOP_CONFIG` should remain the highest-priority explicit override, and
-the repo-local `configs/fyom-desktop.json` should remain available only as a
-development fallback. This work must not move local player configuration into
-the Go backend `fyom.yaml`.
+- [x] Keep `FYOM_DESKTOP_CONFIG` as the highest-priority explicit override
+- [x] Keep dev fallback support for repo-local `configs/fyom-desktop.json`
+- [x] Stop relying on process current working directory for production config discovery
+- [x] Ensure desktop player config remains Tauri-local and separate from Go backend `fyom.yaml`
 
 ## Production Phase 2: External Launcher & Web Shell Transition ✅
 
