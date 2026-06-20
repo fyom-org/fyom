@@ -1,7 +1,8 @@
 package repository
-
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -49,7 +50,10 @@ func (r *UserMediaStatusRepository) GetStatus(ctx context.Context, userID, media
 		userID, mediaItemID,
 	).Scan(&status)
 	if err != nil {
-		return "none", nil
+		if errors.Is(err, sql.ErrNoRows) {
+			return "none", nil
+		}
+		return "", err
 	}
 	return status, nil
 }

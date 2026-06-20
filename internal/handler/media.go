@@ -21,9 +21,7 @@ import (
 	"github.com/fyom/fyom/pkg/response"
 )
 
-// MediaItemResponse is the JSON DTO returned by library API endpoints.
-// Filesystem paths are never exposed; resource URLs are generated dynamically
-// via the Provider registry.
+// ActorResponse represents a single actor/crew member in API responses.
 type ActorResponse struct {
 	Name      string `json:"name"`
 	Role      string `json:"role"`
@@ -32,6 +30,9 @@ type ActorResponse struct {
 	Thumb     string `json:"thumb,omitempty"`
 }
 
+// MediaItemResponse is the JSON DTO returned by library API endpoints.
+// Filesystem paths are never exposed; resource URLs are generated dynamically
+// via the Provider registry.
 type MediaItemResponse struct {
 	ID                string            `json:"id"`
 	Type              string            `json:"type"`
@@ -198,7 +199,9 @@ func decodeStrings(s string) []string {
 		return nil
 	}
 	var r []string
-	json.Unmarshal([]byte(s), &r)
+	if err := json.Unmarshal([]byte(s), &r); err != nil {
+		return nil
+	}
 	return r
 }
 
@@ -207,7 +210,9 @@ func decodeActors(s string) []ActorResponse {
 		return nil
 	}
 	var all []ActorResponse
-	json.Unmarshal([]byte(s), &all)
+	if err := json.Unmarshal([]byte(s), &all); err != nil {
+		return nil
+	}
 	// Sort by SortOrder ascending
 	sort.Slice(all, func(i, j int) bool {
 		return all[i].SortOrder < all[j].SortOrder
@@ -232,7 +237,9 @@ func decodeGuestStars(s string) []ActorResponse {
 		return nil
 	}
 	var all []ActorResponse
-	json.Unmarshal([]byte(s), &all)
+	if err := json.Unmarshal([]byte(s), &all); err != nil {
+		return nil
+	}
 	// Sort by SortOrder ascending
 	sort.Slice(all, func(i, j int) bool {
 		return all[i].SortOrder < all[j].SortOrder
@@ -256,7 +263,9 @@ func decodeUniqueIDs(s string) map[string]string {
 		return nil
 	}
 	var r map[string]string
-	json.Unmarshal([]byte(s), &r)
+	if err := json.Unmarshal([]byte(s), &r); err != nil {
+		return nil
+	}
 	return r
 }
 

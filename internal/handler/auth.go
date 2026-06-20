@@ -424,10 +424,10 @@ func sanitizeUser(user *model.User) *model.User {
 		return nil
 	}
 
-	copy := *user
-	copy.Password = ""
+	sanitized := *user
+	sanitized.Password = ""
 
-	return &copy
+	return &sanitized
 }
 
 func isBootstrapSessionUser(user *model.User) bool {
