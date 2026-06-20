@@ -97,10 +97,11 @@ func (r *MediaRepository) GetContinueWatching(ctx context.Context, userID string
 	for rows.Next() {
 		var item MediaItemWithProgress
 		var season, episode int
+		var parentID sql.NullString
 		if err := rows.Scan(
 			&item.ID, &item.Type, &item.Title, &item.SortTitle, &item.Year, &item.Overview,
 			&item.Rating, &item.Duration, &item.FilePath, &item.PosterPath, &item.BackdropPath,
-			&item.ParentID, &season, &episode, &item.MetadataSource, &item.ProviderID,
+			&parentID, &season, &episode, &item.MetadataSource, &item.ProviderID,
 			&item.LibraryID, &item.Status, &item.CreatedAt, &item.UpdatedAt,
 			&item.MPAA, &item.Genres, &item.Studios, &item.Actors, &item.UniqueIDs,
 			&item.Premiered, &item.Outline, &item.Tagline, &item.Countries, &item.Directors,
@@ -110,6 +111,9 @@ func (r *MediaRepository) GetContinueWatching(ctx context.Context, userID string
 			&item.Position, &item.Duration, &item.Finished,
 		); err != nil {
 			return nil, err
+		}
+		if parentID.Valid {
+			item.ParentID = parentID.String
 		}
 		item.Season = IntPtr(season)
 		item.Episode = IntPtr(episode)

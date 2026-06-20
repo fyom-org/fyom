@@ -82,15 +82,19 @@ func (r *UserMediaStatusRepository) GetItemsByStatus(ctx context.Context, userID
 	for rows.Next() {
 		var m model.MediaItem
 		var season, episode int
+		var parentID sql.NullString
 		if err := rows.Scan(&m.ID, &m.Type, &m.Title, &m.SortTitle, &m.Year,
 			&m.Overview, &m.Rating, &m.Duration, &m.FilePath, &m.PosterPath,
-			&m.BackdropPath, &m.ParentID, &season, &episode,
+			&m.BackdropPath, &parentID, &season, &episode,
 			&m.MetadataSource, &m.ProviderID, &m.LibraryID, &m.Status, &m.CreatedAt, &m.UpdatedAt,
 			&m.MPAA, &m.Genres, &m.Studios, &m.Actors, &m.UniqueIDs, &m.Premiered,
 			&m.Outline, &m.Tagline, &m.Countries, &m.Directors, &m.Credits, &m.Tags,
 			&m.SetName, &m.VideoCodec, &m.VideoWidth, &m.VideoHeight, &m.VideoDurationSeconds,
 			&m.AudioCodec, &m.AudioChannels, &m.SubtitleLanguages, &m.Aired); err != nil {
 			return nil, err
+		}
+		if parentID.Valid {
+			m.ParentID = parentID.String
 		}
 		m.Season = IntPtr(season)
 		m.Episode = IntPtr(episode)
