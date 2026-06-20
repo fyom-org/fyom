@@ -395,13 +395,13 @@ fn find_sidecar_binary() -> Result<PathBuf> {
         }
     }
 
-    if let Ok(output) = std::process::Command::new("which").arg("fyom").output() {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if let Ok(output) = std::process::Command::new("which").arg("fyom").output()
+        && output.status.success()
+    {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
-            if !path.is_empty() {
-                return Ok(PathBuf::from(path));
-            }
+        if !path.is_empty() {
+            return Ok(PathBuf::from(path));
         }
     }
 
@@ -430,7 +430,7 @@ async fn confirm_readyz_once(api_url: &str) -> Result<()> {
 }
 
 fn should_warn_readyz_retry(attempt: u32) -> bool {
-    attempt == 1 || attempt == 5 || attempt % 10 == 0
+    attempt == 1 || attempt == 5 || attempt.is_multiple_of(10)
 }
 
 async fn cleanup_failed_bootstrap(runtime: RunningSidecar, reason: &str) {
@@ -514,11 +514,8 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &AppState) -> Result<()> 
         Arc::clone(&stop_requested),
     );
 
-    let stderr_task = spawn_stderr_drain_task(
-        stderr,
-        Arc::clone(&ready_seen),
-        Arc::clone(&stop_requested),
-    );
+    let stderr_task =
+        spawn_stderr_drain_task(stderr, Arc::clone(&ready_seen), Arc::clone(&stop_requested));
 
     let monitor_task =
         spawn_process_monitor_task(child, shutdown_rx, exit_tx, Arc::clone(&stop_requested));
@@ -629,10 +626,10 @@ pub async fn bootstrap_sidecar(app: &AppHandle, state: &AppState) -> Result<()> 
             }
 
             _ = tokio::time::sleep(Duration::from_millis(READYZ_RETRY_DELAY_MS)), if ready_api_url.is_some() => {
-                if let Some(not_before) = readyz_not_before {
-                    if Instant::now() < not_before {
-                        continue;
-                    }
+                if let Some(not_before) = readyz_not_before
+                    && Instant::now() < not_before
+                {
+                    continue;
                 }
 
                 let api_url = ready_api_url
