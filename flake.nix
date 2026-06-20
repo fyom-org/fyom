@@ -44,12 +44,13 @@
         */
         commonPackages = with pkgs; [
           # Rust
-          rustc
           cargo
-          rust-analyzer
-          rustfmt
-          clippy
           cargo-tauri
+          clippy
+          rustc
+          rustfmt
+          rustup
+          rust-analyzer
 
           # Native build tooling
           pkg-config
@@ -73,10 +74,10 @@
           dbmate
 
           # Utilities
+          curl
           git
           jq
           python3
-          curl
           unzip
           zip
         ];
