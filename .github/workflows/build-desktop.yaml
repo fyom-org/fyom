@@ -27,16 +27,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@v14
 
       - name: Show Nix version
+        shell: bash
         run: nix --version
 
       - name: Build desktop app in Nix dev shell
+        shell: bash
         run: nix develop --command task build:desktop
         env:
           VERSION: ${{ github.ref_name }}
@@ -53,7 +55,12 @@ jobs:
 
           if [ -d "src-tauri/target/release/bundle" ]; then
             find src-tauri/target/release/bundle -type f \
-              \( -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" -o -name "*.tar.gz" \) \
+              \( \
+                -name "*.deb" \
+                -o -name "*.rpm" \
+                -o -name "*.AppImage" \
+                -o -name "*.tar.gz" \
+              \) \
               -exec cp {} release-assets/ \;
           fi
 
@@ -82,7 +89,7 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup pnpm
@@ -113,6 +120,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           cargo install tauri-cli --version '^2' --locked --root "$RUNNER_TEMP/tauri-cli"
           echo "$RUNNER_TEMP/tauri-cli/bin" >> "$GITHUB_PATH"
 
@@ -120,14 +128,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           which cargo-tauri
           cargo-tauri --version
 
       - name: Install frontend dependencies
         working-directory: web
+        shell: bash
         run: pnpm install --frozen-lockfile
 
       - name: Build desktop app on macOS runner
+        shell: bash
         run: task build:desktop
         env:
           VERSION: ${{ github.ref_name }}
@@ -144,7 +155,12 @@ jobs:
 
           if [ -d "src-tauri/target/release/bundle" ]; then
             find src-tauri/target/release/bundle -type f \
-              \( -name "*.dmg" -o -name "*.app.tar.gz" -o -name "*.tar.gz" -o -name "*.sig" \) \
+              \( \
+                -name "*.dmg" \
+                -o -name "*.app.tar.gz" \
+                -o -name "*.tar.gz" \
+                -o -name "*.sig" \
+              \) \
               -exec cp {} release-assets/ \;
           fi
 
@@ -173,7 +189,7 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup pnpm
@@ -228,6 +244,8 @@ jobs:
       - name: Collect Windows assets
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
           if (Test-Path "release-assets") {
             Remove-Item -Recurse -Force "release-assets"
           }
@@ -275,10 +293,12 @@ jobs:
   release:
     name: create-github-release
     runs-on: ubuntu-latest
+
     needs:
       - build-linux
       - build-macos
       - build-windows
+
     if: startsWith(github.ref, 'refs/tags/v')
 
     permissions:
@@ -286,6 +306,46 @@ jobs:
       actions: read
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release context
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          echo "Repository: $GITHUB_REPOSITORY"
+          echo "Git ref: $GITHUB_REF"
+          echo "Git SHA: $GITHUB_SHA"
+          echo "Tag name: $TAG_NAME"
+
+          if [ -z "$TAG_NAME" ]; then
+            echo "TAG_NAME is empty"
+            exit 1
+          fi
+
+          if [[ "$TAG_NAME" != v* ]]; then
+            echo "TAG_NAME must start with v"
+            exit 1
+          fi
+
+          git status --short
+          git rev-parse --is-inside-work-tree
+          git rev-parse HEAD
+
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Tag exists locally: $TAG_NAME"
+          else
+            echo "Tag does not exist locally after checkout: $TAG_NAME"
+            echo "Available tags around current ref:"
+            git tag --points-at HEAD || true
+            exit 1
+          fi
+
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
@@ -307,7 +367,7 @@ jobs:
           fi
 
           echo "Downloaded artifacts:"
-          find downloaded-artifacts -type f -maxdepth 3 -print | sort || true
+          find downloaded-artifacts -maxdepth 3 -type f -print | sort || true
 
           while IFS= read -r -d '' file; do
             base_name="$(basename "$file")"
@@ -348,9 +408,17 @@ jobs:
           fi
 
           echo "Preparing release for tag: $TAG_NAME"
+          echo "Assets to upload:"
+          ls -lah staged
+
+          release_flags=()
+
+          if [[ "$TAG_NAME" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
 
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            echo "Release already exists. Uploading assets with clobber enabled."
+            echo "Release already exists. Updating metadata and uploading assets with clobber enabled."
 
             if [[ "$TAG_NAME" == *-* ]]; then
               gh release edit "$TAG_NAME" --prerelease
@@ -361,15 +429,40 @@ jobs:
             echo "Release does not exist. Creating a new release."
 
             create_args=(
-              release create "$TAG_NAME"
+              release
+              create
+              "$TAG_NAME"
               staged/*
-              --title "$TAG_NAME"
+              --title
+              "$TAG_NAME"
+              --target
+              "$GITHUB_SHA"
               --generate-notes
             )
 
-            if [[ "$TAG_NAME" == *-* ]]; then
-              create_args+=(--prerelease)
+            if [ "${#release_flags[@]}" -gt 0 ]; then
+              create_args+=("${release_flags[@]}")
             fi
 
             gh "${create_args[@]}"
           fi
+
+      - name: Print release summary
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          echo "Release completed for tag: $TAG_NAME"
+          gh release view "$TAG_NAME" --json tagName,name,isPrerelease,isDraft,url,assets --jq '
+            {
+              tagName,
+              name,
+              isPrerelease,
+              isDraft,
+              url,
+              assets: [.assets[].name]
+            }
+          '
