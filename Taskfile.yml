@@ -9,6 +9,20 @@ vars:
   COMMIT: '{{default "unknown" .COMMIT}}'
   BUILD_TIME: '{{default "unknown" .BUILD_TIME}}'
 
+  LD_FLAGS: >-
+    -s -w
+    -X github.com/fyom/fyom/internal/version.Version={{.VERSION}}
+    -X github.com/fyom/fyom/internal/version.Commit={{.COMMIT}}
+    -X github.com/fyom/fyom/internal/version.BuildTime={{.BUILD_TIME}}
+
+  CLEAN_PATHS: >-
+    {{.BUILD_DIR}}
+    web/dist
+    tmp/
+    data/
+    coverage.out
+    coverage.html
+
 tasks:
   default:
     desc: "List all task commands"
@@ -16,11 +30,151 @@ tasks:
       - task -a
 
   # ================================================
-  # Build
+  # Internal helpers
   # ================================================
 
+  _build:binary:
+    internal: true
+    cmds:
+      - mkdir -p "{{.BUILD_DIR}}"
+      - >
+        go build
+        -ldflags "{{.LD_FLAGS}}"
+        -o "{{.BUILD_DIR}}/{{.BINARY_NAME}}"
+        "{{.CMD_PATH}}"
+    env:
+      CGO_ENABLED: "0"
+
+  _go:packages:
+    internal: true
+    cmds:
+      - |
+        bash <<'EOF'
+        set -euo pipefail
+
+        mode="{{.MODE}}"
+        empty_message="{{.EMPTY_MESSAGE}}"
+
+        load_go_packages() {
+          local packages_file
+
+          packages_file="$(mktemp)"
+          trap 'rm -f "$packages_file"' EXIT
+
+          if ! go list ./... > "$packages_file"; then
+            echo
+            echo "go list ./... failed."
+            echo "If the error mentions web/embed.go or go:embed, ensure web/dist exists."
+            echo "Try: task build:web:dist"
+            exit 1
+          fi
+
+          mapfile -t packages < "$packages_file"
+
+          filtered=()
+          for package in "${packages[@]}"; do
+            case "$package" in
+              *web/node_modules*)
+                continue
+                ;;
+            esac
+
+            filtered+=("$package")
+          done
+
+          if [ "${#filtered[@]}" -eq 0 ]; then
+            echo "$empty_message"
+            exit 1
+          fi
+        }
+
+        run_go_tests() {
+          go test -v -count=1 "${filtered[@]}"
+        }
+
+        run_go_race_tests() {
+          go test -race -count=1 "${filtered[@]}"
+        }
+
+        run_go_coverage() {
+          go test -coverprofile=coverage.out "${filtered[@]}"
+          go tool cover -func=coverage.out
+        }
+
+        run_go_lint() {
+          local module_path
+          local relative_path
+
+          module_path="$(go list -m)"
+
+          patterns=()
+          for package in "${filtered[@]}"; do
+            if [ "$package" = "$module_path" ]; then
+              patterns+=(".")
+              continue
+            fi
+
+            case "$package" in
+              "$module_path"/*)
+                relative_path="${package#"$module_path"/}"
+                patterns+=("./$relative_path")
+                ;;
+              *)
+                echo "Skipping non-module Go package: $package"
+                ;;
+            esac
+          done
+
+          if [ "${#patterns[@]}" -eq 0 ]; then
+            echo "No Go packages found to lint."
+            exit 1
+          fi
+
+          golangci-lint run "${patterns[@]}"
+        }
+
+        load_go_packages
+
+        case "$mode" in
+          test)
+            run_go_tests
+            ;;
+
+          race)
+            run_go_race_tests
+            ;;
+
+          coverage)
+            run_go_coverage
+            ;;
+
+          lint)
+            run_go_lint
+            ;;
+
+          *)
+            echo "Unknown Go package mode: $mode"
+            exit 1
+            ;;
+        esac
+        EOF
+    env:
+      CGO_ENABLED: "{{.CGO_ENABLED}}"
+
+  _test:playwright:run:
+    internal: true
+    desc: "Run Playwright-related command with shared environment"
+    dir: web
+    cmds:
+      - "{{.PLAYWRIGHT_CMD}}"
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: "true"
+      NO_PROXY: "localhost,127.0.0.1,::1"
+      no_proxy: "localhost,127.0.0.1,::1"
+
   # ================================================
-  # Web dependencies and embedded frontend assets
+  # Build
   # ================================================
 
   build:
@@ -28,24 +182,20 @@ tasks:
     deps:
       - build:web:dist
     cmds:
-      - mkdir -p {{.BUILD_DIR}}
-      - >
-        CGO_ENABLED=0 go build
-        -ldflags "-s -w
-        -X github.com/fyom/fyom/internal/version.Version={{.VERSION}}
-        -X github.com/fyom/fyom/internal/version.Commit={{.COMMIT}}
-        -X github.com/fyom/fyom/internal/version.BuildTime={{.BUILD_TIME}}"
-        -o {{.BUILD_DIR}}/{{.BINARY_NAME}}
-        {{.CMD_PATH}}
+      - task: _build:binary
 
   build:web:
     desc: "Build frontend for production"
     deps:
-      - web:install
+      - build:web:install
     dir: web
     cmds:
       - pnpm run build:full
       - node ../scripts/delete-sourcemaps.js dist
+
+  # ================================================
+  # Web dependencies and embedded frontend assets
+  # ================================================
 
   build:web:install:
     desc: "Install frontend dependencies"
@@ -56,7 +206,7 @@ tasks:
   build:web:dist:
     desc: "Ensure compiled frontend dist exists for Go embed"
     deps:
-      - web:install
+      - build:web:install
     cmds:
       - |
         bash <<'EOF'
@@ -76,15 +226,7 @@ tasks:
     deps:
       - build:web:dist
     cmds:
-      - mkdir -p {{.BUILD_DIR}}
-      - >
-        CGO_ENABLED=0 go build
-        -ldflags "-s -w
-        -X github.com/fyom/fyom/internal/version.Version={{.VERSION}}
-        -X github.com/fyom/fyom/internal/version.Commit={{.COMMIT}}
-        -X github.com/fyom/fyom/internal/version.BuildTime={{.BUILD_TIME}}"
-        -o {{.BUILD_DIR}}/{{.BINARY_NAME}}
-        {{.CMD_PATH}}
+      - task: _build:binary
 
   build:desktop:
     desc: "Build Tauri desktop app bundle"
@@ -119,7 +261,7 @@ tasks:
   # ================================================
 
   dev:
-    desc: "Run Go backend (with embed web) with Air hot-reload"
+    desc: "Run Go backend with embedded web assets and Air hot-reload"
     cmds:
       - air -c .air.toml
 
@@ -169,198 +311,6 @@ tasks:
       - pnpm run preview
 
   # ================================================
-  # Test
-  # ================================================
-
-  test:
-    desc: "Run all tests for backend, web frontend and tauri shell"
-    deps:
-      - test:go
-      - test:web
-      - test:rust
-
-  test:coverage:
-    desc: "Run Go coverage for project packages"
-    deps:
-      - build:web:dist
-    cmds:
-      - |
-        bash <<'EOF'
-        set -euo pipefail
-
-        packages_file="$(mktemp)"
-        trap 'rm -f "$packages_file"' EXIT
-
-        if ! go list ./... > "$packages_file"; then
-          echo
-          echo "go list ./... failed."
-          echo "If the error mentions web/embed.go or go:embed, ensure web/dist exists."
-          echo "Try: task build:web:dist"
-          exit 1
-        fi
-
-        mapfile -t packages < "$packages_file"
-
-        filtered=()
-        for package in "${packages[@]}"; do
-          case "$package" in
-            *web/node_modules*)
-              continue
-              ;;
-          esac
-
-          filtered+=("$package")
-        done
-
-        if [ "${#filtered[@]}" -eq 0 ]; then
-          echo "No Go packages found for coverage."
-          exit 1
-        fi
-
-        go test -coverprofile=coverage.out "${filtered[@]}"
-        go tool cover -func=coverage.out
-        EOF
-    env:
-      CGO_ENABLED: "0"
-
-  test:go:
-    desc: "Run all Go tests for project packages"
-    deps:
-      - build:web:dist
-    cmds:
-      - |
-        bash <<'EOF'
-        set -euo pipefail
-
-        packages_file="$(mktemp)"
-        trap 'rm -f "$packages_file"' EXIT
-
-        if ! go list ./... > "$packages_file"; then
-          echo
-          echo "go list ./... failed."
-          echo "If the error mentions web/embed.go or go:embed, ensure web/dist exists."
-          echo "Try: task build:web:dist"
-          exit 1
-        fi
-
-        mapfile -t packages < "$packages_file"
-
-        filtered=()
-        for package in "${packages[@]}"; do
-          case "$package" in
-            *web/node_modules*)
-              continue
-              ;;
-          esac
-
-          filtered+=("$package")
-        done
-
-        if [ "${#filtered[@]}" -eq 0 ]; then
-          echo "No Go packages found to test."
-          exit 1
-        fi
-
-        go test -v -count=1 "${filtered[@]}"
-        EOF
-    env:
-      CGO_ENABLED: "0"
-
-  test:playwright:
-    desc: "Run frontend Vitest Browser Mode tests with Playwright"
-    dir: web
-    cmds:
-      - pnpm exec vitest run --config vitest.browser.config.ts
-    env:
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-      PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: "true"
-      NO_PROXY: "localhost,127.0.0.1,::1"
-      no_proxy: "localhost,127.0.0.1,::1"
-
-  test:playwright-e2e:
-    desc: "Run Playwright E2E tests"
-    dir: web
-    cmds:
-      - pnpm exec playwright test
-    env:
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-      PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: "true"
-      NO_PROXY: "localhost,127.0.0.1,::1"
-      no_proxy: "localhost,127.0.0.1,::1"
-
-  test:playwright-headless:
-    desc: "Run frontend Vitest Browser Mode tests with Playwright"
-    dir: web
-    cmds:
-      - pnpm exec vitest run --browser.headless --reporter=verbose
-    env:
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-      PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS: "true"
-      NO_PROXY: "localhost,127.0.0.1,::1"
-      no_proxy: "localhost,127.0.0.1,::1"
-
-  test:race:
-    desc: "Run Go race tests for project packages"
-    deps:
-      - build:web:dist
-    cmds:
-      - |
-        bash <<'EOF'
-        set -euo pipefail
-
-        packages_file="$(mktemp)"
-        trap 'rm -f "$packages_file"' EXIT
-
-        if ! go list ./... > "$packages_file"; then
-          echo
-          echo "go list ./... failed."
-          echo "If the error mentions web/embed.go or go:embed, ensure web/dist exists."
-          echo "Try: task build:web:dist"
-          exit 1
-        fi
-
-        mapfile -t packages < "$packages_file"
-
-        filtered=()
-        for package in "${packages[@]}"; do
-          case "$package" in
-            *web/node_modules*)
-              continue
-              ;;
-          esac
-
-          filtered+=("$package")
-        done
-
-        if [ "${#filtered[@]}" -eq 0 ]; then
-          echo "No Go packages found to test."
-          exit 1
-        fi
-
-        go test -race -count=1 "${filtered[@]}"
-        EOF
-    env:
-      CGO_ENABLED: "1"
-
-  test:rust:
-    desc: "Run Rust check and tests"
-    dir: src-tauri
-    cmds:
-      - cargo check --all-targets --all-features
-      - cargo test --all-features
-
-  test:smoke:
-    desc: "Run production smoke test"
-    cmds:
-      - bash scripts/smoke_test.sh
-
-  test:web:
-    desc: "Run web tests"
-    dir: web
-    cmds:
-      - pnpm run test
-
-  # ================================================
   # Lint
   # ================================================
 
@@ -382,57 +332,11 @@ tasks:
     deps:
       - build:web:dist
     cmds:
-      - |
-        bash <<'EOF'
-        set -euo pipefail
-
-        module_path="$(go list -m)"
-        packages_file="$(mktemp)"
-        trap 'rm -f "$packages_file"' EXIT
-
-        if ! go list ./... > "$packages_file"; then
-          echo
-          echo "go list ./... failed."
-          echo "If the error mentions web/embed.go or go:embed, ensure web/dist exists."
-          echo "Try: task build:web:dist"
-          exit 1
-        fi
-
-        mapfile -t packages < "$packages_file"
-
-        patterns=()
-        for package in "${packages[@]}"; do
-          case "$package" in
-            *web/node_modules*)
-              continue
-              ;;
-          esac
-
-          if [ "$package" = "$module_path" ]; then
-            patterns+=(".")
-            continue
-          fi
-
-          case "$package" in
-            "$module_path"/*)
-              relative_path="${package#"$module_path"/}"
-              patterns+=("./$relative_path")
-              ;;
-            *)
-              echo "Skipping non-module Go package: $package"
-              ;;
-          esac
-        done
-
-        if [ "${#patterns[@]}" -eq 0 ]; then
-          echo "No Go packages found to lint."
-          exit 1
-        fi
-
-        golangci-lint run "${patterns[@]}"
-        EOF
-    env:
-      CGO_ENABLED: "0"
+      - task: _go:packages
+        vars:
+          MODE: lint
+          EMPTY_MESSAGE: "No Go packages found to lint."
+          CGO_ENABLED: "0"
 
   lint:go:config:
     desc: "Verify golangci-lint configuration"
@@ -465,6 +369,89 @@ tasks:
       - pnpm lint
     env:
       NODE_OPTIONS: "--trace-deprecation"
+
+  # ================================================
+  # Test
+  # ================================================
+
+  test:
+    desc: "Run all tests for backend, web frontend and tauri shell"
+    deps:
+      - test:go
+      - test:web
+      - test:rust
+
+  test:coverage:
+    desc: "Run Go coverage for project packages"
+    deps:
+      - build:web:dist
+    cmds:
+      - task: _go:packages
+        vars:
+          MODE: coverage
+          EMPTY_MESSAGE: "No Go packages found for coverage."
+          CGO_ENABLED: "0"
+
+  test:go:
+    desc: "Run all Go tests for project packages"
+    deps:
+      - build:web:dist
+    cmds:
+      - task: _go:packages
+        vars:
+          MODE: test
+          EMPTY_MESSAGE: "No Go packages found to test."
+          CGO_ENABLED: "0"
+
+  test:playwright:
+    desc: "Run frontend Vitest Browser Mode tests with Playwright"
+    cmds:
+      - task: _test:playwright:run
+        vars:
+          PLAYWRIGHT_CMD: pnpm exec vitest run --config vitest.browser.config.ts
+
+  test:playwright-e2e:
+    desc: "Run Playwright E2E tests"
+    cmds:
+      - task: _test:playwright:run
+        vars:
+          PLAYWRIGHT_CMD: pnpm exec playwright test
+
+  test:playwright-headless:
+    desc: "Run frontend Vitest Browser Mode tests with Playwright"
+    cmds:
+      - task: _test:playwright:run
+        vars:
+          PLAYWRIGHT_CMD: pnpm exec vitest run --browser.headless --reporter=verbose
+
+  test:race:
+    desc: "Run Go race tests for project packages"
+    deps:
+      - build:web:dist
+    cmds:
+      - task: _go:packages
+        vars:
+          MODE: race
+          EMPTY_MESSAGE: "No Go packages found to test."
+          CGO_ENABLED: "1"
+
+  test:rust:
+    desc: "Run Rust check and tests"
+    dir: src-tauri
+    cmds:
+      - cargo check --all-targets --all-features
+      - cargo test --all-features
+
+  test:smoke:
+    desc: "Run production smoke test"
+    cmds:
+      - bash scripts/smoke_test.sh
+
+  test:web:
+    desc: "Run web tests"
+    dir: web
+    cmds:
+      - pnpm run test
 
   # ================================================
   # CI
@@ -502,4 +489,4 @@ tasks:
   clean:
     desc: "Remove build artifacts and temp files"
     cmds:
-      - rm -rf {{.BUILD_DIR}} web/dist tmp/ data/ coverage.out coverage.html
+      - rm -rf {{.CLEAN_PATHS}}
