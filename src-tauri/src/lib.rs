@@ -34,7 +34,12 @@ pub struct AppState {
     /// Desktop database path used by the local desktop runtime.
     pub desktop_db_path: Arc<String>,
 
-    /// Desktop-local configuration.
+    /// Desktop-local configuration resolved by the `desktop_config` module.
+    ///
+    /// Resolution order:
+    /// 1. `FYOM_DESKTOP_CONFIG` explicit override
+    /// 2. Platform user config path
+    /// 3. Development fallback `configs/fyom-desktop.json` (debug only)
     ///
     /// This includes external player configuration such as:
     /// - configured mpv binary

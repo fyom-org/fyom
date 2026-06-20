@@ -8,9 +8,10 @@
 //!    - `FYOM_EXTERNAL_PLAYER`
 //!    - `FYOM_EXTERNAL_PLAYER_ARGS`
 //!    - `FYOM_MPV_BIN`
-//! 2. Desktop config:
-//!    - `configs/fyom-desktop.json`
-//!    - or `FYOM_DESKTOP_CONFIG`
+//! 2. Desktop config (resolved via `desktop_config` module):
+//!    - `FYOM_DESKTOP_CONFIG` explicit override
+//!    - Platform user config path
+//!    - Development fallback `configs/fyom-desktop.json` (debug only)
 //! 3. OS default opener:
 //!    - macOS: `open`
 //!    - Linux: `xdg-open`
@@ -176,7 +177,7 @@ fn parse_env_player_args() -> Vec<String> {
     // FYOM_EXTERNAL_PLAYER_ARGS="--profile=fyom {url}"
     // FYOM_EXTERNAL_PLAYER_ARGS="--fullscreen --profile=fyom {url}"
     //
-    // For arguments containing spaces, use `configs/fyom-desktop.json` instead:
+    // For arguments containing spaces, use the desktop config file instead:
     //
     // {
     //   "externalPlayer": {
@@ -442,7 +443,7 @@ fn spawn_detached(mut command: Command, launcher_name: &str) -> Result<(), Strin
 ///
 /// - `FYOM_EXTERNAL_PLAYER` takes priority.
 /// - `FYOM_MPV_BIN` is used as an mpv-specific fallback.
-/// - `configs/fyom-desktop.json` is used when no environment override exists.
+/// - Desktop config (resolved via `desktop_config` module) is used when no environment override exists.
 /// - If no configured player is available, the OS default opener is used.
 #[tauri::command]
 pub async fn open_external_player(
