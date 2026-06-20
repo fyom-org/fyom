@@ -203,11 +203,37 @@ tasks:
   # ================================================
 
   lint:
+    desc: "Run all linters"
+    deps:
+      - lint:go
+      - lint:web
+
+  lint:go:
     desc: "Run golangci-lint"
     cmds:
       - golangci-lint run ./...
     env:
       CGO_ENABLED: "0"
+
+  lint:web:
+    desc: "Run ESLint for web"
+    dir: web
+    cmds:
+      - pnpm lint
+
+  lint:web:fix:
+    desc: "Run ESLint auto-fix for web"
+    dir: web
+    cmds:
+      - pnpm lint:fix
+
+  lint:web:trace:
+    desc: "Run ESLint with Node deprecation trace"
+    dir: web
+    cmds:
+      - pnpm exec eslint .
+    env:
+      NODE_OPTIONS: "--trace-deprecation"
 
   # ================================================
   # CI
