@@ -640,7 +640,7 @@ export async function getMediaList(
   });
 
   const response = await authRequest.get<ApiEnvelope<MediaListResponse>>('/library', {
-    params: query,
+    query,
     authFailureMode: 'soft',
   });
 
@@ -685,7 +685,7 @@ export async function getMediaByStatus(
   limit = 20
 ): Promise<MediaListResponse> {
   const response = await authRequest.get<ApiEnvelope<MediaListResponse>>('/library/by-status', {
-    params: stripUndefined({
+    query: stripUndefined({
       status,
       limit,
     }),

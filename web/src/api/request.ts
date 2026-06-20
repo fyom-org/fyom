@@ -1,10 +1,4 @@
-import axios, {
-  AxiosError,
-  type AxiosInstance,
-  type AxiosRequestConfig,
-  type AxiosResponse,
-  type InternalAxiosRequestConfig,
-} from 'axios';
+import { ofetch } from 'ofetch';
 import { getApiBaseUrl } from '@/lib/runtime/tauri';
 import { getCurrentLocale } from '@/composables/useLocale';
 
@@ -45,7 +39,7 @@ export type AuthFailureMode =
    */
   | 'session-check';
 
-export interface FyomRequestConfig extends AxiosRequestConfig {
+export interface FyomRequestConfig {
   authFailureMode?: AuthFailureMode;
 
   /**
@@ -53,18 +47,15 @@ export interface FyomRequestConfig extends AxiosRequestConfig {
    * When true, this request never dispatches global auth events.
    */
   skipAuthRedirect?: boolean;
-}
 
-declare module 'axios' {
-  export interface AxiosRequestConfig {
-    authFailureMode?: AuthFailureMode;
-    skipAuthRedirect?: boolean;
-  }
-
-  export interface InternalAxiosRequestConfig {
-    authFailureMode?: AuthFailureMode;
-    skipAuthRedirect?: boolean;
-  }
+  // Standard FetchOptions passthrough
+  method?: string;
+  body?: BodyInit | Record<string, unknown> | null;
+  query?: Record<string, unknown>;
+  headers?: HeadersInit;
+  timeout?: number;
+  signal?: AbortSignal;
+  credentials?: RequestCredentials;
 }
 
 interface AuthEventDetail {
@@ -78,16 +69,6 @@ const DEFAULT_TIMEOUT_MS = 10000;
 
 const apiBaseUrl = getApiBaseUrl();
 
-const apiRequest: AxiosInstance = axios.create({
-  baseURL: apiBaseUrl,
-  timeout: DEFAULT_TIMEOUT_MS,
-});
-
-const authRequest: AxiosInstance = axios.create({
-  baseURL: apiBaseUrl,
-  timeout: DEFAULT_TIMEOUT_MS,
-});
-
 /**
  * Read the persisted access token.
  */
@@ -97,100 +78,112 @@ function readToken(): string | null {
   return window.localStorage.getItem('token');
 }
 
-/**
- * Attach Authorization header when a token exists.
- */
-function attachAuthInterceptor(instance: AxiosInstance): void {
-  instance.interceptors.request.use(
-    (config: InternalAxiosRequestConfig) => {
-      const token = readToken();
-
-      if (!token) {
-        return config;
-      }
-
-      setAuthorizationHeader(config, token);
-
-      return config;
-    },
-    (error: unknown) => Promise.reject(error)
-  );
+interface HttpClientResponse<T> {
+  data: T;
+  status: number;
+  statusText: string;
 }
 
-/**
- * Attach `Accept-Language` header so the backend can locale-aware log,
- * validate, or (Phase 3+) select error_code metadata.
- *
- * The backend does NOT translate messages today; the header is a forward-
- * compatibility signal. Reading the locale at request time (not at module
- * load) ensures locale switches mid-session propagate to subsequent calls
- * without re-creating the axios instance.
- */
-function attachAcceptLanguageInterceptor(instance: AxiosInstance): void {
-  instance.interceptors.request.use(
-    (config: InternalAxiosRequestConfig) => {
-      const locale = getCurrentLocale();
+async function http<T>(
+  baseURL: string,
+  url: string,
+  options: FyomRequestConfig = {},
+  attachAuth = false,
+): Promise<HttpClientResponse<T>> {
+  const token = attachAuth ? readToken() : null;
 
-      if (!config.headers) {
-        // `Accept-Language` is not a known AxiosHeaders property, so cast
-        // through `unknown` to satisfy the strict AxiosRequestHeaders type.
-        config.headers = {
-          'Accept-Language': locale,
-        } as unknown as InternalAxiosRequestConfig['headers'];
+  const headers: Record<string, string> = {};
 
-        return config;
-      }
-
-      const headersWithSet = config.headers as {
-        set?: (name: string, value: string) => void;
-        'Accept-Language'?: string;
-      };
-
-      if (typeof headersWithSet.set === 'function') {
-        headersWithSet.set('Accept-Language', locale);
-        return config;
-      }
-
-      headersWithSet['Accept-Language'] = locale;
-
-      return config;
-    },
-    (error: unknown) => Promise.reject(error)
-  );
-}
-
-/**
- * Set Authorization header in a way that is compatible with Axios 1.x
- * AxiosHeaders and plain object headers.
- */
-function setAuthorizationHeader(config: InternalAxiosRequestConfig, token: string): void {
-  const value = `Bearer ${token}`;
-
-  if (!config.headers) {
-    config.headers = {
-      Authorization: value,
-    } as InternalAxiosRequestConfig['headers'];
-
-    return;
+  // Accept-Language from current locale
+  const locale = getCurrentLocale();
+  if (locale) {
+    headers['Accept-Language'] = locale;
   }
 
-  const headersWithSet = config.headers as {
-    set?: (name: string, value: string) => void;
-    Authorization?: string;
+  // Auth token
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  // Merge caller headers
+  if (options.headers) {
+    const callerHeaders = options.headers instanceof Headers
+      ? Object.fromEntries(options.headers.entries())
+      : (options.headers as Record<string, string>);
+    Object.assign(headers, callerHeaders);
+  }
+
+  try {
+    const response = await ofetch.raw<T>(url, {
+      baseURL,
+      method: options.method,
+      body: options.body,
+      query: options.query,
+      headers,
+      timeout: options.timeout ?? DEFAULT_TIMEOUT_MS,
+      signal: options.signal,
+      credentials: options.credentials,
+    });
+
+    return {
+      data: response._data as T,
+      status: response.status,
+      statusText: response.statusText,
+    };
+  } catch (error: unknown) {
+    handleAuthFailure(error, options);
+    throw error;
+  }
+}
+
+function createHttpClient(attachAuth: boolean) {
+  const client = {
+    async get<T>(url: string, options?: FyomRequestConfig): Promise<HttpClientResponse<T>> {
+      return http<T>(apiBaseUrl, url, {
+        ...options,
+        method: 'GET',
+      }, attachAuth);
+    },
+
+    async post<T>(url: string, body?: unknown, options?: FyomRequestConfig): Promise<HttpClientResponse<T>> {
+      return http<T>(apiBaseUrl, url, {
+        ...options,
+        method: 'POST',
+        body: body as BodyInit | Record<string, unknown> | null,
+      }, attachAuth);
+    },
+
+    async put<T>(url: string, body?: unknown, options?: FyomRequestConfig): Promise<HttpClientResponse<T>> {
+      return http<T>(apiBaseUrl, url, {
+        ...options,
+        method: 'PUT',
+        body: body as BodyInit | Record<string, unknown> | null,
+      }, attachAuth);
+    },
+
+    async patch<T>(url: string, body?: unknown, options?: FyomRequestConfig): Promise<HttpClientResponse<T>> {
+      return http<T>(apiBaseUrl, url, {
+        ...options,
+        method: 'PATCH',
+        body: body as BodyInit | Record<string, unknown> | null,
+      }, attachAuth);
+    },
+
+    async delete<T>(url: string, options?: FyomRequestConfig): Promise<HttpClientResponse<T>> {
+      return http<T>(apiBaseUrl, url, {
+        ...options,
+        method: 'DELETE',
+      }, attachAuth);
+    },
   };
 
-  if (typeof headersWithSet.set === 'function') {
-    headersWithSet.set('Authorization', value);
-    return;
-  }
-
-  headersWithSet.Authorization = value;
+  return client;
 }
 
 /**
- * Attach auth failure policy.
+ * Auth failure policy handler.
  *
- * This interceptor is intentionally non-destructive by default.
+ * This is intentionally non-destructive by default.
  *
  * Important rules:
  * - 403 never clears session.
@@ -200,23 +193,11 @@ function setAuthorizationHeader(config: InternalAxiosRequestConfig, token: strin
  * - Only explicit authFailureMode: 'session-check' can dispatch
  *   auth:session-check-required.
  */
-function attachAuthFailurePolicyInterceptor(instance: AxiosInstance): void {
-  instance.interceptors.response.use(
-    (response: AxiosResponse) => response,
-    (error: AxiosError) => {
-      handleAuthFailure(error);
-
-      return Promise.reject(error);
-    }
-  );
-}
-
-function handleAuthFailure(error: AxiosError): void {
-  const status = error.response?.status;
+function handleAuthFailure(error: unknown, config?: FyomRequestConfig): void {
+  const status = getErrorStatus(error);
 
   if (!status) return;
 
-  const config = error.config as FyomRequestConfig | undefined;
   const mode = resolveAuthFailureMode(config);
 
   /**
@@ -241,8 +222,8 @@ function handleAuthFailure(error: AxiosError): void {
     dispatchAuthEvent('auth:session-check-required', {
       status,
       mode,
-      method: error.config?.method,
-      url: error.config?.url,
+      method: config?.method,
+      url: undefined,
     });
 
     return;
@@ -252,10 +233,19 @@ function handleAuthFailure(error: AxiosError): void {
     dispatchAuthEvent('auth:unauthorized', {
       status,
       mode,
-      method: error.config?.method,
-      url: error.config?.url,
+      method: config?.method,
+      url: undefined,
     });
   }
+}
+
+function getErrorStatus(error: unknown): number | undefined {
+  if (typeof error === 'object' && error !== null) {
+    const err = error as { response?: { status?: number }; status?: number };
+    if (err.response?.status !== undefined) return err.response.status;
+    if (typeof err.status === 'number') return err.status;
+  }
+  return undefined;
 }
 
 function shouldSuppressAuthEvent(
@@ -287,14 +277,7 @@ function isBrowser(): boolean {
   return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 }
 
-attachAuthInterceptor(apiRequest);
-attachAuthInterceptor(authRequest);
-
-attachAcceptLanguageInterceptor(apiRequest);
-attachAcceptLanguageInterceptor(authRequest);
-
-attachAuthFailurePolicyInterceptor(apiRequest);
-attachAuthFailurePolicyInterceptor(authRequest);
+const apiRequest = createHttpClient(false);
+const authRequest = createHttpClient(true);
 
 export { apiRequest, authRequest };
-export { type AxiosInstance } from 'axios';

@@ -120,7 +120,7 @@ function notifyInfo(message: string): number {
 }
 
 /**
- * Notify an error from a caught axios error, using the unified error helper.
+ * Notify an error from a caught API error, using the unified error helper.
  * Falls back to the translated generic error if the backend message is unsafe.
  */
 function notifyApiError(error: unknown, fallbackKey: string = 'errors.generic'): number {

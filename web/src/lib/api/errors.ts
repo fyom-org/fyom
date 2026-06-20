@@ -26,7 +26,6 @@
  *   fallback message (e.g. 'errors.generic') and returns the translated
  *   string. This is the preferred entry point for views.
  */
-import type { AxiosError } from 'axios';
 import i18n from '@/plugins/i18n';
 
 /**
@@ -169,7 +168,7 @@ export function isSafeUserFacingMessage(message: string): boolean {
  *     no translation key has been added yet for a new code.
  *  3. The translated fallbackKey (default: 'errors.generic').
  *
- * @param error - The caught error (typically an AxiosError)
+ * @param error - The caught error (typically an API error)
  * @param fallbackKey - i18n key for the fallback message (default: 'errors.generic')
  * @returns A user-facing string (translated when possible)
  */
@@ -203,8 +202,15 @@ export function isUnauthorizedOrForbidden(error: unknown): boolean {
 }
 
 /**
- * Type guard for AxiosError.
+ * Type guard for API errors (formerly axios errors).
+ * Works with both ofetch FetchError and plain error objects that have
+ * a `.response` property (duck-type compatible).
  */
-export function isAxiosError(error: unknown): error is AxiosError {
-  return isRecord(error) && typeof (error as { isAxiosError?: boolean }).isAxiosError === 'boolean';
+export function isApiError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'response' in error &&
+    typeof (error as { response?: unknown }).response === 'object'
+  );
 }

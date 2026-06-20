@@ -119,8 +119,8 @@ export default defineConfig(({ mode }) => {
               return 'pinia';
             }
 
-            if (id.includes('axios')) {
-              return 'axios';
+            if (id.includes('ofetch')) {
+              return 'ofetch';
             }
 
             if (id.includes('vue-i18n') || id.includes('@intlify')) {

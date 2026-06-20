@@ -357,7 +357,7 @@ const STATUS_DROPPED: MediaStatus = 'dropped';
 
 // This endpoint is intentionally called with native fetch instead of apiRequest.
 // Reason: progress can legitimately return 401/403 for non-playable or unauthorized
-// progress records, and that must not trigger the global axios unauthorized handler.
+// progress records, and that must not trigger the global auth failure handler.
 const API_BASE_URL = normalizeBaseUrl(
   (import.meta.env.VITE_API_BASE_URL as string | undefined) || '/api/v1'
 );
