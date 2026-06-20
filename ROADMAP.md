@@ -504,7 +504,7 @@ Current client-side genre filtering is unaffected.
 
 - [x] Remove machine-specific hardcoded media paths from default tests;
       keep real-media corpus coverage opt-in via environment variable
-      (`FYOM_TEST_MEDIA_ROOT`) rather than hardcoded `/root/...` paths
+      (`fyom_TEST_MEDIA_ROOT`) rather than hardcoded `/root/...` paths
 
 - [ ] Add API response snapshot tests for `MediaItemResponse`
 
@@ -1165,7 +1165,7 @@ errors), `web/src/main.ts`, `web/index.html`, `pkg/response/response.go`,
 
 - [x] Tauri 2 desktop shell (wrapping the Web UI)
 - [x] Go sidecar `--sidecar` mode with fixed loopback port `127.0.0.1:27403`
-- [x] `FYOM_READY` readiness signal and `/readyz` confirmation flow
+- [x] `fyom_READY` readiness signal and `/readyz` confirmation flow
 - [x] Desktop DB path resolution (`fyom.db` colocated with desktop app executable)
 - [x] Sidecar bootstrap / runtime lifecycle stabilization
 - [x] Tauri system tray, window lifecycle, close-to-tray behavior, and real quit sequencing
@@ -1176,7 +1176,7 @@ errors), `web/src/main.ts`, `web/index.html`, `pkg/response/response.go`,
 - [x] Desktop playback architecture simplified to “media library + external player”
 - [x] Native mpv embedding path removed from the primary desktop playback flow
 - [x] Cross-platform playback behavior unified around independent external player windows
-- [x] `FYOM_EXTERNAL_PLAYER`, `FYOM_EXTERNAL_PLAYER_ARGS`, and `FYOM_MPV_BIN` environment overrides
+- [x] `fyom_EXTERNAL_PLAYER`, `fyom_EXTERNAL_PLAYER_ARGS`, and `fyom_MPV_BIN` environment overrides
 - [x] Desktop-local player configuration via `configs/fyom-desktop.json`
 - [x] External player resolution priority: environment overrides → desktop config → OS default opener
 - [x] mpv supported as a desktop-managed external player / sidecar-style launcher target
@@ -1188,7 +1188,7 @@ errors), `web/src/main.ts`, `web/index.html`, `pkg/response/response.go`,
   - Windows: `%APPDATA%\fyom\fyom-desktop.json`
   - macOS: `~/Library/Application Support/fyom/fyom-desktop.json`
   - Linux: `${XDG_CONFIG_HOME:-~/.config}/fyom/fyom-desktop.json`
-- [ ] Keep `FYOM_DESKTOP_CONFIG` as the highest-priority explicit override
+- [ ] Keep `fyom_DESKTOP_CONFIG` as the highest-priority explicit override
 - [ ] Keep dev fallback support for repo-local `configs/fyom-desktop.json`
 - [ ] Stop relying on process current working directory for production config discovery
 - [ ] Ensure desktop player config remains Tauri-local and separate from Go backend `fyom.yaml`
@@ -1199,9 +1199,9 @@ errors), `web/src/main.ts`, `web/index.html`, `pkg/response/response.go`,
 > desktop auth flow hardening, media/resource URL normalization, and external
 > player based desktop playback are implemented.
 >
-> FYOM Desktop now treats playback as an external-player responsibility instead
+> fyom Desktop now treats playback as an external-player responsibility instead
 > of embedding mpv into the Tauri window. This establishes a cleaner and more
-> portable product boundary: FYOM Desktop owns the media library shell and local
+> portable product boundary: fyom Desktop owns the media library shell and local
 > orchestration, the Go sidecar owns server/API/data responsibilities, and mpv or
 > another configured external player owns native media playback.
 >
@@ -1221,7 +1221,7 @@ config directories:
 - macOS: `~/Library/Application Support/fyom/fyom-desktop.json`
 - Linux: `${XDG_CONFIG_HOME:-~/.config}/fyom/fyom-desktop.json`
 
-`FYOM_DESKTOP_CONFIG` should remain the highest-priority explicit override, and
+`fyom_DESKTOP_CONFIG` should remain the highest-priority explicit override, and
 the repo-local `configs/fyom-desktop.json` should remain available only as a
 development fallback. This work must not move local player configuration into
 the Go backend `fyom.yaml`.
@@ -1230,11 +1230,11 @@ the Go backend `fyom.yaml`.
 
 > **Strategic Pivot:** Phase 2 originally attempted deep integration with `libmpv` via `mpv_render_context` and native window embedding (`--wid`). Due to insurmountable cross-platform compositor complexities (macOS Metal deprecation, Wayland native embedding limits) and the strategic decision to build a future native client in Flutter, Phase 2 is radically simplified.
 >
-> FYOM Desktop (Tauri) transitions to a **Launcher Architecture**. It acts purely as a metadata catalog and media launcher. Playback is delegated to the user's system default or configured external player.
+> fyom Desktop (Tauri) transitions to a **Launcher Architecture**. It acts purely as a metadata catalog and media launcher. Playback is delegated to the user's system default or configured external player.
 
 ### Headline Decisions (Confirmed)
 
-- **Architecture: Launcher Mode.** FYOM resolves playable URLs and hands them to the OS. No video rendering occurs inside the Tauri window.
+- **Architecture: Launcher Mode.** fyom resolves playable URLs and hands them to the OS. No video rendering occurs inside the Tauri window.
 - **Dependency Stripping:** `libmpv`, `mpv` sidecar binaries, and all related FFI/IPC Rust modules are permanently removed from the Tauri codebase.
 - **State Degradation:** Playback progress is simplified from timestamp tracking to a boolean "Watched/Unwatched" state.
 - **Flutter Transition:** This Tauri build serves as the stable, transitional Web Shell. Deep playback features (hardware decoding sync, subtitle rendering, precise progress tracking) are deferred to the future Flutter desktop client.
@@ -1272,9 +1272,9 @@ the Go backend `fyom.yaml`.
 - [x] Extend `PUT /media/{id}/progress` to accept `{ "played": true }` shorthand alongside legacy `{ "position", "duration", "finished" }`.
 - [x] `MediaProgressInput` frontend type updated with optional `played` field.
 
-#### 4. Remove useless scripts and fix ci
-- [x] remove scripts for libmpv runtime on different platforms
-- [x] clean up ci stages [build-desktop.yaml](.github/workflows/build-desktop.yaml)
+#### 4. Remove useless scripts and fix ci workflow
+- [x] Remove scripts for libmpv runtime on different platforms
+- [x] Clean up ci stages [build-desktop.yaml](.github/workflows/build-desktop.yaml)
 
 
 ### Positive Consequences
@@ -1286,16 +1286,16 @@ the Go backend `fyom.yaml`.
 ### Negative Consequences & Mitigations
 
 - **Loss of Playback Control:** Users manage their own player state.
-  - *Mitigation:* Power users likely already prefer their own tuned players (IINA, mpv, PotPlayer). FYOM embraces this by getting out of their way.
-- **No Progress Sync:** FYOM cannot resume playback where the user left off in the external player.
+  - *Mitigation:* Power users likely already prefer their own tuned players (IINA, mpv, PotPlayer). fyom embraces this by getting out of their way.
+- **No Progress Sync:** fyom cannot resume playback where the user left off in the external player.
   - *Mitigation:* Acceptable tradeoff for the Tauri Web Shell. Exact progress resuming will be a headline feature of the future Flutter native client.
 
 > **Production Phase 2 is complete.** 
 >
 > **Follow-up notes:**
 > In the plan, there would be a pure fyom-client for fyom-server / fyom-desktop
-> At present, the brand new client for fyom may use `Dart + Flutter` and to bring a native experience for multipal platforms
-> Multipal playback backends are considered: libmpv, [Erika](https://github.com/AimesSoft/Erika), FVP (libmdk), Media Kit, Video Player
+> The brand new client for fyom may use `Dart + Flutter` and to bring a native experience for multipal platforms
+> Multiple playback backends are considered: libmpv, [Erika](https://github.com/AimesSoft/Erika), FVP (libmdk), Media Kit, Video Player
 > This would be another project under [fyom-org](https://github.com/fyom-org/fyom)
 >
 
