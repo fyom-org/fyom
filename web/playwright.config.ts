@@ -15,13 +15,13 @@ export default defineConfig({
   reporter: [['list']],
   webServer: {
     command: `cd "${projectRoot}" && pnpm --filter web run build && CGO_ENABLED=0 go run ./cmd/fyom/main.go --db-path ${join(projectRoot, 'build', 'test-e2e.db')}`,
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:27402',
     reuseExistingServer: true,
     timeout: 180_000,
     cwd: projectRoot,
   },
   use: {
-    baseURL: 'http://127.0.0.1:8080',
+    baseURL: 'http://127.0.0.1:27402',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',

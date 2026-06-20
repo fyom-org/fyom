@@ -117,7 +117,7 @@ RUN set -eux; \
     chown fyom:fyom /app/fyom; \
     chown -R fyom:fyom /app/data /app/configs
 
-EXPOSE 8080
+EXPOSE 27402
 
 VOLUME ["/app/data"]
 

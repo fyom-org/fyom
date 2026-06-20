@@ -17,7 +17,7 @@ func TestLoad_Defaults(t *testing.T) {
 	cfg, err := Load("")
 	require.NoError(t, err)
 	require.Equal(t, "0.0.0.0", cfg.Server.Host)
-	require.Equal(t, 8080, cfg.Server.Port)
+	require.Equal(t, 27402, cfg.Server.Port)
 	require.Equal(t, "", cfg.Database.DBPath) // empty = use default-binary-dir
 	require.Equal(t, 24, cfg.Auth.TokenExpiry)
 	require.Equal(t, "info", cfg.Log.Level)
@@ -80,6 +80,6 @@ func TestLoad_ExplicitPath(t *testing.T) {
 }
 
 func TestServer_Address(t *testing.T) {
-	s := Server{Host: "127.0.0.1", Port: 8080}
-	require.Equal(t, "127.0.0.1:8080", s.Address())
+	s := Server{Host: "127.0.0.1", Port: 27402}
+	require.Equal(t, "127.0.0.1:27402", s.Address())
 }

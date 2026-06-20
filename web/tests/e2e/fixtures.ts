@@ -6,17 +6,17 @@ interface E2EFixtures {
 }
 
 export const test = base.extend<E2EFixtures>({
-  baseURL: 'http://127.0.0.1:8080',
-  
+  baseURL: 'http://127.0.0.1:27402',
+
   freshPage: async ({ page, baseURL }, use) => {
     // Capture console messages for debugging
-    page.on('console', msg => {
+    page.on('console', (msg) => {
       if (msg.type() === 'error' || msg.text().includes('[router]')) {
         console.log(`[BROWSER CONSOLE ${msg.type()}] ${msg.text()}`);
       }
     });
-    
-    page.on('pageerror', err => {
+
+    page.on('pageerror', (err) => {
       console.error('[BROWSER PAGE ERROR]', err.message);
     });
 

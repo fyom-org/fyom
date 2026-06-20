@@ -10,7 +10,7 @@ func TestDefaultRunOptions(t *testing.T) {
 	opts := DefaultRunOptions()
 	assert.Equal(t, RunModeServer, opts.Mode)
 	assert.Equal(t, "0.0.0.0", opts.Host)
-	assert.Equal(t, 8080, opts.Port)
+	assert.Equal(t, 27402, opts.Port)
 	assert.Equal(t, "", opts.DBPath)
 	assert.Equal(t, "", opts.LogLevel)
 	assert.Equal(t, "", opts.LogFormat)

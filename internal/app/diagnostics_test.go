@@ -14,7 +14,7 @@ import (
 func TestRun_EmitsStartupDiagnostics(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "db", "fyom.db")
 	cfg := &config.Config{
-		Server: config.Server{Host: "127.0.0.1", Port: 8080},
+		Server: config.Server{Host: "127.0.0.1", Port: 27402},
 	}
 
 	var buf bytes.Buffer
@@ -43,7 +43,7 @@ func TestStartupDiagnostics_DoNotIncludeSecrets(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 	dbPath := filepath.Join(tmpDir, "fyom.db")
 	cfg := &config.Config{
-		Server: config.Server{Host: "127.0.0.1", Port: 8080},
+		Server: config.Server{Host: "127.0.0.1", Port: 27402},
 		Auth: config.Auth{
 			JWTSecret:     "dummy-jwt-secret-token",
 			TokenExpiry:   24,

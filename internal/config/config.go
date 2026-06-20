@@ -62,7 +62,7 @@ func Load(cfgPath string) (*Config, error) {
 	// Defaults via confmap provider
 	defaults := map[string]interface{}{
 		"server.host":                        "0.0.0.0",
-		"server.port":                        8080,
+		"server.port":                        27402,
 		"server.mode":                        "release",
 		"database.db_path":                   "",
 		"database.max_open_conns":            25,
@@ -83,7 +83,7 @@ func Load(cfgPath string) (*Config, error) {
 		f := file.Provider(cfgPath)
 		if err := k.Load(f, yaml.Parser()); err != nil {
 			var pathErr *os.PathError
-	if !errors.As(err, &pathErr) {
+			if !errors.As(err, &pathErr) {
 				return nil, fmt.Errorf("read config file: %w", err)
 			}
 			// Config file not found is OK — use defaults + env

@@ -163,7 +163,7 @@ jobs:
 
           container_id="$(docker run -d \
             --name fyom-smoke-test \
-            -p 18080:8080 \
+            -p 27402:27402 \
             fyom:ci)"
 
           cleanup() {

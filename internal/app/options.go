@@ -25,7 +25,7 @@ func DefaultRunOptions() RunOptions {
 	return RunOptions{
 		Mode:      RunModeServer,
 		Host:      "0.0.0.0",
-		Port:      8080,
+		Port:      27402,
 		DBPath:    "",
 		LogLevel:  "",
 		LogFormat: "",

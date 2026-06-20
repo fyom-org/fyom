@@ -37,7 +37,7 @@ The result? A beautiful, snappy library interface that lets you decide **what to
 
 **Two modes, one binary:**
 
-- **Server/Headless** — `./fyom serve`, browser opens `http://your-server:8080`, done.
+- **Server/Headless** — `./fyom serve`, browser opens `http://your-server:27402`, done.
 - **Desktop** — Tauri shell wraps the same UI, spawns a Go sidecar, launches your favorite external player (mpv, IINA, VLC, PotPlayer — pick your weapon).
 
 ---
@@ -171,7 +171,7 @@ task build
 # Run — first boot creates admin user with random password printed to stdout
 ./build/fyom --db-path ./build/fyom.db
 
-# Open browser → http://localhost:8080/
+# Open browser → http://localhost:27402/
 ```
 
 ### Desktop Mode
@@ -212,7 +212,7 @@ task smoke
 
 ```yaml
 server:
-  addr: ":8080"
+  addr: ":27402"
 
 database:
   path: "./fyom.db"

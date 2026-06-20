@@ -8,7 +8,7 @@ Test files are under `web/tests/`
 ## Prerequisites
 
 ### Start Backend Server (Required)
-The E2E tests require a running fyom backend server on port 8080
+The E2E tests require a running fyom backend server on port 27402
 
 ```bash
 # 1. Build the Go backend
@@ -76,12 +76,12 @@ export default defineConfig({
   reporter: [['list']],
   webServer: {
     command: 'sleep 1',
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:27402',
     reuseExistingServer: true,
     timeout: 120_000,
   },
   use: {
-    baseURL: 'http://127.0.0.1:8080',
+    baseURL: 'http://127.0.0.1:27402',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -120,7 +120,7 @@ export no_proxy="localhost,127.0.0.1,::1"
 ```
 
 ### 4. Server Not Ready
-The `webServer` config in `playwright.config.ts` uses `reuseExistingServer: true` and expects server at `http://127.0.0.1:8080`.
+The `webServer` config in `playwright.config.ts` uses `reuseExistingServer: true` and expects server at `http://127.0.0.1:27402`.
 Ensure the backend is running before tests.
 
 ## Debugging Tips

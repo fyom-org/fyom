@@ -168,10 +168,10 @@ fyom/
 
 ```
 ./fyom serve --config fyom.yaml
-  -> Starts HTTP server on :8080
+  -> Starts HTTP server on :27402
   -> Serves embedded Vue frontend at /
   -> Serves REST API at /api/v1/
-  -> Browser accesses http://server:8080
+  -> Browser accesses http://server:27402
 ```
 
 The Go binary embeds the built Vue frontend via `//go:embed`. One binary, one SQLite file — no separate frontend deployment needed.
