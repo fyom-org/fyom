@@ -1261,8 +1261,97 @@ errors), `web/src/main.ts`, `web/index.html`, `pkg/response/response.go`,
 > This would be another project under [fyom-org](https://github.com/fyom-org/fyom)
 >
 
+---
 
-## Production Phase 3: Polish UI/UX & Metadata
+## Production Phase 3: Architecture Migration: Tauri to Wails ✅
+
+More info about this Phase:
+
+- [docs/move-tauri-to-wails.md](docs/move-tauri-to-wails.md)
+- [docs/local-provider-implement.md](docs/local-provider-implement.md)
+- [docs/local-provider-implement.md](docs/local-provider-implement-full-workload.md)
+
+
+> **Production Phase 3 is in progress.**
+>After this phase complete, the desktop application is a pure Go+Wails build
+>
+>perfectly aligned with the project's "media scheduler, not media proxy/monitor" philosophy. 
+
+> The Tauri/Rust shell and the Go sidecar process model have been permanently
+> deprecated. fyom Desktop now runs as a true single-binary, single-process
+> application built with Wails v2, with Go reinstated as the first-class backend
+> citizen. 
+>
+> This phase eliminated all Sidecar lifecycle management, local TCP port 
+> conflicts, and cross-language (Go-Rust) communication overhead. The Wails 
+> `AssetServer` mechanism was utilized to intercept frontend HTTP requests 
+> directly in Go memory, completely bypassing the local network stack for API calls.
+>
+> Furthermore, the `LocalProvider` playback architecture underwent a radical
+> simplification ("Lean Edition"). All IPC state synchronization, real-time
+> progress polling, and player lifecycle monitoring code were stripped out. 
+> fyom now acts purely as a credential/URI issuer and immediately detaches 
+> from the external player process.
+
+### Headline Decisions (Confirmed)
+
+- **Architecture: Unified Go Single-Process.** Wails wraps the Go backend natively. The Chi router handles both Wails internal WebView requests and headless C/S mode requests seamlessly.
+- **Zero Local TCP Ports for Desktop.** The desktop app no longer binds to `127.0.0.1:27403`. API requests from the Vue frontend are routed directly to the Chi handler via Wails' internal `http.Handler` adapter.
+- **Playback: Fire-and-Forget.** `LocalFileResolver` resolves the `file://` URI, launches the external player via `exec.Command`, and immediately returns. No IPC, no goroutines monitoring player state.
+- **Progress Tracking Delegation.** Resume playback for local desktop media is delegated entirely to the external player's native memory (e.g., mpv's `--resume-playback`). fyom only tracks manual "Watched/Unwatched" states.
+
+### Implementation Blueprint
+
+#### 1. Scaffolding & Core Integration
+- [x] Purge `src-tauri/` directory, Rust dependencies, and Tauri configuration files.
+- [x] Initialize Wails project structure (`desktop.go`, `wails.json`).
+- [ ] Bind Wails `OnStartup` and `OnShutdown` lifecycle hooks to Go's DB initialization and graceful shutdown logic.
+- [ ] Embed Vue `dist/` directory via `//go:embed` and register it with Wails `AssetServer`.
+- [ ] Enable tray for Wails in fyom desktop mode
+
+#### 2. API Routing & AssetServer Interception
+- [ ] Implement Wails custom `AssetServer` request handler.
+- [ ] Route all `/api/v1/*` requests directly to the existing Go Chi router in-memory.
+- [ ] Serve static frontend assets for all non-API routes directly from the embedded `fs.FS`.
+- [ ] Ensure frontend Vue code requires zero changes (standard `fetch('/api/v1/...')` works transparently).
+- [ ] Preserve dual-mode capability: `./fyom serve` (headless HTTP server) vs Wails desktop execution.
+
+#### 3. Build Workflow & Config Resolution
+- [x] Update `Taskfile.yml`: replace Tauri build commands with wails.
+- [x] Update `flake.nix`: remove Rust + Tauri toolchain and introduce `wails3`
+- [ ] Fix and maintain build & release workflows for all build targets.
+- [ ] Consolidate desktop player configuration into Go-native structs, loading from `fyom-desktop.json` or environment variables (`FYOM_EXTERNAL_PLAYER`, etc.) without Rust intervention.
+
+#### 4. LocalProvider Lean Playback (Direct File URI)
+- [ ] Define `PlaybackURIResolver` interface and `PlaybackInfo` struct (simplified, no IPC fields).
+- [ ] Implement `LocalFileResolver` with strict security checks: `filepath.Clean` prefix validation + `filepath.EvalSymlinks` re-validation against `AllowedRoots`.
+- [ ] Implement cross-platform `localPathToFileURI` using `url.URL` for safe percent-encoding (handling Windows drive letters `C:/` and UNC paths `//NAS/`).
+- [ ] Implement lean `PlayerInvoker`: translates `PlaybackInfo` to `exec.Command`, calls `cmd.Start()`, and immediately detaches.
+- [ ] Remove all mpv JSON RPC, Unix Socket, and Windows Named Pipe communication code.
+- [ ] Remove backend logic for real-time progress polling and `watch_progress` auto-updating during local desktop playback.
+
+
+### Positive Consequences
+
+- **Elimination of Sidecar Overhead:** No more orphaned Go processes, port conflicts (`:27403`), or `FYOM_READY` readiness signal complexities. The app starts and stops instantly.
+- **Unified Developer Experience:** The entire desktop application (frontend, backend, native OS integration) is now governed by a single language (Go) and a single build tool. Cross-language IPC debugging is permanently eliminated.
+- **Extreme Codebase Reduction:** Removing IPC state syncing, Tauri event bridges, and Rust platform-specific surface code resulted in a massive "subtraction" of maintenance burden.
+- **Seamless Cross-Compilation:** Building Windows `.exe` or macOS `.app` from Linux is now a single command, unblocked by the absence of CGO.
+
+### Negative Consequences & Mitigations
+
+- **Loss of Centralized Progress Tracking (Desktop):** Because fyom does not monitor the external player, the database will not record exact stop positions for local desktop playback.
+  - *Mitigation:* Accepted trade-off. Users rely on the external player's native resume memory. The UI provides a prominent manual "Mark as Watched" toggle. Exact progress syncing is deferred to the future Flutter native client.
+- **Slightly Larger Bundle Size:** Wails binaries include the Go runtime, making them slightly larger (10-15MB) than Tauri's ultra-small Rust bundles (3-8MB).
+  - *Mitigation:* Irrelevant for a local media catalog tool. The benefits of Go's ecosystem and development speed far outweigh a few megabytes of disk space.
+
+> 
+> **Follow-up notes:**
+> The Tauri era is officially over. The codebase is now primed for the upcoming Phase 4 (UI/UX Polish) and the eventual transition to the `Dart + Flutter` native client, which will consume the exact same REST API contract established here.
+
+
+
+## Production Phase 4: Polish UI/UX & Metadata
 
 - [ ] Per-item metadata overrides (layered override: global → library → item)
 - [ ] NFO write-back (Jellyfin-style bidirectional sync)
