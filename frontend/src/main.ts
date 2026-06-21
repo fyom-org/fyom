@@ -1,9 +1,10 @@
+import '@wailsio/runtime';
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
 import App from './App.vue';
 import router from './router';
 import './style.css';
-import { initDesktopListeners, isDesktopEnvironment } from './lib/runtime/tauri';
+import { initDesktopListeners, isDesktopEnvironment } from './lib/runtime/desktop';
 import { useUserStore } from '@/stores/user';
 import { useSystemStore } from '@/stores/system';
 import i18n from '@/plugins/i18n';

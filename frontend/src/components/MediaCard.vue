@@ -76,7 +76,7 @@ const router = useRouter();
 const { t } = useI18n();
 const hovered = ref(false);
 
-// Normalize poster URL for the current runtime (browser vs Tauri).
+// Normalize poster URL for the current runtime.
 const posterUrl = computed(() => resolveResourceUrl(props.item.poster_url));
 
 const onHover = () => {

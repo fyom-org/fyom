@@ -38,7 +38,7 @@ export type LocaleCode = 'en' | 'zh' | 'ja';
  *
  * This is the immutable lower bound — the runtime supported list is always
  * a subset of this. Adding a new locale requires:
- *  1. Drop a new `web/src/locales/<code>.json` file (mirror en.json keys).
+ *  1. Drop a new `frontend/src/locales/<code>.json` file (mirror en.json keys).
  *  2. Import it above and add it to the `messages` map.
  *  3. Add the code to this array.
  *  4. Add a label entry to `LOCALE_DISPLAY_LABELS` below.
@@ -127,7 +127,9 @@ export function setSupportedLocales(codes: readonly string[]): void {
  * selector so the selector reflects backend configuration changes without
  * a page refresh.
  */
-export const supportedLocales = computed<readonly LocaleCode[]>(() => runtimeSupportedLocales.value);
+export const supportedLocales = computed<readonly LocaleCode[]>(
+  () => runtimeSupportedLocales.value
+);
 
 /**
  * Type guard: returns true if `value` is one of the currently-supported

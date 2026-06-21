@@ -1,5 +1,5 @@
 import { ofetch } from 'ofetch';
-import { getApiBaseUrl } from '@/lib/runtime/tauri';
+import { getApiBaseUrl } from '@/lib/runtime/desktop';
 import { getCurrentLocale } from '@/composables/useLocale';
 
 export type AuthFailureMode =
@@ -48,9 +48,9 @@ export interface FyomRequestConfig {
    */
   skipAuthRedirect?: boolean;
 
-  // Standard FetchOptions passthrough
+  // Standard fetch/ofetch passthrough.
   method?: string;
-  body?: BodyInit | Record<string, unknown> | null;
+  body?: BodyInit | Record<string, unknown> | unknown[] | null;
   query?: Record<string, unknown>;
   headers?: HeadersInit;
   timeout?: number;
@@ -65,53 +65,92 @@ interface AuthEventDetail {
   url?: string;
 }
 
-const DEFAULT_TIMEOUT_MS = 10000;
-
-const apiBaseUrl = getApiBaseUrl();
-
-/**
- * Read the persisted access token.
- */
-function readToken(): string | null {
-  if (!isBrowser()) return null;
-
-  return window.localStorage.getItem('token');
-}
-
 interface HttpClientResponse<T> {
   data: T;
   status: number;
   statusText: string;
 }
 
-async function http<T>(
-  baseURL: string,
-  url: string,
-  options: FyomRequestConfig = {},
-  attachAuth = false,
-): Promise<HttpClientResponse<T>> {
-  const token = attachAuth ? readToken() : null;
+const DEFAULT_TIMEOUT_MS = 10000;
+const apiBaseUrl = getApiBaseUrl();
 
+/**
+ * Read the persisted access token.
+ */
+function readToken(): string | null {
+  if (!isBrowser()) {
+    return null;
+  }
+
+  return window.localStorage.getItem('token');
+}
+
+/**
+ * Convert HeadersInit into a mutable plain object.
+ *
+ * Important:
+ * - Do not use Headers.entries() here.
+ * - Some TS configs lack "DOM.Iterable", which makes entries() unavailable
+ *   at type level even though it exists at runtime.
+ */
+function normalizeHeaders(input?: HeadersInit): Record<string, string> {
+  const normalized: Record<string, string> = {};
+
+  if (!input) {
+    return normalized;
+  }
+
+  if (input instanceof Headers) {
+    input.forEach((value, key) => {
+      normalized[key] = value;
+    });
+
+    return normalized;
+  }
+
+  if (Array.isArray(input)) {
+    for (const [key, value] of input) {
+      normalized[key] = value;
+    }
+
+    return normalized;
+  }
+
+  for (const [key, value] of Object.entries(input)) {
+    normalized[key] = value;
+  }
+
+  return normalized;
+}
+
+function buildRequestHeaders(
+  options: FyomRequestConfig,
+  attachAuth: boolean
+): Record<string, string> {
   const headers: Record<string, string> = {};
 
-  // Accept-Language from current locale
   const locale = getCurrentLocale();
   if (locale) {
     headers['Accept-Language'] = locale;
   }
 
-  // Auth token
+  const token = attachAuth ? readToken() : null;
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  // Merge caller headers
-  if (options.headers) {
-    const callerHeaders = options.headers instanceof Headers
-      ? Object.fromEntries(options.headers.entries())
-      : (options.headers as Record<string, string>);
-    Object.assign(headers, callerHeaders);
-  }
+  Object.assign(headers, normalizeHeaders(options.headers));
+
+  return headers;
+}
+
+async function http<T>(
+  baseURL: string,
+  url: string,
+  options: FyomRequestConfig = {},
+  attachAuth = false
+): Promise<HttpClientResponse<T>> {
+  const headers = buildRequestHeaders(options, attachAuth);
 
   try {
     const response = await ofetch.raw<T>(url, {
@@ -137,47 +176,82 @@ async function http<T>(
 }
 
 function createHttpClient(attachAuth: boolean) {
-  const client = {
+  return {
     async get<T>(url: string, options?: FyomRequestConfig): Promise<HttpClientResponse<T>> {
-      return http<T>(apiBaseUrl, url, {
-        ...options,
-        method: 'GET',
-      }, attachAuth);
+      return http<T>(
+        apiBaseUrl,
+        url,
+        {
+          ...options,
+          method: 'GET',
+        },
+        attachAuth
+      );
     },
 
-    async post<T>(url: string, body?: unknown, options?: FyomRequestConfig): Promise<HttpClientResponse<T>> {
-      return http<T>(apiBaseUrl, url, {
-        ...options,
-        method: 'POST',
-        body: body as BodyInit | Record<string, unknown> | null,
-      }, attachAuth);
+    async post<T>(
+      url: string,
+      body?: unknown,
+      options?: FyomRequestConfig
+    ): Promise<HttpClientResponse<T>> {
+      return http<T>(
+        apiBaseUrl,
+        url,
+        {
+          ...options,
+          method: 'POST',
+          body: body as FyomRequestConfig['body'],
+        },
+        attachAuth
+      );
     },
 
-    async put<T>(url: string, body?: unknown, options?: FyomRequestConfig): Promise<HttpClientResponse<T>> {
-      return http<T>(apiBaseUrl, url, {
-        ...options,
-        method: 'PUT',
-        body: body as BodyInit | Record<string, unknown> | null,
-      }, attachAuth);
+    async put<T>(
+      url: string,
+      body?: unknown,
+      options?: FyomRequestConfig
+    ): Promise<HttpClientResponse<T>> {
+      return http<T>(
+        apiBaseUrl,
+        url,
+        {
+          ...options,
+          method: 'PUT',
+          body: body as FyomRequestConfig['body'],
+        },
+        attachAuth
+      );
     },
 
-    async patch<T>(url: string, body?: unknown, options?: FyomRequestConfig): Promise<HttpClientResponse<T>> {
-      return http<T>(apiBaseUrl, url, {
-        ...options,
-        method: 'PATCH',
-        body: body as BodyInit | Record<string, unknown> | null,
-      }, attachAuth);
+    async patch<T>(
+      url: string,
+      body?: unknown,
+      options?: FyomRequestConfig
+    ): Promise<HttpClientResponse<T>> {
+      return http<T>(
+        apiBaseUrl,
+        url,
+        {
+          ...options,
+          method: 'PATCH',
+          body: body as FyomRequestConfig['body'],
+        },
+        attachAuth
+      );
     },
 
     async delete<T>(url: string, options?: FyomRequestConfig): Promise<HttpClientResponse<T>> {
-      return http<T>(apiBaseUrl, url, {
-        ...options,
-        method: 'DELETE',
-      }, attachAuth);
+      return http<T>(
+        apiBaseUrl,
+        url,
+        {
+          ...options,
+          method: 'DELETE',
+        },
+        attachAuth
+      );
     },
   };
-
-  return client;
 }
 
 /**
@@ -196,7 +270,9 @@ function createHttpClient(attachAuth: boolean) {
 function handleAuthFailure(error: unknown, config?: FyomRequestConfig): void {
   const status = getErrorStatus(error);
 
-  if (!status) return;
+  if (!status) {
+    return;
+  }
 
   const mode = resolveAuthFailureMode(config);
 
@@ -242,9 +318,16 @@ function handleAuthFailure(error: unknown, config?: FyomRequestConfig): void {
 function getErrorStatus(error: unknown): number | undefined {
   if (typeof error === 'object' && error !== null) {
     const err = error as { response?: { status?: number }; status?: number };
-    if (err.response?.status !== undefined) return err.response.status;
-    if (typeof err.status === 'number') return err.status;
+
+    if (err.response?.status !== undefined) {
+      return err.response.status;
+    }
+
+    if (typeof err.status === 'number') {
+      return err.status;
+    }
   }
+
   return undefined;
 }
 
@@ -264,7 +347,9 @@ function resolveAuthFailureMode(config?: FyomRequestConfig): AuthFailureMode {
 }
 
 function dispatchAuthEvent(eventName: string, detail: AuthEventDetail): void {
-  if (!isBrowser()) return;
+  if (!isBrowser()) {
+    return;
+  }
 
   window.dispatchEvent(
     new CustomEvent<AuthEventDetail>(eventName, {

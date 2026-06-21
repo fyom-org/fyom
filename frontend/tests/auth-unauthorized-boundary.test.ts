@@ -1,7 +1,7 @@
 /**
  * Auth invalidation boundary tests.
  *
- * Validates that the shouldInvalidateSession logic in web/src/api/request.ts
+ * Validates that the shouldInvalidateSession logic in frontend/src/api/request.ts
  * correctly distinguishes auth-truth endpoints from business/resource endpoints.
  *
  * In axios, config.url is the relative path (before baseURL merging).
