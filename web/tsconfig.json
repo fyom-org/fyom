@@ -3,7 +3,7 @@
     "target": "es2023",
     "module": "esnext",
     "lib": ["ES2023", "DOM"],
-    "types": ["vite/client", "@tauri-apps/api", "vitest/globals", "node", "@playwright/test"],
+    "types": ["vite/client", "vitest/globals", "node", "@playwright/test"],
     "skipLibCheck": true,
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
@@ -17,9 +17,9 @@
     "noFallthroughCasesInSwitch": true,
     "paths": {
       "@/*": ["./src/*"],
-      "@e2e/*": ["./tests/e2e/*"]
+      "@e2e/*": ["./tests/e2e/*"],
     },
   },
   "include": ["src", "tests"],
-  "exclude": ["tests/*.e2e.test.ts", "tests/e2e/**"]
+  "exclude": ["tests/*.e2e.test.ts", "tests/e2e/**"],
 }
