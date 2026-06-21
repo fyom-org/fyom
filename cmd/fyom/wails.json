@@ -1,13 +1,10 @@
 {
-  "$schema": "https://wails.io/schemas/config.v2.json",
   "name": "fyom",
-  "outputfilename": "fyom",
-  "frontend:install": "cd ../../web && pnpm install",
-  "frontend:build": "cd ../../web && pnpm run build",
-  "frontend:dev:watcher": "cd ../../web && pnpm run dev",
-  "frontend:dev:serverUrl": "auto",
-  "author": {
-    "name": "fyom",
-    "email": ""
+  "frontend": {
+    "dir": "../../frontend",
+    "install": "pnpm install",
+    "build": "pnpm run build",
+    "dev": "pnpm run dev",
+    "devServerUrl": "http://localhost:5173"
   }
 }
