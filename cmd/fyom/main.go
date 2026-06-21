@@ -11,10 +11,6 @@ import (
 	"github.com/fyom/fyom/internal/app"
 )
 
-// desktopRuntime is set by runDesktop and read by the Wails shutdown hook
-// in desktop.go. It is nil in serve mode.
-var desktopRuntime *app.DesktopRuntime
-
 func main() {
 	logLevel := flag.String("log-level", "", "log level: debug, info, warn, error")
 	logFormat := flag.String("log-format", "", "log format: text, json")
