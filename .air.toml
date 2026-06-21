@@ -2,12 +2,12 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-  cmd = "cd web && pnpm run build && CGO_ENABLED=0 go build -ldflags \"-s -w\" -o ../tmp/fyom ../cmd/fyom"
+  cmd = "cd frontend && pnpm run build && CGO_ENABLED=0 go build -ldflags \"-s -w\" -o ../tmp/fyom ../cmd/fyom"
   delay = 1500
   entrypoint = "./tmp/fyom"
-  exclude_dir = ["web/src", "web/node_modules", "tmp", "build", "data"]
+  exclude_dir = ["frontend/src", "frontend/node_modules", "tmp", "build", "data"]
   include_ext = ["go", "yaml", "sql", "mod", "sum"]
-  include_dir = ["web/dist"]
+  include_dir = ["frontend/dist"]
   log = "air-build-errors.log"
 
 [env]

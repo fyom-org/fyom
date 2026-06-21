@@ -1,10 +1,10 @@
 # Build
-/build/
 /dist/
 *.exe
 *.dll
 *.so
 *.dylib
+.task/
 
 # Go
 *.test
@@ -27,9 +27,9 @@ Thumbs.db
 
 # Frontend
 node_modules/
-web/node_modules/
-web/dist/
-web/.vite/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
 
 # Config (local overrides)
 fyom.local.yaml
@@ -38,17 +38,11 @@ configs/fyom.local.yaml
 # Air / Taskfile
 tmp/
 
-# Tauri
-src-tauri/target/
-
 # Direnv
 .direnv/
 
 # Nix develop profile
 result/
-
-# Cargo gen
-src-tauri/gen/
 
 # Release artifacts
 /release/
@@ -61,5 +55,5 @@ src-tauri/gen/
 .env
 .env.*
 !.env.example
-web/tests/__screenshots__/
-web/test-results/
+frontend/tests/__screenshots__/
+frontend/test-results/

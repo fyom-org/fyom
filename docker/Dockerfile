@@ -16,61 +16,51 @@ ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_TIME=unknown
 
-# Build the embedded web assets first, then build a static Linux server binary.
-ARG BUILD_COMMAND="cd web && pnpm install --frozen-lockfile && pnpm run build && cd .. && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o tmp/fyom ./cmd/fyom"
-
 ENV VERSION=${VERSION}
 ENV COMMIT=${COMMIT}
 ENV BUILD_TIME=${BUILD_TIME}
-ENV BUILD_COMMAND=${BUILD_COMMAND}
 
 COPY . .
 
+# Build a Linux server/container binary.
+#
+# Important:
+# - This is not the Wails desktop build.
+# - Container runtime should not depend on WebKitGTK/GTK.
+# - CGO_ENABLED=0 keeps the binary suitable for Alpine runtime.
+# - Output goes to dist/, not build/ or tmp/.
 RUN --mount=type=cache,target=/root/.cache \
-    --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/root/.local/share/pnpm/store \
     --mount=type=cache,target=/root/go/pkg/mod \
     set -eux; \
     nix develop --command bash -lc '\
       set -euo pipefail; \
       export CI=true; \
-      echo "Running build command: ${BUILD_COMMAND}"; \
-      eval "${BUILD_COMMAND}"; \
+      export CGO_ENABLED=0; \
+      export GOOS=linux; \
+      export GOARCH=amd64; \
+      mkdir -p dist; \
+      pnpm -C frontend install --frozen-lockfile; \
+      pnpm -C frontend run build; \
+      if [ -x scripts/delete-sourcemaps.js ] || [ -f scripts/delete-sourcemaps.js ]; then \
+        node scripts/delete-sourcemaps.js frontend/dist; \
+      fi; \
+      go build \
+        -trimpath \
+        -tags server \
+        -ldflags "-s -w \
+          -X github.com/fyom/fyom/internal/version.Version=${VERSION} \
+          -X github.com/fyom/fyom/internal/version.Commit=${COMMIT} \
+          -X github.com/fyom/fyom/internal/version.BuildTime=${BUILD_TIME}" \
+        -o dist/fyom \
+        ./cmd/fyom; \
     '
 
 RUN set -eux; \
+    test -f /src/dist/fyom; \
+    test -x /src/dist/fyom; \
     mkdir -p /out; \
-    candidate=""; \
-    for path in \
-      "./tmp/fyom" \
-      "./bin/fyom" \
-      "./dist/fyom" \
-      "./build/fyom" \
-      "./target/x86_64-unknown-linux-musl/release/fyom" \
-      "./target/release/fyom" \
-      "./src-tauri/target/release/fyom" \
-      "./fyom"; \
-    do \
-      if [ -f "$path" ] && [ -x "$path" ]; then \
-        candidate="$path"; \
-        break; \
-      fi; \
-    done; \
-    if [ -z "$candidate" ]; then \
-      candidate="$(find . -type f -name fyom -perm -111 \
-        ! -path './.git/*' \
-        ! -path './result/*' \
-        ! -path './node_modules/*' \
-        ! -path './web/node_modules/*' \
-        | sort \
-        | head -n 1 || true)"; \
-    fi; \
-    if [ -z "$candidate" ]; then \
-      echo "Unable to locate executable named fyom after build." >&2; \
-      find . -maxdepth 5 -type f -perm -111 | sort | sed 's#^\./##' | head -n 200 >&2 || true; \
-      exit 1; \
-    fi; \
-    cp "$candidate" /out/fyom; \
+    cp /src/dist/fyom /out/fyom; \
     chmod 0755 /out/fyom; \
     if command -v strip >/dev/null 2>&1; then \
       strip /out/fyom || true; \

@@ -3,17 +3,16 @@
 
 # Node / pnpm
 node_modules
-web/node_modules
+frontend/node_modules
 .pnpm-store
-web/.pnpm-store
+frontend/.pnpm-store
 
 # Build outputs
 dist
 build
 target
-src-tauri/target
-web/dist
-web/build
+frontend/dist
+frontend/build
 tmp
 
 # Nix outputs

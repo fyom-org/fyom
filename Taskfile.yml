@@ -1,9 +1,16 @@
 version: "3"
 
+includes:
+  common: ./build/Taskfile.yml
+
 vars:
+  APP_NAME: fyom
   BINARY_NAME: fyom
-  BUILD_DIR: ./build
+  BIN_DIR: dist
+  BUILD_DIR: ./dist
   CMD_PATH: ./cmd/fyom
+  PACKAGE_MANAGER: pnpm
+  VITE_PORT: "{{.WAILS_VITE_PORT | default 9245}}"
 
   VERSION: '{{default "dev" .VERSION}}'
   COMMIT: '{{default "unknown" .COMMIT}}'
@@ -17,7 +24,7 @@ vars:
 
   CLEAN_PATHS: >-
     {{.BUILD_DIR}}
-    web/dist
+    frontend/dist
     tmp/
     data/
     coverage.out
@@ -30,20 +37,156 @@ tasks:
       - task -a
 
   # ================================================
+  # Wails v3 entrypoints
+  # ================================================
+
+  build:
+    desc: "Build Wails v3 desktop application for current OS"
+    deps:
+      - _ensure:wails3
+    cmds:
+      - task: "{{OS}}:build"
+        vars:
+          DEV: '{{default "false" .DEV}}'
+          EXTRA_TAGS: '{{default "" .EXTRA_TAGS}}'
+          BUILD_FLAGS: '{{default "" .BUILD_FLAGS}}'
+          OBFUSCATED: '{{default "false" .OBFUSCATED}}'
+
+  dev:
+    desc: "Run Wails v3 desktop dev mode"
+    deps:
+      - _ensure:wails3
+    cmds:
+      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+
+  run:
+    desc: "Run built desktop binary"
+    cmds:
+      - ./{{.BIN_DIR}}/{{.APP_NAME}}
+
+  package:
+    desc: "Package application for current OS"
+    deps:
+      - build
+    cmds:
+      - task: "{{OS}}:package"
+
+  build:desktop:
+    desc: "Alias for Wails desktop build"
+    cmds:
+      - task: build
+
+  dev:desktop:
+    desc: "Alias for Wails desktop dev mode"
+    cmds:
+      - task: dev
+
+  # ================================================
+  # Linux Wails hook
+  # ================================================
+
+  linux:build:
+    desc: "Wails v3 hook: build Linux desktop binary"
+    deps:
+      - task: common:build:frontend
+        vars:
+          DEV: '{{default "false" .DEV}}'
+          PACKAGE_MANAGER: "{{.PACKAGE_MANAGER}}"
+          BUILD_FLAGS: '{{default "" .BUILD_FLAGS}}'
+          OBFUSCATED: '{{default "false" .OBFUSCATED}}'
+    cmds:
+      - |
+        bash <<'EOF'
+        set -euo pipefail
+
+        mkdir -p "{{.BIN_DIR}}"
+
+        args=()
+
+        if [ -n "{{.EXTRA_TAGS}}" ]; then
+          args+=(-tags "{{.EXTRA_TAGS}}")
+          echo "Go build tags: {{.EXTRA_TAGS}}"
+        fi
+
+        if [ -n "{{.BUILD_FLAGS}}" ]; then
+          # shellcheck disable=SC2206
+          build_flags=( {{.BUILD_FLAGS}} )
+          args+=("${build_flags[@]}")
+        fi
+
+        echo "Building Linux Wails desktop binary..."
+        echo "  package: {{.CMD_PATH}}"
+        echo "  output:  {{.BIN_DIR}}/{{.APP_NAME}}"
+
+        CGO_ENABLED=1 go build \
+          "${args[@]}" \
+          -ldflags "{{.LD_FLAGS}}" \
+          -o "{{.BIN_DIR}}/{{.APP_NAME}}" \
+          "{{.CMD_PATH}}"
+
+        echo "Linux desktop build complete:"
+        echo "  {{.BIN_DIR}}/{{.APP_NAME}}"
+        EOF
+
+  linux:run:
+    desc: "Run Linux desktop binary"
+    deps:
+      - linux:build
+    cmds:
+      - ./{{.BIN_DIR}}/{{.APP_NAME}}
+
+  linux:package:
+    desc: "Create simple Linux tar.gz package"
+    deps:
+      - linux:build
+    cmds:
+      - task: build:tarball
+
+  # ================================================
   # Internal helpers
   # ================================================
 
-  _build:binary:
+  _ensure:wails3:
     internal: true
+    desc: "Ensure wails3 CLI is available"
+    cmds:
+      - |
+        bash <<'EOF'
+        set -euo pipefail
+
+        if command -v wails3 >/dev/null 2>&1; then
+          echo "wails3 found: $(command -v wails3)"
+          wails3 --help >/dev/null
+          exit 0
+        fi
+
+        if [ -x "$HOME/go/bin/wails3" ]; then
+          export PATH="$HOME/go/bin:$PATH"
+          echo "wails3 found: $(command -v wails3)"
+          wails3 --help >/dev/null
+          exit 0
+        fi
+
+        echo "wails3 CLI not found."
+        echo
+        echo "Install with one of:"
+        echo "  nix develop"
+        echo "  go install github.com/wailsapp/wails/v3/cmd/wails3@latest"
+        echo
+        exit 1
+        EOF
+
+  _build:backend:
+    internal: true
+    deps:
+      - build:frontend:dist
     cmds:
       - mkdir -p "{{.BUILD_DIR}}"
       - >
-        go build
+        CGO_ENABLED=0 go build
         -ldflags "{{.LD_FLAGS}}"
         -o "{{.BUILD_DIR}}/{{.BINARY_NAME}}"
         "{{.CMD_PATH}}"
-    env:
-      CGO_ENABLED: "0"
 
   _go:packages:
     internal: true
@@ -66,11 +209,12 @@ tasks:
 
         load_go_packages() {
           packages_file="$(mktemp)"
+
           if ! go list ./... > "$packages_file"; then
             echo
             echo "go list ./... failed."
-            echo "If the error mentions web/embed.go or go:embed, ensure web/dist exists."
-            echo "Try: task build:web:dist"
+            echo "If the error mentions frontend/embed.go or go:embed, ensure frontend/dist exists."
+            echo "Try: task build:frontend:dist"
             exit 1
           fi
 
@@ -79,7 +223,7 @@ tasks:
           filtered=()
           for package in "${packages[@]}"; do
             case "$package" in
-              *web/node_modules*)
+              *frontend/node_modules*)
                 continue
                 ;;
             esac
@@ -143,19 +287,15 @@ tasks:
           test)
             run_go_tests
             ;;
-
           race)
             run_go_race_tests
             ;;
-
           coverage)
             run_go_coverage
             ;;
-
           lint)
             run_go_lint
             ;;
-
           *)
             echo "Unknown Go package mode: $mode"
             exit 1
@@ -168,7 +308,7 @@ tasks:
   _test:playwright:run:
     internal: true
     desc: "Run Playwright-related command with shared environment"
-    dir: web
+    dir: frontend
     cmds:
       - "{{.PLAYWRIGHT_CMD}}"
     env:
@@ -178,90 +318,51 @@ tasks:
       no_proxy: "localhost,127.0.0.1,::1"
 
   # ================================================
-  # Build
+  # Backend / frontend build
   # ================================================
 
-  build:
+  build:backend:
     desc: "Build fyom backend binary with embedded frontend"
-    deps:
-      - build:web:dist
     cmds:
-      - task: _build:binary
+      - task: _build:backend
 
-  build:web:
+  build:frontend:
     desc: "Build frontend for production"
     deps:
-      - build:web:install
-    dir: web
+      - build:frontend:install
+    dir: frontend
     cmds:
       - pnpm run build:full
       - node ../scripts/delete-sourcemaps.js dist
 
-  build:web:install:
+  build:frontend:install:
     desc: "Install frontend dependencies"
-    dir: web
+    dir: frontend
     cmds:
       - pnpm install --frozen-lockfile
 
-  build:web:dist:
+  build:frontend:dist:
     desc: "Ensure compiled frontend dist exists for Go embed"
     deps:
-      - build:web:install
+      - build:frontend:install
     cmds:
       - |
         bash <<'EOF'
         set -euo pipefail
 
-        if [ -f "web/dist/index.html" ]; then
-          echo "web/dist already exists."
+        if [ -f "frontend/dist/index.html" ]; then
+          echo "frontend/dist already exists."
           exit 0
         fi
 
-        echo "web/dist is missing; building frontend for Go embed."
-        task build:web
-        EOF
-
-  build:desktop:
-    desc: "Build Wails desktop application"
-    deps:
-      - build:web:dist
-    cmds:
-      - |
-        bash <<'EOF'
-        set -euo pipefail
-
-        # Ensure wails CLI is available.
-        if ! command -v wails &> /dev/null; then
-          if [ -x "/root/go/bin/wails" ]; then
-            export PATH="/root/go/bin:$PATH"
-          else
-            echo "Wails CLI not found. Install it with:"
-            echo "  go install github.com/wailsapp/wails/v2/cmd/wails@latest"
-            exit 1
-          fi
-        fi
-
-        # Check if webkit2gtk-4.0 is available via pkg-config.
-        # Wails requires this for the WebView on Linux.
-        if ! pkg-config --exists webkit2gtk-4.0 2>/dev/null; then
-          echo "webkit2gtk-4.0 not found via pkg-config."
-          echo "Wails desktop build requires webkit2gtk-4.0 development files."
-          echo "Install with: nix-shell -p webkitgtk_4_0 (or system package manager)"
-          echo ""
-          echo "Verifying Go compilation with Wails dependencies instead..."
-          cd cmd/fyom && go build -tags wails -o /dev/null ./... 2>&1
-          echo "Go compilation with Wails tags: OK"
-          exit 0
-        fi
-
-        # Build the Wails desktop application.
-        echo "Building Wails desktop application..."
-        cd cmd/fyom && wails build -platform linux/amd64 -ldflags "-s -w" -s -skipbindings
-        echo "Desktop build complete."
+        echo "frontend/dist is missing; building frontend for Go embed."
+        task build:frontend
         EOF
 
   build:tarball:
     desc: "Build Linux tar.gz artifact"
+    deps:
+      - build:backend
     cmds:
       - |
         bash <<'EOF'
@@ -271,7 +372,7 @@ tasks:
 
         if [ ! -f "$binary" ]; then
           echo "Binary not found: $binary"
-          echo "Run: task build"
+          echo "Run: task build:backend"
           exit 1
         fi
 
@@ -280,54 +381,35 @@ tasks:
 
         cp "$binary" release/fyom-linux-x86_64/
         tar -czf release/fyom-linux-x86_64.tar.gz -C release fyom-linux-x86_64
+
+        echo "Created release/fyom-linux-x86_64.tar.gz"
         EOF
 
   # ================================================
-  # Development & Preview
+  # Development and preview
   # ================================================
 
-  dev:
-    desc: "Run Go backend with embedded web assets and Air hot-reload"
+  dev:backend:
+    desc: "Run Go backend with embedded frontend assets and Air hot-reload"
     cmds:
       - air -c .air.toml
 
-  dev:desktop:
-    desc: "Run Wails desktop dev mode"
-    deps:
-      - build:web:dist
-    cmds:
-      - |
-        bash <<'EOF'
-        set -euo pipefail
-
-        if ! command -v wails &> /dev/null; then
-          if [ -x "/root/go/bin/wails" ]; then
-            export PATH="/root/go/bin:$PATH"
-          else
-            echo "Wails CLI not found. Install it with:"
-            echo "  go install github.com/wailsapp/wails/v2/cmd/wails@latest"
-            exit 1
-          fi
-        fi
-
-        echo "Starting Wails desktop dev mode..."
-        cd cmd/fyom && wails dev
-        EOF
-
-  dev:web:
+  dev:frontend:
     desc: "Run Vite dev server"
-    dir: web
+    dir: frontend
     cmds:
       - pnpm run dev -- --host
 
   preview:
     desc: "Run Go backend preview"
+    deps:
+      - build:frontend:dist
     cmds:
-      - CGO_ENABLED=0 go run cmd/fyom/main.go --db-path ./build/fyom.db
+      - CGO_ENABLED=0 go run cmd/fyom/main.go --db-path ./dist/fyom.db
 
-  preview:web:
+  preview:frontend:
     desc: "Run Vite preview server"
-    dir: web
+    dir: frontend
     cmds:
       - pnpm run preview
 
@@ -345,12 +427,12 @@ tasks:
     desc: "Run language linters"
     deps:
       - lint:go
-      - lint:web
+      - lint:frontend
 
   lint:go:
     desc: "Run Go linter for project packages"
     deps:
-      - build:web:dist
+      - build:frontend:dist
     cmds:
       - task: _go:packages
         vars:
@@ -363,21 +445,21 @@ tasks:
     cmds:
       - golangci-lint config verify
 
-  lint:web:
-    desc: "Run ESLint for web"
-    dir: web
+  lint:frontend:
+    desc: "Run ESLint for frontend"
+    dir: frontend
     cmds:
       - pnpm lint
 
-  lint:web:fix:
-    desc: "Run ESLint auto-fix for web"
-    dir: web
+  lint:frontend:fix:
+    desc: "Run ESLint auto-fix"
+    dir: frontend
     cmds:
       - pnpm lint:fix
 
-  lint:web:trace:
+  lint:frontend:trace:
     desc: "Run ESLint with Node deprecation trace"
-    dir: web
+    dir: frontend
     cmds:
       - pnpm lint
     env:
@@ -388,15 +470,15 @@ tasks:
   # ================================================
 
   test:
-    desc: "Run all tests for backend and web frontend"
+    desc: "Run all tests for backend and frontend frontend"
     deps:
       - test:go
-      - test:web
+      - test:frontend
 
   test:coverage:
     desc: "Run Go coverage for project packages"
     deps:
-      - build:web:dist
+      - build:frontend:dist
     cmds:
       - task: _go:packages
         vars:
@@ -407,7 +489,7 @@ tasks:
   test:go:
     desc: "Run all Go tests for project packages"
     deps:
-      - build:web:dist
+      - build:frontend:dist
     cmds:
       - task: _go:packages
         vars:
@@ -430,7 +512,7 @@ tasks:
           PLAYWRIGHT_CMD: pnpm exec playwright test
 
   test:playwright-headless:
-    desc: "Run frontend Vitest Browser Mode tests with Playwright"
+    desc: "Run frontend Vitest Browser Mode tests with Playwright headless"
     cmds:
       - task: _test:playwright:run
         vars:
@@ -439,7 +521,7 @@ tasks:
   test:race:
     desc: "Run Go race tests for project packages"
     deps:
-      - build:web:dist
+      - build:frontend:dist
     cmds:
       - task: _go:packages
         vars:
@@ -452,9 +534,9 @@ tasks:
     cmds:
       - bash scripts/smoke_test.sh
 
-  test:web:
-    desc: "Run web tests"
-    dir: web
+  test:frontend:
+    desc: "Run frontend tests"
+    dir: frontend
     cmds:
       - pnpm run test
 
@@ -471,8 +553,13 @@ tasks:
   ci:build:
     desc: "Run CI build suite"
     cmds:
-      - task build
+      - task build:backend
       - task build:tarball
+
+  ci:desktop:
+    desc: "Run desktop build"
+    cmds:
+      - task build
 
   ci:quality:
     desc: "Run CI quality gates without producing release artifacts"
@@ -485,6 +572,6 @@ tasks:
   # ================================================
 
   clean:
-    desc: "Remove build artifacts and temp files"
+    desc: "Remove generated artifacts"
     cmds:
       - rm -rf {{.CLEAN_PATHS}}
