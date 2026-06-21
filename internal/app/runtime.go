@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -158,4 +159,16 @@ func (r *DesktopRuntime) Router() *server.Server {
 		return nil
 	}
 	return r.router
+}
+
+// HTTPHandler returns the Chi router as an http.Handler for in-process
+// request dispatching via Wails AssetServer.
+func (r *DesktopRuntime) HTTPHandler() http.Handler {
+	if r == nil {
+		return nil
+	}
+	if r.router == nil {
+		return nil
+	}
+	return r.router.Router()
 }

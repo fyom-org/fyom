@@ -19,8 +19,12 @@ func runDesktopWithRuntime(_ context.Context, rt *app.DesktopRuntime) error {
 		return fmt.Errorf("desktop runtime is nil")
 	}
 
-	// Create static asset handler from embedded frontend dist.
-	assetHandler := desktop.NewStaticAssetHandler(web.Dist)
+	// Create the composite asset server handler:
+	//   /api/v1/* → Chi router (in-process)
+	//   everything else → embedded Vue static assets with SPA fallback
+	apiHandler := rt.HTTPHandler()
+	staticHandler := desktop.NewStaticAssetHandler(web.Dist)
+	assetHandler := desktop.NewAssetServerHandler(apiHandler, staticHandler)
 
 	wailsApp := application.New(application.Options{
 		Name:        "fyom",
