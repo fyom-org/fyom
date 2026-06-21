@@ -53,11 +53,9 @@ tasks:
           OBFUSCATED: '{{default "false" .OBFUSCATED}}'
 
   dev:
-    desc: "Run Wails v3 desktop dev mode"
-    deps:
-      - _ensure:wails3
+    desc: "Run Go backend with Air hot-reload (server mode)"
     cmds:
-      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+      - task: dev:backend
 
   run:
     desc: "Run built desktop binary"
@@ -77,9 +75,11 @@ tasks:
       - task: build
 
   dev:desktop:
-    desc: "Alias for Wails desktop dev mode"
+    desc: "Run Wails v3 desktop dev mode"
+    deps:
+      - _ensure:wails3
     cmds:
-      - task: dev
+      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
 
   # ================================================
   # Linux Wails hook
