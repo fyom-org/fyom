@@ -398,6 +398,36 @@ tasks:
         EOF
 
   # ================================================
+  # Docker build
+  # ================================================
+
+  build:docker:
+    desc: "Build fyom production Docker image from repository root"
+    cmds:
+      - >
+        docker build
+        --progress=plain
+        -f docker/Dockerfile
+        --build-arg VERSION={{.VERSION}}
+        --build-arg COMMIT={{.COMMIT}}
+        --build-arg BUILD_TIME={{.BUILD_TIME}}
+        -t fyom:{{.VERSION}}
+        .
+
+  build:docker:dev:
+    desc: "Build fyom dev Docker image from repository root"
+    cmds:
+      - >
+        docker build
+        --progress=plain
+        -f docker/Dockerfile
+        --build-arg VERSION={{.VERSION}}
+        --build-arg COMMIT={{.COMMIT}}
+        --build-arg BUILD_TIME={{.BUILD_TIME}}
+        -t fyom:{{.VERSION}}
+        .
+
+  # ================================================
   # Development and preview
   # ================================================
 

@@ -1,4 +1,21 @@
 # syntax=docker/dockerfile:1.25.0
+#
+# Build from repository root:
+#
+#   docker build -f docker/Dockerfile -t fyom:dev .
+#
+# Do not run:
+#
+#   docker build ./docker
+#
+# because this Dockerfile needs repository-root files such as:
+#   go.mod
+#   flake.nix
+#   frontend/
+#   cmd/
+#   internal/
+#   configs/fyom.yaml
+#   docker/entrypoint.sh
 
 ARG NIX_IMAGE=nixos/nix:2.32.8
 ARG RUNTIME_IMAGE=alpine:3.24.1
@@ -24,27 +41,61 @@ COPY . .
 
 # Build a Linux server/container binary.
 #
-# Important:
-# - This is not the Wails desktop build.
-# - Container runtime should not depend on WebKitGTK/GTK.
+# Invariants:
+# - This is NOT the Wails desktop build.
+# - Container binary must not depend on GTK/WebKit.
 # - CGO_ENABLED=0 keeps the binary suitable for Alpine runtime.
-# - Output goes to dist/, not build/ or tmp/.
+# - build/ is Wails configuration, not output.
+# - Output goes to dist/fyom.
 RUN --mount=type=cache,target=/root/.cache \
     --mount=type=cache,target=/root/.local/share/pnpm/store \
     --mount=type=cache,target=/root/go/pkg/mod \
     set -eux; \
     nix develop --command bash -lc '\
-      set -euo pipefail; \
+      set -euxo pipefail; \
       export CI=true; \
       export CGO_ENABLED=0; \
       export GOOS=linux; \
       export GOARCH=amd64; \
-      mkdir -p dist; \
+      echo "== Environment =="; \
+      node --version; \
+      pnpm --version; \
+      go version; \
+      echo "VERSION=${VERSION}"; \
+      echo "COMMIT=${COMMIT}"; \
+      echo "BUILD_TIME=${BUILD_TIME}"; \
+      echo; \
+      echo "== Sanity check paths =="; \
+      test -f go.mod; \
+      test -f frontend/package.json; \
+      test -d cmd/fyom; \
+      grep -R "web/dist\|web/" -n . \
+        --exclude-dir=.git \
+        --exclude-dir=node_modules \
+        --exclude-dir=dist \
+        --exclude-dir=tmp \
+        --exclude-dir=result \
+        || true; \
+      echo; \
+      echo "== Install frontend dependencies =="; \
       pnpm -C frontend install --frozen-lockfile; \
-      pnpm -C frontend run build; \
-      if [ -x scripts/delete-sourcemaps.js ] || [ -f scripts/delete-sourcemaps.js ]; then \
+      echo; \
+      echo "== Build frontend =="; \
+      if node -e "const s=require(\"./frontend/package.json\").scripts||{}; process.exit(s[\"build:full\"] ? 0 : 1)"; then \
+        pnpm -C frontend run build:full; \
+      else \
+        pnpm -C frontend run build; \
+      fi; \
+      test -f frontend/dist/index.html; \
+      if [ -f scripts/delete-sourcemaps.js ]; then \
         node scripts/delete-sourcemaps.js frontend/dist; \
       fi; \
+      echo; \
+      echo "== Check Go packages =="; \
+      go list ./cmd/fyom; \
+      echo; \
+      echo "== Build server binary =="; \
+      mkdir -p dist; \
       go build \
         -trimpath \
         -tags server \
@@ -54,6 +105,7 @@ RUN --mount=type=cache,target=/root/.cache \
           -X github.com/fyom/fyom/internal/version.BuildTime=${BUILD_TIME}" \
         -o dist/fyom \
         ./cmd/fyom; \
+      test -x dist/fyom; \
     '
 
 RUN set -eux; \
