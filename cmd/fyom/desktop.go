@@ -1,20 +1,28 @@
-// Package main — desktop entry point for Wails integration.
+//go:build desktop && !server && !ios && !android
+
+// Package main contains the fyom desktop entry point.
 package main
 
 import (
 	"context"
 	"fmt"
+	"log"
 
 	web "github.com/fyom/fyom/frontend"
 	"github.com/fyom/fyom/internal/app"
 	"github.com/fyom/fyom/internal/desktop"
-	"github.com/wailsapp/wails/v2/pkg/application"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-func runDesktopWithRuntime(ctx context.Context, rt *app.Runtime) error {
+func runDesktopWithRuntime(_ context.Context, rt *app.Runtime) error {
+	if rt == nil {
+		return fmt.Errorf("desktop runtime is nil")
+	}
+
+	if rt.Router == nil {
+		return fmt.Errorf("desktop runtime router is nil")
+	}
+
 	handler, err := desktop.NewHandler(desktop.HandlerOptions{
 		APIPrefix: "/api/v1/",
 		API:       rt.Router,
@@ -24,25 +32,37 @@ func runDesktopWithRuntime(ctx context.Context, rt *app.Runtime) error {
 		return fmt.Errorf("create desktop handler: %w", err)
 	}
 
-	wailsApp := application.NewWithOptions(&options.App{
+	wailsApp := application.New(application.Options{
+		Name:        "fyom",
+		Description: "fyom desktop application",
+		Assets: application.AssetOptions{
+			Handler: handler,
+		},
+	})
+
+	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:   "main",
 		Title:  "fyom",
 		Width:  1280,
 		Height: 800,
-		AssetServer: &assetserver.Options{
-			Assets:  web.Dist,
-			Handler: handler,
-		},
-		OnStartup: func(ctx context.Context) {
-			runtime.LogInfo(ctx, "fyom desktop started; serving API in-process via Wails")
-		},
-		OnShutdown: func(ctx context.Context) {
-			runtime.LogInfo(ctx, "fyom desktop shutting down")
-			if rt != nil && rt.Shutdown != nil {
-				_ = rt.Shutdown(ctx)
-			}
-		},
-		Bind: []interface{}{},
+		URL:    "/",
 	})
 
-	return wailsApp.Run()
+	wailsApp.OnShutdown(func() {
+		log.Print("fyom desktop shutting down")
+
+		if rt.Shutdown != nil {
+			if err := rt.Shutdown(context.Background()); err != nil {
+				log.Printf("shutdown desktop runtime: %v", err)
+			}
+		}
+	})
+
+	log.Print("fyom desktop started; serving API in-process via Wails")
+
+	if err := wailsApp.Run(); err != nil {
+		return fmt.Errorf("run wails desktop app: %w", err)
+	}
+
+	return nil
 }
