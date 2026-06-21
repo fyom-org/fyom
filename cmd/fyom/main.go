@@ -11,6 +11,10 @@ import (
 	"github.com/fyom/fyom/internal/app"
 )
 
+// desktopRuntime is set by runDesktop and read by the Wails shutdown hook
+// in desktop.go. It is nil in serve mode.
+var desktopRuntime *app.DesktopRuntime
+
 func main() {
 	logLevel := flag.String("log-level", "", "log level: debug, info, warn, error")
 	logFormat := flag.String("log-format", "", "log format: text, json")
@@ -28,7 +32,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "server stopped gracefully")
 
 	case "desktop":
-		if err := runDesktop(); err != nil {
+		if err := runDesktop(*dbPath); err != nil {
 			slog.Error("desktop error", "error", err)
 			fmt.Fprintln(os.Stderr, "desktop stopped with error")
 			os.Exit(1)
@@ -54,13 +58,20 @@ func runServe(logLevel, logFormat, dbPath string) error {
 	return app.Run(opts)
 }
 
-func runDesktop() error {
+func runDesktop(dbPath string) error {
 	ctx := context.Background()
 
-	rt, err := app.Bootstrap(ctx, app.Options{Mode: "desktop"})
+	rt, err := app.NewDesktopRuntime(ctx, dbPath)
 	if err != nil {
-		return fmt.Errorf("bootstrap: %w", err)
+		return fmt.Errorf("new desktop runtime: %w", err)
 	}
+
+	if err := rt.Startup(ctx); err != nil {
+		return fmt.Errorf("desktop startup: %w", err)
+	}
+
+	// Store reference for shutdown hook in desktop.go.
+	desktopRuntime = rt
 
 	return runDesktopWithRuntime(ctx, rt)
 }

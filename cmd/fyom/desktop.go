@@ -8,24 +8,20 @@ import (
 	"fmt"
 	"log"
 
-	web "github.com/fyom/fyom/frontend"
 	"github.com/fyom/fyom/internal/app"
+	web "github.com/fyom/fyom/frontend"
 	"github.com/fyom/fyom/internal/desktop"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-func runDesktopWithRuntime(_ context.Context, rt *app.Runtime) error {
+func runDesktopWithRuntime(_ context.Context, rt *app.DesktopRuntime) error {
 	if rt == nil {
 		return fmt.Errorf("desktop runtime is nil")
 	}
 
-	if rt.Router == nil {
-		return fmt.Errorf("desktop runtime router is nil")
-	}
-
 	handler, err := desktop.NewHandler(desktop.HandlerOptions{
 		APIPrefix: "/api/v1/",
-		API:       rt.Router,
+		API:       rt.Router(),
 		Assets:    web.Dist,
 	})
 	if err != nil {
@@ -51,8 +47,8 @@ func runDesktopWithRuntime(_ context.Context, rt *app.Runtime) error {
 	wailsApp.OnShutdown(func() {
 		log.Print("fyom desktop shutting down")
 
-		if rt.Shutdown != nil {
-			if err := rt.Shutdown(context.Background()); err != nil {
+		if desktopRuntime != nil {
+			if err := desktopRuntime.Shutdown(context.Background()); err != nil {
 				log.Printf("shutdown desktop runtime: %v", err)
 			}
 		}

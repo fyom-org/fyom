@@ -9,6 +9,6 @@ import (
 	"github.com/fyom/fyom/internal/app"
 )
 
-func runDesktopWithRuntime(_ context.Context, _ *app.Runtime) error {
-	return fmt.Errorf("desktop runtime")
+func runDesktopWithRuntime(_ context.Context, _ *app.DesktopRuntime) error {
+	return fmt.Errorf("desktop runtime not available in this build")
 }
