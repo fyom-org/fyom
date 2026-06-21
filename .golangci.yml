@@ -26,6 +26,19 @@ linters:
     - funlen
     - gocognit
 
+  exclusions:
+    paths:
+      - vendor/
+      - third_party/
+      - examples?$
+      - ^pkg/generated/
+      - \.pb\.go$
+      - /mocks/
+      - build
+      - tmp
+      - frontend/node_modules
+      - frontend/dist
+
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
