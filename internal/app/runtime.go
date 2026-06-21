@@ -10,6 +10,7 @@ import (
 	"runtime"
 
 	"github.com/fyom/fyom/internal/config"
+	"github.com/fyom/fyom/internal/desktop"
 	"github.com/fyom/fyom/internal/repository"
 	"github.com/fyom/fyom/internal/server"
 	"github.com/fyom/fyom/internal/service"
@@ -23,6 +24,7 @@ type DesktopRuntime struct {
 	db     *repository.DB
 	router *server.Server
 	logger *slog.Logger
+	desktopCfg desktop.Config
 }
 
 // NewDesktopRuntime initializes backend services: config, database, router.
@@ -82,11 +84,28 @@ func NewDesktopRuntime(ctx context.Context, dbPath string) (*DesktopRuntime, err
 		service.BootstrapModeDesktop,
 	)
 
+	// Load desktop player config (optional, does not fail startup).
+	desktopCfg, err := desktop.LoadConfig("")
+	if err != nil {
+		slog.Warn("failed to load desktop config", "error", err)
+		desktopCfg = desktop.DefaultConfig()
+	} else {
+		desktopCfg = desktop.ApplyDesktopEnvOverrides(desktopCfg, func(key string) (string, bool) {
+			v, ok := os.LookupEnv(key)
+			return v, ok
+		})
+		slog.Info("desktop config loaded",
+			"player", desktopCfg.Player.Command,
+			"allowed_roots", len(desktopCfg.Player.AllowedRoots),
+		)
+	}
+
 	return &DesktopRuntime{
-		cfg:    cfg,
-		db:     db,
-		router: srv,
-		logger: log,
+		cfg:       cfg,
+		db:        db,
+		router:    srv,
+		logger:    log,
+		desktopCfg: desktopCfg,
 	}, nil
 }
 
@@ -161,6 +180,13 @@ func (r *DesktopRuntime) Router() *server.Server {
 	return r.router
 }
 
+// DesktopConfig returns the loaded desktop player configuration.
+func (r *DesktopRuntime) DesktopConfig() desktop.Config {
+	if r == nil {
+		return desktop.DefaultConfig()
+	}
+	return r.desktopCfg
+}
 // HTTPHandler returns the Chi router as an http.Handler for in-process
 // request dispatching via Wails AssetServer.
 func (r *DesktopRuntime) HTTPHandler() http.Handler {
