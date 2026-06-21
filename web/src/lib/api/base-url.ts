@@ -3,4 +3,4 @@
  *
  * Re-exports from runtime/env.ts for backward compatibility.
  */
-export { resolveApiBaseUrl, detectRuntimeEnv, isTauriMode, isBrowserMode } from '@/lib/runtime/env';
+export { resolveApiBaseUrl, detectRuntimeEnv, isDesktopMode, isBrowserMode } from '@/lib/runtime/env';

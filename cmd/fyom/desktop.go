@@ -4,7 +4,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/fyom/fyom/internal/app"
 	"github.com/fyom/fyom/internal/desktop"
@@ -13,11 +12,6 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
-)
-
-const (
-	// serverModeDefault is the default mode when none specified.
-	serverModeDefault = "serve"
 )
 
 func runDesktopWithRuntime(ctx context.Context, rt *app.Runtime) error {
@@ -52,7 +46,3 @@ func runDesktopWithRuntime(ctx context.Context, rt *app.Runtime) error {
 
 	return wailsApp.Run()
 }
-
-// ensure unused imports are accounted for.
-var _ = slog.Default
-var _ context.Context

@@ -9,17 +9,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock the env module before importing the module under test
 vi.mock('@/lib/runtime/env', () => ({
-  isTauriMode: vi.fn().mockReturnValue(false),
+  isDesktopMode: vi.fn().mockReturnValue(false),
 }));
 
-import { isTauriMode } from '@/lib/runtime/env';
+import { isDesktopMode } from '@/lib/runtime/env';
 import { resolveResourceUrl } from '@/lib/runtime/resource';
 
-const mockIsTauri = isTauriMode as ReturnType<typeof vi.fn>;
+const mockIsDesktop = isDesktopMode as ReturnType<typeof vi.fn>;
 
 describe('resolveResourceUrl', () => {
   afterEach(() => {
-    mockIsTauri.mockReturnValue(false);
+    mockIsDesktop.mockReturnValue(false);
   });
 
   it('returns empty string for empty input', () => {
@@ -39,7 +39,7 @@ describe('resolveResourceUrl', () => {
 
   describe('browser mode', () => {
     beforeEach(() => {
-      mockIsTauri.mockReturnValue(false);
+      mockIsDesktop.mockReturnValue(false);
     });
 
     it('keeps relative /api/v1/... paths unchanged', () => {
@@ -55,7 +55,7 @@ describe('resolveResourceUrl', () => {
 
   describe('Tauri mode', () => {
     beforeEach(() => {
-      mockIsTauri.mockReturnValue(true);
+      mockIsDesktop.mockReturnValue(true);
     });
 
     it('converts /api/v1/... to absolute sidecar URL', () => {

@@ -15,7 +15,7 @@ func main() {
 	logLevel := flag.String("log-level", "", "log level: debug, info, warn, error")
 	logFormat := flag.String("log-format", "", "log format: text, json")
 	dbPath := flag.String("db-path", "", "path to sqlite database file")
-	mode := flag.String("mode", serverModeDefault, "run mode: serve or desktop")
+	mode := flag.String("mode", "serve", "run mode: serve or desktop")
 	flag.Parse()
 
 	switch *mode {

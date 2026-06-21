@@ -5,14 +5,12 @@
  * that are served by the same-origin backend.
  */
 
-import { isDesktopMode } from './env';
-
 /**
  * Normalize a resource URL for the current runtime environment.
  *
- * - empty input → ''
- * - already absolute (http:// or https://) → unchanged
- * - /api/v1/... paths → kept as-is (same origin in both modes)
+ * - empty input -> ''
+ * - already absolute (http:// or https://) -> unchanged
+ * - /api/v1/... paths -> kept as-is (same origin in both modes)
  */
 export function resolveResourceUrl(raw?: string): string {
   if (!raw) return '';
@@ -26,6 +24,3 @@ export function resolveResourceUrl(raw?: string): string {
   // by the same-origin backend.
   return raw;
 }
-
-// Re-export for backward compatibility.
-export { isDesktopMode } from './env';

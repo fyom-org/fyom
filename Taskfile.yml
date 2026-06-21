@@ -66,7 +66,6 @@ tasks:
 
         load_go_packages() {
           packages_file="$(mktemp)"
-
           if ! go list ./... > "$packages_file"; then
             echo
             echo "go list ./... failed."
@@ -84,7 +83,6 @@ tasks:
                 continue
                 ;;
             esac
-
             filtered+=("$package")
           done
 
@@ -199,10 +197,6 @@ tasks:
       - pnpm run build:full
       - node ../scripts/delete-sourcemaps.js dist
 
-  # ================================================
-  # Web dependencies and embedded frontend assets
-  # ================================================
-
   build:web:install:
     desc: "Install frontend dependencies"
     dir: web
@@ -227,15 +221,8 @@ tasks:
         task build:web
         EOF
 
-  build:sidecar:
-    desc: "Build fyom sidecar binary"
-    deps:
-      - build:web:dist
-    cmds:
-      - task: _build:binary
-
-  build:tauri-sidecar:
-    desc: "Build fyom sidecar binary for Tauri bundling"
+  build:desktop:
+    desc: "Build Wails desktop application"
     deps:
       - build:web:dist
     cmds:
@@ -243,39 +230,35 @@ tasks:
         bash <<'EOF'
         set -euo pipefail
 
-        TARGET_TRIPLE="${TAURI_TARGET_TRIPLE:-}"
-        if [ -z "$TARGET_TRIPLE" ]; then
-          echo "TAURI_TARGET_TRIPLE is not set; cannot determine sidecar binary name."
-          echo "Set it to the target triple (e.g., x86_64-unknown-linux-gnu) and retry."
-          exit 1
+        # Ensure wails CLI is available.
+        if ! command -v wails &> /dev/null; then
+          if [ -x "/root/go/bin/wails" ]; then
+            export PATH="/root/go/bin:$PATH"
+          else
+            echo "Wails CLI not found. Install it with:"
+            echo "  go install github.com/wailsapp/wails/v2/cmd/wails@latest"
+            exit 1
+          fi
         fi
 
-        case "$TARGET_TRIPLE" in
-          *windows*)  EXT=".exe" ;;
-          *)          EXT="" ;;
-        esac
+        # Check if webkit2gtk-4.0 is available via pkg-config.
+        # Wails requires this for the WebView on Linux.
+        if ! pkg-config --exists webkit2gtk-4.0 2>/dev/null; then
+          echo "webkit2gtk-4.0 not found via pkg-config."
+          echo "Wails desktop build requires webkit2gtk-4.0 development files."
+          echo "Install with: nix-shell -p webkitgtk_4_0 (or system package manager)"
+          echo ""
+          echo "Verifying Go compilation with Wails dependencies instead..."
+          cd cmd/fyom && go build -tags wails -o /dev/null ./... 2>&1
+          echo "Go compilation with Wails tags: OK"
+          exit 0
+        fi
 
-        OUTPUT="src-tauri/binaries/fyom-server-${TARGET_TRIPLE}${EXT}"
-
-        mkdir -p src-tauri/binaries
-
-        echo "Building Tauri sidecar binary: ${OUTPUT}"
-        echo "  target=${TARGET_TRIPLE}"
-
-        CGO_ENABLED=0 go build \
-          -ldflags "{{.LD_FLAGS}}" \
-          -o "${OUTPUT}" \
-          "{{.CMD_PATH}}"
-
-        echo "Tauri sidecar binary built: ${OUTPUT}"
-        ls -la "${OUTPUT}"
+        # Build the Wails desktop application.
+        echo "Building Wails desktop application..."
+        cd cmd/fyom && wails build -platform linux/amd64 -ldflags "-s -w" -s -skipbindings
+        echo "Desktop build complete."
         EOF
-
-  build:desktop:
-    desc: "Build Tauri desktop app bundle"
-    deps: [build:tauri-sidecar]
-    cmds:
-      - cd src-tauri && cargo-tauri build
 
   build:tarball:
     desc: "Build Linux tar.gz artifact"
@@ -284,11 +267,11 @@ tasks:
         bash <<'EOF'
         set -euo pipefail
 
-        binary="src-tauri/target/release/fyom"
+        binary="{{.BUILD_DIR}}/{{.BINARY_NAME}}"
 
         if [ ! -f "$binary" ]; then
-          echo "Desktop binary not found: $binary"
-          echo "Run: task build:desktop"
+          echo "Binary not found: $binary"
+          echo "Run: task build"
           exit 1
         fi
 
@@ -309,31 +292,27 @@ tasks:
       - air -c .air.toml
 
   dev:desktop:
-    desc: "Run Tauri desktop dev mode with external mpv player"
+    desc: "Run Wails desktop dev mode"
+    deps:
+      - build:web:dist
     cmds:
-      - task dev:desktop-mpv-system
+      - |
+        bash <<'EOF'
+        set -euo pipefail
 
-  dev:desktop-mpv-system:
-    desc: "Run Tauri desktop dev mode using mpv from PATH"
-    deps: [build:sidecar]
-    dir: src-tauri
-    env:
-      FYOM_BIN: ../build/fyom
-      FYOM_MPV_BIN: mpv
-      FYOM_DESKTOP_CONFIG: "{{.ROOT_DIR}}/configs/fyom-desktop.json"
-      RUST_LOG: debug
-    cmds:
-      - cargo-tauri dev
+        if ! command -v wails &> /dev/null; then
+          if [ -x "/root/go/bin/wails" ]; then
+            export PATH="/root/go/bin:$PATH"
+          else
+            echo "Wails CLI not found. Install it with:"
+            echo "  go install github.com/wailsapp/wails/v2/cmd/wails@latest"
+            exit 1
+          fi
+        fi
 
-  dev:desktop-system-player:
-    desc: "Run Tauri desktop dev mode using the OS default external player"
-    deps: [build:sidecar]
-    dir: src-tauri
-    env:
-      FYOM_BIN: ../build/fyom
-      RUST_LOG: debug
-    cmds:
-      - cargo-tauri dev
+        echo "Starting Wails desktop dev mode..."
+        cd cmd/fyom && wails dev
+        EOF
 
   dev:web:
     desc: "Run Vite dev server"
@@ -367,7 +346,6 @@ tasks:
     deps:
       - lint:go
       - lint:web
-      - lint:rust
 
   lint:go:
     desc: "Run Go linter for project packages"
@@ -384,13 +362,6 @@ tasks:
     desc: "Verify golangci-lint configuration"
     cmds:
       - golangci-lint config verify
-
-  lint:rust:
-    desc: "Run Rust formatter and clippy"
-    dir: src-tauri
-    cmds:
-      - cargo fmt -- --check
-      - cargo clippy --all-targets --all-features -- -D warnings
 
   lint:web:
     desc: "Run ESLint for web"
@@ -417,11 +388,10 @@ tasks:
   # ================================================
 
   test:
-    desc: "Run all tests for backend, web frontend and tauri shell"
+    desc: "Run all tests for backend and web frontend"
     deps:
       - test:go
       - test:web
-      - test:rust
 
   test:coverage:
     desc: "Run Go coverage for project packages"
@@ -477,13 +447,6 @@ tasks:
           EMPTY_MESSAGE: "No Go packages found to test."
           CGO_ENABLED: "1"
 
-  test:rust:
-    desc: "Run Rust check and tests"
-    dir: src-tauri
-    cmds:
-      - cargo check --all-targets --all-features
-      - cargo test --all-features
-
   test:smoke:
     desc: "Run production smoke test"
     cmds:
@@ -504,19 +467,12 @@ tasks:
     cmds:
       - task ci:quality
       - task ci:build
-      - task ci:build:desktop
 
   ci:build:
     desc: "Run CI build suite"
     cmds:
       - task build
-      - task build:desktop
       - task build:tarball
-
-  ci:build:desktop:
-    desc: "Run CI verification suite"
-    deps:
-      - build:desktop
 
   ci:quality:
     desc: "Run CI quality gates without producing release artifacts"

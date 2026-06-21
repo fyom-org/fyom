@@ -29,6 +29,13 @@ export function resolveApiBaseUrl(): string {
 }
 
 /**
+ * Get the API base URL (alias for resolveApiBaseUrl).
+ */
+export function getApiBaseUrl(): string {
+  return resolveApiBaseUrl();
+}
+
+/**
  * Check if running in desktop mode.
  */
 export function isDesktopMode(): boolean {
