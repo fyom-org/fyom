@@ -210,11 +210,22 @@ tasks:
         load_go_packages() {
           packages_file="$(mktemp)"
 
-          if ! go list ./... > "$packages_file"; then
+          go_patterns=(
+            ./cmd/...
+            ./internal/...
+            ./pkg/...
+          )
+
+          if [ -d test ]; then
+            go_patterns+=(./test/...)
+          fi
+
+          if ! go list "${go_patterns[@]}" > "$packages_file"; then
             echo
-            echo "go list ./... failed."
-            echo "If the error mentions frontend/embed.go or go:embed, ensure frontend/dist exists."
-            echo "Try: task build:frontend:dist"
+            echo "go list failed for fyom package roots."
+            echo "Patterns: ${go_patterns[*]}"
+            echo "If the error mentions frontend embed assets, ensure frontend/dist exists."
+            echo "Try: task build:web:dist"
             exit 1
           fi
 
@@ -223,10 +234,11 @@ tasks:
           filtered=()
           for package in "${packages[@]}"; do
             case "$package" in
-              *frontend/node_modules*)
+              *frontend/node_modules*|*web/node_modules*)
                 continue
                 ;;
             esac
+
             filtered+=("$package")
           done
 
