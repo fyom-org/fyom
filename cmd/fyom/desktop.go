@@ -9,8 +9,8 @@ import (
 	"log"
 
 	"github.com/fyom/fyom/internal/app"
-	web "github.com/fyom/fyom/frontend"
 	"github.com/fyom/fyom/internal/desktop"
+	web "github.com/fyom/fyom/frontend"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -19,20 +19,14 @@ func runDesktopWithRuntime(_ context.Context, rt *app.DesktopRuntime) error {
 		return fmt.Errorf("desktop runtime is nil")
 	}
 
-	handler, err := desktop.NewHandler(desktop.HandlerOptions{
-		APIPrefix: "/api/v1/",
-		API:       rt.Router(),
-		Assets:    web.Dist,
-	})
-	if err != nil {
-		return fmt.Errorf("create desktop handler: %w", err)
-	}
+	// Create static asset handler from embedded frontend dist.
+	assetHandler := desktop.NewStaticAssetHandler(web.Dist)
 
 	wailsApp := application.New(application.Options{
 		Name:        "fyom",
 		Description: "fyom desktop application",
 		Assets: application.AssetOptions{
-			Handler: handler,
+			Handler: assetHandler,
 		},
 	})
 
