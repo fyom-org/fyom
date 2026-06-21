@@ -1,87 +1,149 @@
+// Package desktop provides HTTP routing helpers for the fyom desktop runtime.
+//
+// The desktop runtime serves the embedded frontend and routes API requests to
+// the in-process Go backend. This keeps desktop requests same-origin while
+// avoiding a separate sidecar HTTP server.
 package desktop
 
 import (
+	"fmt"
 	"io/fs"
 	"net/http"
+	"path"
 	"strings"
+)
+
+const (
+	defaultAPIPrefix = "/api/v1/"
+	distDir          = "dist"
+	indexFile        = "index.html"
 )
 
 // HandlerOptions configures the desktop asset handler.
 type HandlerOptions struct {
-	// APIPrefix is the prefix that routes to the backend API.
-	// Defaults to "/api/v1/".
+	// APIPrefix is the URL prefix routed to the backend API.
+	//
+	// Empty defaults to "/api/v1/".
 	APIPrefix string
 
-	// API is the handler for API requests (e.g. chi router).
+	// API handles API requests, typically a chi router.
 	API http.Handler
 
 	// Assets is the filesystem containing the frontend build output.
-	// It should have a "dist" subdirectory (from frontend/embed.go).
+	//
+	// The filesystem is expected to contain a "dist" subdirectory. This matches
+	// the frontend embed package shape, where frontend.Dist embeds dist files.
 	Assets fs.FS
 }
 
-// NewHandler creates an http.Handler that routes /api/v1/* to the API handler
-// and everything else to the embedded static assets with SPA fallback.
+// NewHandler creates an http.Handler that routes API requests to the backend
+// and all other requests to the embedded frontend assets.
+//
+// Routing rules:
+//   - /api/v1 and /api/v1/* are routed to opts.API.
+//   - Existing static assets are served from Assets/dist.
+//   - Unknown non-API routes fall back to index.html for SPA routing.
 func NewHandler(opts HandlerOptions) (http.Handler, error) {
-	if opts.APIPrefix == "" {
-		opts.APIPrefix = "/api/v1/"
-	}
+	apiPrefix := normalizeAPIPrefix(opts.APIPrefix)
+
 	if opts.API == nil {
-		return nil, &configError{message: "desktop handler requires non-nil API handler"}
-	}
-	if opts.Assets == nil {
-		return nil, &configError{message: "desktop handler requires non-nil assets filesystem"}
+		return nil, fmt.Errorf("desktop handler requires non-nil API handler")
 	}
 
-	// Create a sub-filesystem rooted at "dist" to match frontend/embed.go structure.
-	distFS, err := fs.Sub(opts.Assets, "dist")
+	if opts.Assets == nil {
+		return nil, fmt.Errorf("desktop handler requires non-nil assets filesystem")
+	}
+
+	distFS, err := fs.Sub(opts.Assets, distDir)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open embedded frontend dist filesystem: %w", err)
+	}
+
+	if !fileExists(distFS, indexFile) {
+		return nil, fmt.Errorf("embedded frontend dist is missing %s", indexFile)
 	}
 
 	fileServer := http.FileServer(http.FS(distFS))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Route API requests to the backend handler.
-		if strings.HasPrefix(r.URL.Path, opts.APIPrefix) {
+		if isAPIRequest(r.URL.Path, apiPrefix) {
 			opts.API.ServeHTTP(w, r)
 			return
 		}
 
-		// Try to serve static asset.
-		path := strings.TrimPrefix(r.URL.Path, "/")
-		if path == "" {
-			path = "index.html"
-		}
-
-		if fileExists(distFS, path) {
-			fileServer.ServeHTTP(w, r)
+		assetPath, ok := cleanAssetPath(r.URL.Path)
+		if !ok {
+			http.NotFound(w, r)
 			return
 		}
 
-		// SPA fallback: serve index.html for unknown paths.
-		r2 := new(http.Request)
-		*r2 = *r
-		u2 := *r.URL
-		u2.Path = "/"
-		r2.URL = &u2
-		r2.RequestURI = "/"
-		fileServer.ServeHTTP(w, r2)
+		if fileExists(distFS, assetPath) {
+			serveAsset(fileServer, w, r, assetPath)
+			return
+		}
+
+		serveAsset(fileServer, w, r, indexFile)
 	}), nil
+}
+
+func normalizeAPIPrefix(prefix string) string {
+	if prefix == "" {
+		return defaultAPIPrefix
+	}
+
+	if !strings.HasPrefix(prefix, "/") {
+		prefix = "/" + prefix
+	}
+
+	if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+
+	return prefix
+}
+
+func isAPIRequest(requestPath string, apiPrefix string) bool {
+	apiRoot := strings.TrimSuffix(apiPrefix, "/")
+
+	return requestPath == apiRoot || strings.HasPrefix(requestPath, apiPrefix)
+}
+
+func cleanAssetPath(requestPath string) (string, bool) {
+	if requestPath == "" || requestPath == "/" {
+		return indexFile, true
+	}
+
+	cleaned := path.Clean("/" + requestPath)
+	cleaned = strings.TrimPrefix(cleaned, "/")
+
+	if cleaned == "." || cleaned == "" {
+		return indexFile, true
+	}
+
+	if strings.HasPrefix(cleaned, "../") || cleaned == ".." {
+		return "", false
+	}
+
+	return cleaned, true
+}
+
+func serveAsset(fileServer http.Handler, w http.ResponseWriter, r *http.Request, assetPath string) {
+	r2 := r.Clone(r.Context())
+
+	u2 := *r.URL
+	u2.Path = "/" + assetPath
+	u2.RawPath = ""
+	r2.URL = &u2
+	r2.RequestURI = ""
+
+	fileServer.ServeHTTP(w, r2)
 }
 
 func fileExists(fsys fs.FS, name string) bool {
 	if name == "" {
 		return false
 	}
+
 	info, err := fs.Stat(fsys, name)
 	return err == nil && !info.IsDir()
-}
-
-type configError struct {
-	message string
-}
-
-func (e *configError) Error() string {
-	return e.message
 }
