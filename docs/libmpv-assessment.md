@@ -275,14 +275,14 @@ loop {
 - `tauri.conf.json` — `transparent: false`; bundle targets only `["deb","rpm"]` (no dmg/msi/nsis).
 - `flake.nix` — no `libmpv`/`libass`/`ffmpeg` in `linuxRuntimeLibs` or `darwinPackages`.
 - `.github/workflows/build-desktop.yaml` — no libmpv download step, no runtime-libs bundle step.
-- Frontend `web/src/lib/player/native-player.ts` — complete, tested fallback pipeline (`tryInitializeNativePlayer` → `invoke('play_media')` → always fails → browser `<video>`); forward-compatible error classifier already anticipates `mpv_context`/`library-load`/`raw-window-handle` failures. The fallback stays as the safety net.
+- Frontend `frontend/src/lib/player/native-player.ts` — complete, tested fallback pipeline (`tryInitializeNativePlayer` → `invoke('play_media')` → always fails → browser `<video>`); forward-compatible error classifier already anticipates `mpv_context`/`library-load`/`raw-window-handle` failures. The fallback stays as the safety net.
 
 ### 3.7 The Phase 9.7 guardrail contract (honored unchanged)
 
 The locked frontend bridge is preserved exactly:
 
 ```ts
-// web/src/lib/player/native-player.ts — UNCHANGED
+// frontend/src/lib/player/native-player.ts — UNCHANGED
 await invoke('play_media',  { mediaUrl, posterUrl? })  // → { success: boolean, error?: string }
 await invoke('stop_media')
 ```
@@ -332,7 +332,7 @@ fyom does **not** run these workflows in its own repo — they live in `fyom-org
    ```yaml
    - run: node scripts/bundle_runtime_libs_${{ matrix.platform }}.mjs
    ```
-3. Caching: `~/.cargo/registry`, `~/.cache/go-build`, `web/.pnpm-store`, `src-tauri/libs/mpv` (keyed on `MPV_RELEASE_TAG`).
+3. Caching: `~/.cargo/registry`, `~/.cache/go-build`, `frontend/.pnpm-store`, `src-tauri/libs/mpv` (keyed on `MPV_RELEASE_TAG`).
 
 `flake.nix`: add `libmpv` (or `mpv` with `libmpv` output) + `libass` to `linuxRuntimeLibs` for local Nix dev. Non-Nix macOS/Windows dev uses `scripts/setup_runtime_libs.*` to fetch the fork tarball.
 

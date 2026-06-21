@@ -9,7 +9,7 @@
 
 1. **No server-side transcoding** — the server only serves files; playback is entirely client-decoded.
 2. **No media scanning / metadata scraping** — assumes files are already organized and tagged by tools like tinyMediaManager. fyom is a pure *importer*.
-3. **Dual-mode access** — C/S via web UI (browser) AND a local Tauri desktop client. Both talk to the same REST API.
+3. **Dual-mode access** — C/S via web UI (browser) AND a local Wails desktop client. Both talk to the same REST API.
 4. **Single-binary deployment** — Go backend embeds the built Vue frontend; one binary, one SQLite file.
 5. **Batteries included, but removable** — sensible defaults, minimal config, but every component is replaceable.
 
@@ -20,7 +20,7 @@
 | Language       | Go 1.26+                  | Single binary, fast, great stdlib              |
 | HTTP Framework | Chi                       | Lightweight, stdlib-compatible, composable     |
 | Frontend       | Vue 3 + Vite              | Lightweight, great DX, easy to embed           |
-| Desktop Shell  | Tauri 2 (planned)         | Rust-based, tiny bundle, native feel           |
+| Desktop Shell  | Wails 3                   | Go lang native, tiny bundle, native feel       |
 | Database       | SQLite (via modernc.org)  | Zero-config, file-based, no CGO dependency     |
 | Migrations     | Internal embedded SQL runner | Simple, no external tooling required        |
 | Config         | Koanf (YAML/ENV/flags)    | Multi-source, struct-mapped                    |
@@ -36,7 +36,7 @@
 - Serve media files via HTTP (range-request support for seeking).
 - Provide a REST API for library management.
 - Provide a Vue 3 web UI for browsing and playback.
-- Provide a Tauri desktop client wrapping the same API.
+- Provide a Wails desktop client wrapping the same API.
 - User management (simple username/password, JWT auth).
 
 ### What fyom DOES NOT do:
@@ -148,7 +148,7 @@ fyom/
 │   ├── logger/         # Structured logger setup
 │   ├── errors/         # Unified error types
 │   └── response/       # Standard API response helpers
-├── web/                 # Vue 3 frontend
+├── frontend/                 # Vue 3 frontend
 │   ├── src/
 │   ├── embed.go         # Embeds compiled dist/ via //go:embed
 │   ├── package.json
@@ -181,5 +181,5 @@ The Go binary embeds the built Vue frontend via `//go:embed`. One binary, one SQ
 ```
 ./fyom serve --no-ui
   -> API only, no embedded frontend served
-  -> Tauri client or any HTTP client connects
+  -> Wails client or any HTTP client connects
 ```

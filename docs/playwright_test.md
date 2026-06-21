@@ -3,7 +3,7 @@
 ## Overview
 This document describes how to run Playwright E2E tests for the fyom frontend.
 
-Test files are under `web/tests/`
+Test files are under `frontend/tests/`
 
 ## Prerequisites
 
@@ -30,12 +30,12 @@ export no_proxy="localhost,127.0.0.1,::1"
 
 ### Using Taskfile (Recommended)
 ```bash
-cd fyom && nix develop --command pnpm exec playwright test --config web/playwright.config.ts
+cd fyom && nix develop --command pnpm exec playwright test --config frontend/playwright.config.ts
 ```
 
 ### Direct Command
 ```bash
-cd fyom/web
+cd fyom/frontend
 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
 PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true \
 NO_PROXY="localhost,127.0.0.1,::1" \
@@ -63,7 +63,7 @@ pnpm exec playwright show-report
 
 ## Configuration Files
 
-### Playwright Config (`web/playwright.config.ts`)
+### Playwright Config (`frontend/playwright.config.ts`)
 ```typescript
 import { defineConfig, devices } from '@playwright/test';
 

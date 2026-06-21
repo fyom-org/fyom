@@ -40,7 +40,7 @@ embedded frontend bundle. All rules apply to the `staticFileHandler` in
 
 ## File Layout
 
-The embedded FS root is `web/dist/` (via `//go:embed dist`).
+The embedded FS root is `frontend/dist/` (via `//go:embed dist`).
 
 | Logical request | FS path       |
 |-----------------|---------------|

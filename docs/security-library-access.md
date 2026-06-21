@@ -396,7 +396,7 @@ It is:
 
 * unauthenticated
 * localhost-only
-* used only by the Tauri desktop frontend before it has a token
+* used only by the Wails desktop frontend before it has a token
 * available only while a bootstrap admin has `password_change_required=true`
 
 It returns a normal JWT session:
