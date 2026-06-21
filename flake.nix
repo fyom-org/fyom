@@ -29,29 +29,32 @@
         isLinux = stdenv.isLinux;
         isDarwin = stdenv.isDarwin;
 
-        nodejs = if pkgs ? nodejs_24 then pkgs.nodejs_24 else pkgs.nodejs_26;
-
-        webkitgtk = if pkgs ? webkitgtk_4_1 then pkgs.webkitgtk_4_1 else pkgs.webkitgtk;
+        nodejs =
+          if pkgs ? nodejs_24 then
+            pkgs.nodejs_24
+          else if pkgs ? nodejs_26 then
+            pkgs.nodejs_26
+          else
+            pkgs.nodejs;
 
         libsoup = if pkgs ? libsoup_3 then pkgs.libsoup_3 else pkgs.libsoup;
-      in
-      let
+
+        /*
+          Local Wails v3 package.
+
+          Important:
+          - ./nix/wails3.nix depends on Linux WebKitGTK.
+          - Keep it Linux-only unless you write a separate Darwin derivation.
+        */
+        wails3 = pkgs.callPackage ./nix/wails3.nix { };
+
         /*
           Shared developer tools.
 
-          Keep this list limited to cross-platform CLI tools. Do not put Linux
-          runtime libraries or Darwin Apple SDK frameworks here.
+          Keep this list limited to cross-platform CLI tools.
+          Do not put Linux runtime libraries or Darwin Apple SDK frameworks here.
         */
         commonPackages = with pkgs; [
-          # Rust
-          cargo
-          cargo-tauri
-          clippy
-          rustc
-          rustfmt
-          rustup
-          rust-analyzer
-
           # Native build tooling
           pkg-config
           llvmPackages.libclang
@@ -105,55 +108,62 @@
         );
 
         /*
-          Linux runtime libraries required by Tauri/WebKitGTK and native playback.
+          Linux runtime libraries required by Wails/WebKitGTK and native playback.
 
-          These are intentionally Linux-only. macOS uses system frameworks from
+          This must stay Linux-only. macOS uses system frameworks from
           Xcode / Command Line Tools and does not use Nix-provided Apple SDK
-          frameworks, because legacy apple_sdk_11_0 stubs were removed from
-          recent nixpkgs.
+          frameworks here.
         */
-        linuxRuntimeLibs = with pkgs; [
-          # GTK / GNOME
-          gtk3
-          glib
-          gdk-pixbuf
-          pango
-          cairo
-          atk
-          harfbuzz
+        linuxRuntimeLibs = lib.optionals isLinux (
+          with pkgs;
+          [
+            # GTK / GNOME
+            gtk3
+            glib
+            gdk-pixbuf
+            cairo
+            atk
+            harfbuzz
 
-          # Tauri / WebKitGTK
-          webkitgtk
-          libsoup
-          openssl
-          dbus
-          alsa-lib
-          fontconfig
-          freetype
-          libsecret
-          libayatana-appindicator
+            # WebKitGTK / networking / native integration
+            webkitgtk_6_0
+            libsoup
+            openssl
+            dbus
+            alsa-lib
+            fontconfig
+            freetype
+            libsecret
+            libayatana-appindicator
 
-          # X11 / Wayland compatibility
-          libX11
-          libXext
-          libXcursor
-          libXrandr
-          libXi
-          libXtst
-          libxkbcommon
-          wayland
+            # X11 / Wayland compatibility
+            libX11
+            libXext
+            libXcursor
+            libXrandr
+            libXi
+            libXtst
+            libxkbcommon
+            wayland
 
-          # OpenGL / GLX / EGL
-          mesa
-          libglvnd
+            # OpenGL / GLX / EGL
+            mesa
+            libglvnd
 
-          # Desktop integration
-          gsettings-desktop-schemas
-          adwaita-icon-theme
-          hicolor-icon-theme
-        ];
+            # Desktop integration
+            gsettings-desktop-schemas
+            adwaita-icon-theme
+            hicolor-icon-theme
+            dconf
+          ]
+        );
 
-        linuxPackages = lib.optionals isLinux linuxRuntimeLibs;
+        linuxPackages = lib.optionals isLinux (
+          linuxRuntimeLibs
+          ++ [
+            wails3
+          ]
+        );
 
         /*
           Do not add darwin.apple_sdk.frameworks.* here.
@@ -178,14 +188,12 @@
           + lib.makeSearchPathOutput "out" "share/pkgconfig" linuxRuntimeLibs;
 
         linuxShellHook = lib.optionalString isLinux ''
-          export RUST_BACKTRACE="1"
           export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
           export LD_LIBRARY_PATH="${linuxLibraryPath}:''${LD_LIBRARY_PATH:-}"
           export PKG_CONFIG_PATH="${linuxPkgConfigPath}:''${PKG_CONFIG_PATH:-}"
 
-          # Rust/Tauri Linux dev link fix.
-          # pangocairo may not propagate fontconfig/freetype through the final
-          # Rust binary link, while ld.bfd still requires those DSOs explicitly.
+          # Linux dev link fix.
+          # Binary link, while ld.bfd still requires those DSOs explicitly.
           export LIBRARY_PATH="${pkgs.fontconfig.lib}/lib:${pkgs.freetype}/lib:''${LIBRARY_PATH:-}"
 
           export NIX_LDFLAGS="-L${pkgs.fontconfig.lib}/lib \
@@ -193,12 +201,6 @@
           -lfontconfig \
           -lfreetype \
           ''${NIX_LDFLAGS:-}"
-
-          export RUSTFLAGS="-C link-arg=-L${pkgs.fontconfig.lib}/lib \
-          -C link-arg=-L${pkgs.freetype}/lib \
-          -C link-arg=-lfontconfig \
-          -C link-arg=-lfreetype \
-          ''${RUSTFLAGS:-}"
 
           export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.adwaita-icon-theme}/share:${pkgs.hicolor-icon-theme}/share:''${XDG_DATA_DIRS:-}"
           export GIO_EXTRA_MODULES="${pkgs.dconf.lib}/lib/gio/modules"
@@ -212,11 +214,10 @@
           echo "  platform: linux"
           echo "  node: $(node --version 2>/dev/null || true)"
           echo "  go: $(go version 2>/dev/null || true)"
-          echo "  rustc: $(rustc --version 2>/dev/null || true)"
+          echo "  wails3: $(wails3 version 2>&1 | sed -n '1p')"
         '';
 
         darwinShellHook = lib.optionalString isDarwin ''
-          export RUST_BACKTRACE="1"
           export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
 
           # Use the system Apple SDK from Xcode / Command Line Tools.
@@ -230,11 +231,15 @@
           echo "  platform: darwin"
           echo "  node: $(node --version 2>/dev/null || true)"
           echo "  go: $(go version 2>/dev/null || true)"
-          echo "  rustc: $(rustc --version 2>/dev/null || true)"
           echo "  SDKROOT: ''${SDKROOT:-not set}"
         '';
       in
       {
+        packages = lib.optionalAttrs isLinux {
+          wails3 = wails3;
+          default = wails3;
+        };
+
         devShells.default = pkgs.mkShell {
           packages = commonPackages ++ linuxTooling ++ linuxPackages ++ darwinPackages;
 

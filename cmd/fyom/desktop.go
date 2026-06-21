@@ -1,13 +1,13 @@
-// Package main — desktop entry point for Wails v2 integration.
+// Package main — desktop entry point for Wails integration.
 package main
 
 import (
 	"context"
 	"fmt"
 
+	web "github.com/fyom/fyom/frontend"
 	"github.com/fyom/fyom/internal/app"
 	"github.com/fyom/fyom/internal/desktop"
-	"github.com/fyom/fyom/web"
 	"github.com/wailsapp/wails/v2/pkg/application"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
