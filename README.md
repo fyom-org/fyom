@@ -5,11 +5,11 @@
 
 **A lightweight, self-hosted media catalog — no transcoding, no scraping, no fuss.**
 
-[![License](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-early%20access-orange.svg)]()
-[![Go](https://img.shields.io/badge/Go-1.26+-00add8.svg?logo=go)](https://go.dev)
-[![Vue](https://img.shields.io/badge/Vue-3-42b883.svg?logo=vuedotjs)](https://vuejs.org)
-[![Tauri](https://img.shields.io/badge/Tauri-2-24c8db.svg?logo=tauri)](https://tauri.app)
+[![License](https://img.shields.io/badge/LICENSE-GPL--3.0--only-blue.svg)](LICENSE)
+[![Status](https://img.shields.io/badge/Status-Alpha-orange.svg)]()
+[![Go](https://img.shields.io/badge/Go-v1.26+-00add8.svg?logo=go)](https://go.dev)
+[![Vue](https://img.shields.io/badge/Vue-v3-42b883.svg?logo=vuedotjs)](https://vuejs.org)
+[![Wails](https://img.shields.io/badge/Wails-v3-CF2A2C?logo=wails&logoColor=CF2A2C)](https://v3.wails.io)
 
 </div>
 
@@ -38,7 +38,7 @@ The result? A beautiful, snappy library interface that lets you decide **what to
 **Two modes, one binary:**
 
 - **Server/Headless** — `./fyom serve`, browser opens `http://your-server:27402`, done.
-- **Desktop** — Tauri shell wraps the same UI, spawns a Go sidecar, launches your favorite external player (mpv, IINA, VLC, PotPlayer — pick your weapon).
+- **Desktop** — Wails shell wraps the same UI, launches your favorite external player (mpv, IINA, VLC, PotPlayer — pick your weapon).
 
 ---
 
@@ -69,7 +69,7 @@ The result? A beautiful, snappy library interface that lets you decide **what to
 | Backend | Go | Single binary, fast, great stdlib |
 | HTTP | Chi | Lightweight, composable, stdlib-compatible |
 | Frontend | Vue   + Vite | Reactive, great DX, trivially embeddable |
-| Desktop | Tauri   | Rust-based, tiny bundle, native window lifecycle |
+| Desktop | Wails   | Go lang native, tiny bundle, native window lifecycle |
 | Database | SQLite (modernc) | Zero-config, file-based, no CGO dependency |
 | Auth | JWT | Stateless, sidecar-friendly, works in both modes |
 | Build | Taskfile | Easy to use, one `task` to rule them all |
@@ -95,7 +95,7 @@ The result? A beautiful, snappy library interface that lets you decide **what to
 
 **Playback**
 - HTML5 video player with Range request support (browser mode)
-- External player launcher via Tauri (mpv, IINA, VLC, PotPlayer — whatever your OS defaults to)
+- External player launcher via Wails (mpv, IINA, VLC, PotPlayer — whatever your OS defaults to)
 - Presigned URLs (HMAC-SHA256, path-bound signatures) — works with S3, local disk, CDN
 - Watch progress tracking with auto-status transitions (none → watching → watched)
 
@@ -130,11 +130,11 @@ The result? A beautiful, snappy library interface that lets you decide **what to
 - No page refresh needed — hot-swap via vue-i18n
 
 **Desktop Runtime**
-- Tauri 2 system tray with close-to-tray and real quit sequencing
+- Wails system tray with close-to-tray and real quit sequencing
 - Go sidecar with FYOM_READY readiness protocol and /readyz confirmation
 - Graceful sidecar shutdown on quit (no orphan processes)
 - `kill_on_drop(true)` defensive safeguard
-- Resource URL normalization for Tauri mode (relative `/api/v1/...` → `http://127.0.0.1:27403/...`)
+- Resource URL normalization for Wails mode (relative `/api/v1/...` → `http://127.0.0.1:27403/...`)
 
 **Security**
 - Role removed from localStorage entirely — all admin checks use Pinia store populated server-side
@@ -154,7 +154,7 @@ The result? A beautiful, snappy library interface that lets you decide **what to
 
 - **Go** 1.26+
 - **Node.js** + **pnpm**
-- **Rust** (for desktop builds)
+- **Wails** (For desktop builds)
 - **Task** — `go install github.com/go-task/task/v3/cmd/task@latest`
 - **Nix (Optional but recommended)** — <https://nixos.org> (Use `nix develop` to get into full development environment)
 
@@ -180,7 +180,7 @@ task build
 # Build sidecar binary first
 task sidecar
 
-# Launch Tauri dev mode with mpv explicitly
+# Launch Wails dev mode with mpv explicitly
 task dev:desktop
 
 # Or uses OS default player
@@ -198,7 +198,7 @@ task build:desktop
 task test
 
 # Run frontend unit tests
-cd web && pnpm exec vitest run
+cd frontend && pnpm exec vitest run
 
 # Smoke test (production bundle)
 task smoke
@@ -281,6 +281,18 @@ All endpoints live under `/api/v1/`. JWT Bearer token required for protected rou
 ```
 fyom/
 ├── cmd/fyom/              # Main entry point
+├── configs/               # Default config files
+├── build/                 # Wails build for cross-platforms
+├── frontend/              # Vue 3 frontend
+│   ├── src/
+│   │   ├── views/         # PlayerView, LibraryView, DashboardView, admin views
+│   │   ├── components/    # MediaCard, MediaRow, EpisodeList, LanguageSwitcher
+│   │   ├── composables/   # useLocale, useLocaleFormat, useNotifications
+│   │   ├── stores/        # user, system
+│   │   ├── lib/           # API client, runtime detection, resource URL normalization
+│   │   ├── plugins/       # i18n
+│   │   └── locales/       # json files of locales
+│   └── tests/             # Vitest unit tests
 ├── internal/
 │   ├── handler/           # HTTP handlers (Chi)
 │   ├── middleware/        # Auth, CORS, error, permissions
@@ -292,24 +304,7 @@ fyom/
 │   ├── errors/            # Taxonomy of 51 error codes across 7 domains
 │   ├── locale/            # Supported locales validation
 │   └── response/          # Standard API response envelope (error_code + message)
-├── web/                   # Vue 3 frontend
-│   ├── src/
-│   │   ├── views/         # PlayerView, LibraryView, DashboardView, admin views
-│   │   ├── components/    # MediaCard, MediaRow, EpisodeList, LanguageSwitcher
-│   │   ├── composables/   # useLocale, useLocaleFormat, useNotifications
-│   │   ├── stores/        # user, system
-│   │   ├── lib/           # API client, runtime detection, resource URL normalization
-│   │   ├── plugins/       # i18n
-│   │   └── locales/       # json files of locales
-│   └── tests/             # Vitest unit tests
-├── src-tauri/             # Tauri desktop shell (Rust)
-│   ├── src/
-│   │   ├── launcher.rs    # open_external_player command
-│   │   ├── sidecar.rs     # Go sidecar lifecycle (spawn, readiness, shutdown)
-│   │   ├── state.rs       # AppState, SidecarState
-│   │   └── lib.rs         # App entry, tray, exit flow
 ├── migrations/            # Embedded SQL migrations
-├── configs/               # Default config files
 └── Taskfile.yml           # Build, dev, test, lint, CI tasks
 ```
 
@@ -322,7 +317,7 @@ fyom/
 - Catalog media items with metadata from those sidecar files
 - Serve presigned URLs for direct streaming from source (local disk, S3, CDN)
 - Provide a polished Vue 3 web UI for browsing, managing, and playing
-- Provide a Tauri desktop client wrapping the same UI with external player delegation
+- Provide a Wails desktop client wrapping the same UI with external player delegation
 - User management (JWT auth, RBAC, per-library access control)
 
 ### What fyom DOES NOT do (At least not in early access stage):
@@ -349,7 +344,7 @@ Contributions are welcome — especially in:
 nix develop       # Setup nix develop environment
 task build        # Build fyom binary
 task dev          # Go backend with Air hot-reload
-task dev:web      # Vite dev server (separate terminal)
+task dev:frontend      # Vite dev server (separate terminal)
 task lint         # Lint code by `golangci-lint`
 task test         # Go test suite
 ```
