@@ -36,9 +36,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
-import { invoke } from '@tauri-apps/api/core';
 import { getApiErrorMessage, getMediaDetail } from '@/api/library';
-import { isTauriEnvironment } from '@/lib/runtime/tauri';
+import { isDesktopMode } from '@/lib/runtime/env';
 import { resolveResourceUrl } from '@/lib/runtime/resource';
 
 const route = useRoute();
@@ -70,18 +69,14 @@ async function launchExternalPlayback(): Promise<void> {
       return;
     }
 
-    // In Tauri mode, resolve relative /api/v1/... URLs to the sidecar address.
+    // In desktop mode, resolve relative /api/v1/... URLs via same-origin.
     // In browser mode, the Vite proxy handles relative paths.
-    const resolvedUrl = isTauriEnvironment()
+    const resolvedUrl = isDesktopMode()
       ? resolveResourceUrl(rawStreamUrl)
       : rawStreamUrl;
 
-    if (isTauriEnvironment()) {
-      await invoke('open_external_player', { mediaUrl: resolvedUrl });
-    } else {
-      // Browser mode: open the presigned URL directly in a new tab/window.
-      window.open(resolvedUrl as string, '_blank');
-    }
+    // Open the presigned stream URL in a new tab/window.
+    window.open(resolvedUrl as string, '_blank');
 
     launched.value = true;
 

@@ -1,21 +1,18 @@
 /**
  * Runtime-aware resource URL normalization.
  *
- * In browser mode, relative /api/v1/... paths are kept as-is (same origin).
- * In Tauri desktop mode, they are converted to absolute sidecar URLs.
+ * In both desktop (Wails) and browser mode, API calls use relative paths
+ * that are served by the same-origin backend.
  */
 
-import { isTauriMode } from './env';
-
-const TAURI_SIDECAR_BASE = 'http://127.0.0.1:27403';
+import { isDesktopMode } from './env';
 
 /**
  * Normalize a resource URL for the current runtime environment.
  *
  * - empty input → ''
  * - already absolute (http:// or https://) → unchanged
- * - browser mode → relative paths kept as-is
- * - Tauri mode → /api/v1/... paths become absolute sidecar URLs
+ * - /api/v1/... paths → kept as-is (same origin in both modes)
  */
 export function resolveResourceUrl(raw?: string): string {
   if (!raw) return '';
@@ -25,20 +22,10 @@ export function resolveResourceUrl(raw?: string): string {
     return raw;
   }
 
-  // Browser mode: keep relative paths as-is.
-  if (!isTauriMode()) {
-    return raw;
-  }
-
-  // Tauri mode: convert /api/v1/... to absolute sidecar URL.
-  if (raw.startsWith('/api/v1/')) {
-    return `${TAURI_SIDECAR_BASE}${raw}`;
-  }
-
-  // Other root-relative paths: normalize against sidecar origin.
-  if (raw.startsWith('/')) {
-    return `${TAURI_SIDECAR_BASE}${raw}`;
-  }
-
+  // In both desktop and browser mode, relative paths are served
+  // by the same-origin backend.
   return raw;
 }
+
+// Re-export for backward compatibility.
+export { isDesktopMode } from './env';

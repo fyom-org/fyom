@@ -42,6 +42,11 @@ type Server struct {
 	shutdownCh         chan struct{}
 }
 
+// Router returns the underlying Chi router for use in-process (e.g. desktop mode).
+func (s *Server) Router() http.Handler {
+	return s.router
+}
+
 // New creates a new Server with the given configuration and dependencies.
 // It sets up the HTTP router, registers all routes, and initializes handlers.
 func New(

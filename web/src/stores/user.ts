@@ -41,8 +41,8 @@ function isBrowser(): boolean {
   return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 }
 
-function isTauriRuntime(): boolean {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+function isDesktopRuntime(): boolean {
+  return typeof window !== 'undefined' && '__WAILS__' in window;
 }
 
 function getHttpStatus(error: unknown): number | undefined {
@@ -327,7 +327,7 @@ export const useUserStore = defineStore('user', () => {
       return true;
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       return false;
     }
 

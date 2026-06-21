@@ -1,42 +1,38 @@
 /**
  * Runtime environment detection and API base URL resolution.
  *
- * This module provides runtime-aware API routing so the same frontend build
- * works in both browser mode and Tauri desktop mode.
+ * In desktop mode (Wails), the Go backend serves /api/v1/* directly via
+ * in-process request interception — no TCP port needed.
+ * In browser mode, requests go to the same origin.
  */
 
-export type RuntimeEnv = 'browser' | 'tauri'
+export type RuntimeEnv = 'desktop' | 'browser'
 
 /**
  * Detect the current runtime environment.
- * Returns 'tauri' if running inside Tauri, 'browser' otherwise.
  */
 export function detectRuntimeEnv(): RuntimeEnv {
-  const hasTauri =
+  const isDesktop =
     typeof window !== 'undefined' &&
-    '__TAURI_INTERNALS__' in window
-  return hasTauri ? 'tauri' : 'browser'
+    ('__TAURI_INTERNALS__' in window || '__WAILS__' in window)
+  return isDesktop ? 'desktop' : 'browser'
 }
 
 /**
- * Resolve the API base URL based on the current runtime environment.
+ * Resolve the API base URL.
  *
- * - Tauri mode: http://127.0.0.1:27403/api/v1 (sidecar)
- * - Browser mode: /api/v1 (same origin)
+ * Desktop mode: /api/v1 (same origin, intercepted by Wails asset server)
+ * Browser mode: /api/v1 (same origin)
  */
 export function resolveApiBaseUrl(): string {
-  const env = detectRuntimeEnv()
-  if (env === 'tauri') {
-    return 'http://127.0.0.1:27403/api/v1'
-  }
   return '/api/v1'
 }
 
 /**
- * Check if running in Tauri desktop mode.
+ * Check if running in desktop mode.
  */
-export function isTauriMode(): boolean {
-  return detectRuntimeEnv() === 'tauri'
+export function isDesktopMode(): boolean {
+  return detectRuntimeEnv() === 'desktop'
 }
 
 /**

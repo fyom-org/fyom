@@ -3,7 +3,7 @@ import { createPinia } from 'pinia';
 import App from './App.vue';
 import router from './router';
 import './style.css';
-import { initTauriListeners, isTauriEnvironment } from './lib/runtime/tauri';
+import { initDesktopListeners, isDesktopEnvironment } from './lib/runtime/tauri';
 import { useUserStore } from '@/stores/user';
 import { useSystemStore } from '@/stores/system';
 import i18n from '@/plugins/i18n';
@@ -40,9 +40,9 @@ async function bootstrapApplicationState(): Promise<void> {
     console.error('[main] fetchSystemStatus failed:', err);
   }
 
-  // 2. In Tauri mode, try backend bootstrap auth only when there is no local token.
+  // 2. In desktop mode, try backend bootstrap auth only when there is no local token.
   try {
-    if (isTauriEnvironment() && !localStorage.getItem('token')) {
+    if (isDesktopEnvironment() && !localStorage.getItem('token')) {
       await userStore.bootstrapDesktopAuth();
     }
   } catch (err) {
@@ -85,8 +85,8 @@ await router.isReady();
 // Mount the app after stores + router are ready.
 app.mount('#app');
 
-// Initialize Tauri listeners after mount.
+// Initialize desktop listeners after mount.
 // This ensures the Vue app and runtime environment are both ready.
-initTauriListeners().catch((err) => {
-  console.error('[main] initTauriListeners failed:', err);
+initDesktopListeners().catch((err) => {
+  console.error('[main] initDesktopListeners failed:', err);
 });
