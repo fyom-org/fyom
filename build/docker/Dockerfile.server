@@ -1,0 +1,99 @@
+# Wails/Fyom Server Mode Dockerfile
+# Multi-stage build for minimal server image size.
+#
+# This Dockerfile is intentionally separate from docker/Dockerfile.
+#
+# - docker/Dockerfile: Nix-based production/reproducible build
+# - build/docker/Dockerfile.server: Wails server-mode build asset
+
+# syntax=docker/dockerfile:1.25.0
+
+ARG GO_IMAGE=golang:1.25-alpine
+ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12
+
+FROM ${GO_IMAGE} AS builder
+
+WORKDIR /app
+
+ENV CGO_ENABLED=0
+ENV GOOS=linux
+ENV GOARCH=amd64
+ENV CI=true
+
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_TIME=unknown
+
+# Build dependencies for Go modules and frontend build.
+RUN apk add --no-cache \
+    git \
+    nodejs \
+    npm
+
+# Enable pnpm via corepack when available.
+RUN corepack enable || npm install -g pnpm
+
+# Copy dependency manifests first for better Docker cache reuse.
+COPY go.mod go.sum ./
+COPY frontend/package.json frontend/pnpm-lock.yaml ./frontend/
+
+RUN go mod download
+RUN pnpm -C frontend install --frozen-lockfile
+
+# Copy the rest of the source tree.
+COPY . .
+
+# Build frontend assets expected by Go embed.
+RUN pnpm -C frontend run build
+
+# Optional: remove sourcemaps if the script exists.
+RUN if [ -f scripts/delete-sourcemaps.js ]; then \
+      node scripts/delete-sourcemaps.js frontend/dist; \
+    fi
+
+# Build the fyom server binary.
+#
+# Important:
+# - fyom main package is ./cmd/fyom, not repository root.
+# - server tag should exclude desktop/Wails GUI dependencies.
+# - CGO_ENABLED=0 keeps the binary compatible with distroless/static.
+RUN go build \
+    -trimpath \
+    -tags server \
+    -ldflags "-s -w \
+      -X github.com/fyom/fyom/internal/version.Version=${VERSION} \
+      -X github.com/fyom/fyom/internal/version.Commit=${COMMIT} \
+      -X github.com/fyom/fyom/internal/version.BuildTime=${BUILD_TIME}" \
+    -o /out/fyom \
+    ./cmd/fyom
+
+RUN test -x /out/fyom
+
+FROM ${RUNTIME_IMAGE} AS runtime
+
+LABEL org.opencontainers.image.title="fyom"
+LABEL org.opencontainers.image.description="fyom server container image"
+LABEL org.opencontainers.image.licenses="UNSPECIFIED"
+
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_TIME=unknown
+
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.revision="${COMMIT}"
+LABEL org.opencontainers.image.created="${BUILD_TIME}"
+
+ENV FYOM_CONFIG=/app/configs/fyom.yaml
+ENV FYOM_DB_PATH=/app/data/fyom.db
+ENV WAILS_SERVER_HOST=0.0.0.0
+
+WORKDIR /app
+
+COPY --from=builder /out/fyom /app/fyom
+COPY configs/fyom.yaml /app/configs/fyom.yaml
+
+EXPOSE 27402
+
+VOLUME ["/app/data"]
+
+ENTRYPOINT ["/app/fyom"]

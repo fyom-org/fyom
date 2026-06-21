@@ -1,0 +1,537 @@
+# syntax=docker/dockerfile:1.25.0
+
+# Cross-compile fyom / Wails v3 binaries.
+#
+# This image is a build helper, not a production runtime image.
+#
+# Intended usage:
+#
+#   docker build -t fyom-wails-cross -f build/docker/Dockerfile.cross .
+#
+#   docker run --rm -v "$PWD":/app fyom-wails-cross linux amd64
+#   docker run --rm -v "$PWD":/app fyom-wails-cross darwin arm64
+#   docker run --rm -v "$PWD":/app fyom-wails-cross windows amd64
+#
+# Server/headless mode:
+#
+#   docker run --rm -v "$PWD":/app -e MODE=server fyom-wails-cross linux amd64
+#   docker run --rm -v "$PWD":/app -e MODE=server fyom-wails-cross linux arm64
+#
+# Important:
+# - fyom main package is ./cmd/fyom.
+# - frontend directory is ./frontend.
+# - build/ is Wails configuration, not output.
+# - output goes to dist/cross/.
+# - Linux desktop cross-arch requires target GTK/WebKit sysroot and is not
+#   attempted by default. Use server mode for simple Linux cross-arch binaries.
+
+ARG GO_IMAGE=golang:1.25-bookworm
+
+FROM ${GO_IMAGE}
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG TARGETARCH
+
+ARG NODE_MAJOR=24
+ARG PNPM_VERSION=10.12.1
+ARG ZIG_VERSION=0.14.0
+ARG GARBLE_VERSION=v0.16.0
+ARG WAILS_VERSION=v3.0.0-alpha2.104
+ARG MACOS_SDK_VERSION=14.5
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CI=true
+ENV CGO_CFLAGS="-w"
+ENV MACOS_SDK_PATH=/opt/macos-sdk
+ENV APP_NAME=fyom
+ENV MAIN_PACKAGE=./cmd/fyom
+ENV FRONTEND_DIR=frontend
+ENV BIN_DIR=dist/cross
+
+# Base build tools, GTK/WebKit headers for native Linux desktop builds, and
+# utility tools used by the build script.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    binutils \
+    ca-certificates \
+    curl \
+    file \
+    gcc \
+    g++ \
+    git \
+    gnupg \
+    jq \
+    libc6-dev \
+    make \
+    npm \
+    pkg-config \
+    python3 \
+    xz-utils \
+    libgtk-3-dev \
+    libwebkit2gtk-4.1-dev \
+    libgtk-4-dev \
+    libwebkitgtk-6.0-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install a modern Node.js line for frontend builds.
+#
+# Debian's default nodejs can lag behind modern Vite/Vue requirements.
+# NodeSource is used here because this is a developer build image.
+RUN set -eux; \
+    curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends nodejs; \
+    rm -rf /var/lib/apt/lists/*; \
+    node --version; \
+    npm --version
+
+# Install pnpm.
+RUN set -eux; \
+    corepack enable || true; \
+    npm install -g "pnpm@${PNPM_VERSION}"; \
+    pnpm --version
+
+# Install Wails CLI and Garble.
+#
+# Wails is needed for binding generation.
+# Garble is optional and only used when OBFUSCATED=true.
+RUN set -eux; \
+    go install "github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}"; \
+    go install "mvdan.cc/garble@${GARBLE_VERSION}"; \
+    wails3 --help >/dev/null; \
+    garble -h >/dev/null
+
+# Install Zig for Darwin/Windows CGO cross compilation.
+RUN set -eux; \
+    case "${TARGETARCH:-amd64}" in \
+      arm64) ZIG_ARCH="aarch64" ;; \
+      amd64|*) ZIG_ARCH="x86_64" ;; \
+    esac; \
+    ZIG_FILE="zig-linux-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz"; \
+    curl -fSL "https://ziglang.org/download/${ZIG_VERSION}/${ZIG_FILE}" -o "/tmp/${ZIG_FILE}"; \
+    EXPECTED="$(curl -fsSL "https://ziglang.org/download/index.json" \
+      | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[sys.argv[1]][sys.argv[2]+"-linux"]["shasum"])' \
+        "${ZIG_VERSION}" "${ZIG_ARCH}")"; \
+    echo "${EXPECTED}  /tmp/${ZIG_FILE}" | sha256sum -c -; \
+    tar -xJ -f "/tmp/${ZIG_FILE}" -C /opt; \
+    rm "/tmp/${ZIG_FILE}"; \
+    ln -sf "/opt/zig-linux-${ZIG_ARCH}-${ZIG_VERSION}/zig" /usr/local/bin/zig; \
+    zig version
+
+# Download macOS SDK for Darwin targets.
+#
+# You are responsible for ensuring your use of this SDK complies with the
+# applicable license terms for your organization/project.
+RUN set -eux; \
+    curl -fL "https://github.com/joseluisq/macosx-sdks/releases/download/${MACOS_SDK_VERSION}/MacOSX${MACOS_SDK_VERSION}.sdk.tar.xz" \
+      -o /tmp/macos-sdk.tar.xz; \
+    tar -xJ -f /tmp/macos-sdk.tar.xz -C /opt; \
+    rm /tmp/macos-sdk.tar.xz; \
+    mv "/opt/MacOSX${MACOS_SDK_VERSION}.sdk" "${MACOS_SDK_PATH}"; \
+    test -d "${MACOS_SDK_PATH}/System/Library/Frameworks"
+
+# Darwin arm64 wrapper.
+COPY <<'ZIGWRAP' /usr/local/bin/zcc-darwin-arm64
+#!/usr/bin/env bash
+set -euo pipefail
+
+args=()
+skip_next=0
+
+for arg in "$@"; do
+  if [[ "${skip_next}" == "1" ]]; then
+    skip_next=0
+    continue
+  fi
+
+  case "${arg}" in
+    -target|-isysroot)
+      skip_next=1
+      ;;
+    -mmacosx-version-min=*)
+      ;;
+    *)
+      args+=("${arg}")
+      ;;
+  esac
+done
+
+exec zig cc \
+  -fno-sanitize=all \
+  -target aarch64-macos-none \
+  -isysroot "${MACOS_SDK_PATH}" \
+  -I"${MACOS_SDK_PATH}/usr/include" \
+  -L"${MACOS_SDK_PATH}/usr/lib" \
+  -F"${MACOS_SDK_PATH}/System/Library/Frameworks" \
+  -w \
+  "${args[@]}"
+ZIGWRAP
+RUN chmod +x /usr/local/bin/zcc-darwin-arm64
+
+# Darwin amd64 wrapper.
+COPY <<'ZIGWRAP' /usr/local/bin/zcc-darwin-amd64
+#!/usr/bin/env bash
+set -euo pipefail
+
+args=()
+skip_next=0
+
+for arg in "$@"; do
+  if [[ "${skip_next}" == "1" ]]; then
+    skip_next=0
+    continue
+  fi
+
+  case "${arg}" in
+    -target|-isysroot)
+      skip_next=1
+      ;;
+    -mmacosx-version-min=*)
+      ;;
+    *)
+      args+=("${arg}")
+      ;;
+  esac
+done
+
+exec zig cc \
+  -fno-sanitize=all \
+  -target x86_64-macos-none \
+  -isysroot "${MACOS_SDK_PATH}" \
+  -I"${MACOS_SDK_PATH}/usr/include" \
+  -L"${MACOS_SDK_PATH}/usr/lib" \
+  -F"${MACOS_SDK_PATH}/System/Library/Frameworks" \
+  -w \
+  "${args[@]}"
+ZIGWRAP
+RUN chmod +x /usr/local/bin/zcc-darwin-amd64
+
+# Windows amd64 wrapper.
+COPY <<'ZIGWRAP' /usr/local/bin/zcc-windows-amd64
+#!/usr/bin/env bash
+set -euo pipefail
+
+args=()
+skip_next=0
+
+for arg in "$@"; do
+  if [[ "${skip_next}" == "1" ]]; then
+    skip_next=0
+    continue
+  fi
+
+  case "${arg}" in
+    -target)
+      skip_next=1
+      ;;
+    *)
+      args+=("${arg}")
+      ;;
+  esac
+done
+
+exec zig cc \
+  -target x86_64-windows-gnu \
+  "${args[@]}"
+ZIGWRAP
+RUN chmod +x /usr/local/bin/zcc-windows-amd64
+
+# Windows arm64 wrapper.
+COPY <<'ZIGWRAP' /usr/local/bin/zcc-windows-arm64
+#!/usr/bin/env bash
+set -euo pipefail
+
+args=()
+skip_next=0
+
+for arg in "$@"; do
+  if [[ "${skip_next}" == "1" ]]; then
+    skip_next=0
+    continue
+  fi
+
+  case "${arg}" in
+    -target)
+      skip_next=1
+      ;;
+    *)
+      args+=("${arg}")
+      ;;
+  esac
+done
+
+exec zig cc \
+  -target aarch64-windows-gnu \
+  "${args[@]}"
+ZIGWRAP
+RUN chmod +x /usr/local/bin/zcc-windows-arm64
+
+# Main build entrypoint.
+COPY <<'SCRIPT' /usr/local/bin/build.sh
+#!/usr/bin/env bash
+set -euo pipefail
+
+TARGET_OS="${1:-darwin}"
+TARGET_ARCH="${2:-arm64}"
+
+MODE="${MODE:-desktop}"
+APP_NAME="${APP_NAME:-fyom}"
+MAIN_PACKAGE="${MAIN_PACKAGE:-./cmd/fyom}"
+FRONTEND_DIR="${FRONTEND_DIR:-frontend}"
+BIN_DIR="${BIN_DIR:-dist/cross}"
+
+VERSION="${VERSION:-dev}"
+COMMIT="${COMMIT:-unknown}"
+BUILD_TIME="${BUILD_TIME:-unknown}"
+
+EXTRA_TAGS="${EXTRA_TAGS:-}"
+BUILD_FLAGS="${BUILD_FLAGS:-}"
+OBFUSCATED="${OBFUSCATED:-false}"
+GARBLE_ARGS="${GARBLE_ARGS:-}"
+GENERATE_BINDINGS="${GENERATE_BINDINGS:-true}"
+SKIP_FRONTEND="${SKIP_FRONTEND:-false}"
+FORCE_FRONTEND_BUILD="${FORCE_FRONTEND_BUILD:-false}"
+
+normalize_arch() {
+  case "$1" in
+    amd64|x86_64) echo "amd64" ;;
+    arm64|aarch64) echo "arm64" ;;
+    *)
+      echo "Unsupported arch: $1" >&2
+      exit 1
+      ;;
+  esac
+}
+
+TARGET_ARCH="$(normalize_arch "${TARGET_ARCH}")"
+
+case "${TARGET_OS}" in
+  darwin|linux|windows)
+    ;;
+  *)
+    echo "Unsupported OS: ${TARGET_OS}" >&2
+    echo "Usage: build.sh <darwin|linux|windows> <amd64|arm64>" >&2
+    exit 1
+    ;;
+esac
+
+export GOOS="${TARGET_OS}"
+export GOARCH="${TARGET_ARCH}"
+
+HOST_OS="$(go env GOHOSTOS)"
+HOST_ARCH="$(go env GOHOSTARCH)"
+
+if [[ "${MODE}" != "desktop" && "${MODE}" != "server" ]]; then
+  echo "Unsupported MODE=${MODE}. Expected: desktop or server." >&2
+  exit 1
+fi
+
+if [[ "${MODE}" == "server" ]]; then
+  export CGO_ENABLED=0
+  unset CC || true
+else
+  export CGO_ENABLED=1
+
+  case "${GOOS}-${GOARCH}" in
+    darwin-arm64)
+      export CC=zcc-darwin-arm64
+      ;;
+    darwin-amd64)
+      export CC=zcc-darwin-amd64
+      ;;
+    windows-arm64)
+      export CC=zcc-windows-arm64
+      ;;
+    windows-amd64)
+      export CC=zcc-windows-amd64
+      ;;
+    linux-amd64|linux-arm64)
+      if [[ "${HOST_OS}" != "linux" || "${HOST_ARCH}" != "${GOARCH}" ]]; then
+        cat >&2 <<EOF
+Linux desktop cross-arch build is intentionally blocked.
+
+Reason:
+  Wails Linux desktop builds use CGO and GTK/WebKitGTK development libraries.
+  Cross-arch desktop linking requires a target-architecture GTK/WebKit sysroot,
+  not just GOARCH=${GOARCH}.
+
+Options:
+  1. Run this image for the target platform:
+       docker run --platform linux/${GOARCH} ...
+  2. Use server/headless mode:
+       docker run -e MODE=server ...
+  3. Provide a proper target sysroot and customize CC/PKG_CONFIG paths.
+EOF
+        exit 1
+      fi
+
+      export CC=gcc
+      ;;
+  esac
+fi
+
+echo "fyom cross build"
+echo "  mode:       ${MODE}"
+echo "  target:     ${GOOS}/${GOARCH}"
+echo "  host:       ${HOST_OS}/${HOST_ARCH}"
+echo "  app:        ${APP_NAME}"
+echo "  package:    ${MAIN_PACKAGE}"
+echo "  frontend:   ${FRONTEND_DIR}"
+echo "  output dir: ${BIN_DIR}"
+echo "  cgo:        ${CGO_ENABLED}"
+echo "  cc:         ${CC:-none}"
+
+if [[ ! -f "go.mod" ]]; then
+  echo "go.mod not found. Mount the project root at /app." >&2
+  exit 1
+fi
+
+if [[ ! -d "${FRONTEND_DIR}" ]]; then
+  echo "Frontend directory not found: ${FRONTEND_DIR}" >&2
+  exit 1
+fi
+
+if [[ ! -f "${FRONTEND_DIR}/package.json" ]]; then
+  echo "Frontend package.json not found: ${FRONTEND_DIR}/package.json" >&2
+  exit 1
+fi
+
+if [[ "${GENERATE_BINDINGS}" == "true" ]]; then
+  echo "Generating Wails bindings..."
+
+  binding_args=()
+  if [[ -n "${BUILD_FLAGS}" ]]; then
+    binding_args+=("-f" "${BUILD_FLAGS}")
+  else
+    binding_args+=("-f" "")
+  fi
+
+  binding_args+=("-clean=true")
+
+  if [[ "${OBFUSCATED}" == "true" ]]; then
+    binding_args+=("-obfuscated")
+  fi
+
+  binding_args+=("-ts" "-i" "${MAIN_PACKAGE}")
+
+  wails3 generate bindings "${binding_args[@]}"
+fi
+
+if [[ "${SKIP_FRONTEND}" != "true" ]]; then
+  if [[ "${FORCE_FRONTEND_BUILD}" == "true" || ! -f "${FRONTEND_DIR}/dist/index.html" ]]; then
+    echo "Building frontend..."
+
+    if [[ -f "${FRONTEND_DIR}/pnpm-lock.yaml" ]]; then
+      pnpm -C "${FRONTEND_DIR}" install --frozen-lockfile
+    else
+      pnpm -C "${FRONTEND_DIR}" install
+    fi
+
+    if node -e "const s=require('./${FRONTEND_DIR}/package.json').scripts||{}; process.exit(s['build:full'] ? 0 : 1)"; then
+      pnpm -C "${FRONTEND_DIR}" run build:full
+    else
+      pnpm -C "${FRONTEND_DIR}" run build
+    fi
+
+    if [[ -f "scripts/delete-sourcemaps.js" ]]; then
+      node scripts/delete-sourcemaps.js "${FRONTEND_DIR}/dist"
+    fi
+  else
+    echo "Frontend already built: ${FRONTEND_DIR}/dist/index.html"
+  fi
+else
+  echo "Skipping frontend build because SKIP_FRONTEND=true"
+fi
+
+mkdir -p "${BIN_DIR}"
+
+EXT=""
+if [[ "${GOOS}" == "windows" ]]; then
+  EXT=".exe"
+fi
+
+OUTPUT="${BIN_DIR}/${APP_NAME}-${GOOS}-${GOARCH}${EXT}"
+
+tags=()
+
+if [[ "${MODE}" == "server" ]]; then
+  tags+=("server")
+else
+  tags+=("production")
+fi
+
+if [[ -n "${EXTRA_TAGS}" ]]; then
+  IFS=',' read -r -a extra_tag_array <<< "${EXTRA_TAGS}"
+  for tag in "${extra_tag_array[@]}"; do
+    if [[ -n "${tag}" ]]; then
+      tags+=("${tag}")
+    fi
+  done
+fi
+
+if [[ "${OBFUSCATED}" == "true" ]]; then
+  tags+=("wails_obfuscated")
+fi
+
+TAGS="$(IFS=','; echo "${tags[*]}")"
+
+LDFLAGS="-s -w \
+-X github.com/fyom/fyom/internal/version.Version=${VERSION} \
+-X github.com/fyom/fyom/internal/version.Commit=${COMMIT} \
+-X github.com/fyom/fyom/internal/version.BuildTime=${BUILD_TIME}"
+
+if [[ "${GOOS}" == "windows" && "${MODE}" == "desktop" ]]; then
+  LDFLAGS="${LDFLAGS} -H windowsgui"
+fi
+
+build_flags_array=()
+if [[ -n "${BUILD_FLAGS}" ]]; then
+  # shellcheck disable=SC2206
+  build_flags_array=( ${BUILD_FLAGS} )
+fi
+
+if [[ "${OBFUSCATED}" == "true" ]]; then
+  compiler=(garble)
+
+  if [[ -n "${GARBLE_ARGS}" ]]; then
+    # shellcheck disable=SC2206
+    garble_args_array=( ${GARBLE_ARGS} )
+    compiler+=("${garble_args_array[@]}")
+  fi
+
+  compiler+=(build)
+else
+  compiler=(go build)
+fi
+
+echo "Building binary..."
+echo "  compiler: ${compiler[*]}"
+echo "  tags:     ${TAGS}"
+echo "  output:   ${OUTPUT}"
+
+"${compiler[@]}" \
+  -tags "${TAGS}" \
+  -trimpath \
+  -buildvcs=false \
+  "${build_flags_array[@]}" \
+  -ldflags "${LDFLAGS}" \
+  -o "${OUTPUT}" \
+  "${MAIN_PACKAGE}"
+
+chmod 0755 "${OUTPUT}"
+
+echo "Built:"
+ls -lah "${OUTPUT}"
+file "${OUTPUT}" || true
+
+if [[ "${GOOS}" == "linux" ]]; then
+  ldd "${OUTPUT}" || true
+fi
+SCRIPT
+RUN chmod +x /usr/local/bin/build.sh
+
+WORKDIR /app
+
+ENTRYPOINT ["/usr/local/bin/build.sh"]
+CMD ["darwin", "arm64"]
