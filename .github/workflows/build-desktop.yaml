@@ -108,7 +108,7 @@ jobs:
 
           nix develop --command bash -lc '
             set -euo pipefail
-            pnpm --dir web install --frozen-lockfile
+            pnpm --dir frontend install --frozen-lockfile
             task ci:quality
           '
 
@@ -205,7 +205,7 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -235,7 +235,7 @@ jobs:
           cargo-tauri --version
 
       - name: Install frontend dependencies
-        working-directory: web
+        working-directory: frontend
         shell: bash
         run: pnpm install --frozen-lockfile
 
@@ -311,7 +311,7 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -338,7 +338,7 @@ jobs:
 
       - name: Install frontend dependencies
         shell: pwsh
-        working-directory: web
+        working-directory: frontend
         run: pnpm install --frozen-lockfile
 
       - name: Build desktop app on Windows runner
