@@ -6,7 +6,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-DIST_DIR="${PROJECT_ROOT}/web/dist"
+DIST_DIR="${PROJECT_ROOT}/frontend/dist"
 BUILD_DIR=$(mktemp -d)
 SERVER_BIN="${BUILD_DIR}/fyom-server"
 SERVER_PID=""
@@ -21,7 +21,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "=== Building frontend ==="
-cd "$PROJECT_ROOT/web"
+cd "$PROJECT_ROOT/frontend"
 npm run build:full
 
 echo "=== Building Go binary ==="

@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	web "github.com/fyom/fyom/frontend"
 	"github.com/fyom/fyom/internal/config"
 	"github.com/fyom/fyom/internal/handler"
 	"github.com/fyom/fyom/internal/middleware"
@@ -21,7 +22,6 @@ import (
 	"github.com/fyom/fyom/internal/repository"
 	"github.com/fyom/fyom/internal/service"
 	"github.com/fyom/fyom/pkg/presign"
-	"github.com/fyom/fyom/web"
 	"github.com/go-chi/chi/v5"
 )
 

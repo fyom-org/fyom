@@ -1,9 +1,9 @@
 // Package locale defines the supported locales for fyom's i18n system.
 //
 // This package is the single source of truth for locale codes on the backend.
-// The frontend mirrors this list in web/src/plugins/i18n.ts (SUPPORTED_LOCALES).
+// The frontend mirrors this list in frontend/src/plugins/i18n.ts (SUPPORTED_LOCALES).
 // When adding a new locale, update BOTH locations and add a JSON file in
-// web/src/locales/.
+// frontend/src/locales/.
 //
 // See docs/i18n.md for the full i18n architecture and locale resolution chain.
 package locale
@@ -14,8 +14,8 @@ package locale
 // can be determined.
 //
 // Phase 7: en + zh + ja. Additional locales require:
-//   - A new web/src/locales/<code>.json file
-//   - An entry in web/src/plugins/i18n.ts BUNDLED_LOCALES + LOCALE_DISPLAY_LABELS
+//   - A new frontend/src/locales/<code>.json file
+//   - An entry in frontend/src/plugins/i18n.ts BUNDLED_LOCALES + LOCALE_DISPLAY_LABELS
 //   - An entry here
 var SupportedLocales = []string{"en", "zh", "ja"}
 

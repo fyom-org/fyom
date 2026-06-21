@@ -179,8 +179,8 @@ const (
 // pre-Phase-3 hardcoded messages, preserving backward compatibility for
 // any client that reads the `message` field instead of `error_code`.
 //
-// Keep this map in sync with web/src/locales/en.json -> api_error.*
-// and web/src/locales/zh.json -> api_error.*.
+// Keep this map in sync with frontend/src/locales/en.json -> api_error.*
+// and frontend/src/locales/zh.json -> api_error.*.
 var defaultMessages = map[Code]string{
 	CodeInternal:    "internal server error",
 	CodeValidation:  "validation error",

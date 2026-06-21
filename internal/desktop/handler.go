@@ -16,7 +16,7 @@ type HandlerOptions struct {
 	API http.Handler
 
 	// Assets is the filesystem containing the frontend build output.
-	// It should have a "dist" subdirectory (from web/embed.go).
+	// It should have a "dist" subdirectory (from frontend/embed.go).
 	Assets fs.FS
 }
 
@@ -33,7 +33,7 @@ func NewHandler(opts HandlerOptions) (http.Handler, error) {
 		return nil, &configError{message: "desktop handler requires non-nil assets filesystem"}
 	}
 
-	// Create a sub-filesystem rooted at "dist" to match web/embed.go structure.
+	// Create a sub-filesystem rooted at "dist" to match frontend/embed.go structure.
 	distFS, err := fs.Sub(opts.Assets, "dist")
 	if err != nil {
 		return nil, err

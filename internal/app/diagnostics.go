@@ -17,7 +17,7 @@ type StartupDiagnostics struct {
 }
 
 // webAssetMode is the frontend asset source used by the current server startup path.
-// server.New and staticFileHandler serve web.Dist, which is backed by //go:embed dist.
+// server.New and staticFileHandler serve frontend.Dist, which is backed by //go:embed dist.
 const webAssetMode = "embed"
 
 func newStartupDiagnostics(dbPath string, cfg *config.Config) StartupDiagnostics {
