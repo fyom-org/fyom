@@ -450,8 +450,6 @@
       "yes": "はい",
       "no": "いいえ",
       "noConfig": "設定するユーザーやライブラリがありません。",
-      "important": "重要",
-      "importantNote": "このページはライブラリアクセスのみを設定します。バックエンドもライブラリ・メディア・再生・進捗・エピソードのエンドポイントでこれらの権限を強制する必要があります。",
       "unknownUser": "不明なユーザー",
       "untitledLibrary": "無題のライブラリ",
       "ariaHasAccess": "{username} は {role} で、{library} を常に表示できます",

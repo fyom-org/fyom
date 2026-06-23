@@ -450,8 +450,6 @@
       "yes": "是",
       "no": "否",
       "noConfig": "没有可配置的用户或媒体库。",
-      "important": "重要",
-      "importantNote": "此页面仅配置媒体库访问权限。后端还必须在媒体库、媒体、播放、进度和剧集端点上强制执行这些权限。",
       "unknownUser": "未知用户",
       "untitledLibrary": "未命名媒体库",
       "ariaHasAccess": "{username} 是 {role}，始终可以查看 {library}",

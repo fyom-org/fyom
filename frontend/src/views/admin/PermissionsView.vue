@@ -86,12 +86,7 @@
       <button type="button" class="reload-btn" @click="loadPermissionsData">{{ $t('admin.permissions.reload') }}</button>
     </section>
 
-    <section class="notice-card">
-      <h2>{{ $t('admin.permissions.important') }}</h2>
-      <p>
-        {{ $t('admin.permissions.importantNote') }}
-      </p>
-    </section>
+
   </main>
 </template>
 
@@ -613,22 +608,6 @@ tbody tr:last-child td {
   color: #555577;
   text-align: center;
   font-size: 14px;
-}
-
-.notice-card {
-  margin-top: 22px;
-  padding: 14px 16px;
-  color: #aaaacc;
-  background: #12121e;
-  border: 1px solid #1a1a2e;
-  border-radius: 10px;
-}
-
-.notice-card p {
-  margin: 0;
-  color: #666688;
-  font-size: 13px;
-  line-height: 1.5;
 }
 
 @media (max-width: 720px) {

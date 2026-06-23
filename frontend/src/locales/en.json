@@ -450,8 +450,6 @@
       "yes": "Yes",
       "no": "No",
       "noConfig": "No users or libraries to configure.",
-      "important": "Important",
-      "importantNote": "This page only configures library access. The backend must also enforce these permissions on library, media, playback, progress, and episode endpoints.",
       "unknownUser": "Unknown user",
       "untitledLibrary": "Untitled library",
       "ariaHasAccess": "{username} is {role} and can always view {library}",
