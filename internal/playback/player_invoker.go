@@ -7,9 +7,9 @@ import (
 	"os/exec"
 )
 
-// PlaybackInfo holds the resolved URI and optional metadata needed to launch
+// Info holds the resolved URI and optional metadata needed to launch
 // an external player.
-type PlaybackInfo struct {
+type Info struct {
 	URI      string
 	Title    string
 	Duration int // seconds, informational only
@@ -26,7 +26,7 @@ type PlayerInvoker struct {
 // Invoke starts the external player with the given playback info and
 // immediately releases the process. It is a fire-and-forget operation:
 // no goroutines are spawned, no progress is tracked, no IPC is opened.
-func (p PlayerInvoker) Invoke(ctx context.Context, info PlaybackInfo) error {
+func (p PlayerInvoker) Invoke(_ context.Context, info Info) error {
 	if p.Command == "" {
 		return fmt.Errorf("player command is empty")
 	}

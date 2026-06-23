@@ -24,7 +24,7 @@ func (f *fakeCmd) Release() error { return f.releaseErr }
 
 func TestPlayerInvoker_EmptyCommand(t *testing.T) {
 	p := PlayerInvoker{Command: ""}
-	err := p.Invoke(context.Background(), PlaybackInfo{URI: "http://example.com/video.mp4"})
+	err := p.Invoke(context.Background(), Info{URI: "http://example.com/video.mp4"})
 	if err == nil {
 		t.Fatal("expected error for empty command")
 	}
@@ -32,7 +32,7 @@ func TestPlayerInvoker_EmptyCommand(t *testing.T) {
 
 func TestPlayerInvoker_EmptyURI(t *testing.T) {
 	p := PlayerInvoker{Command: "mpv"}
-	err := p.Invoke(context.Background(), PlaybackInfo{URI: ""})
+	err := p.Invoke(context.Background(), Info{URI: ""})
 	if err == nil {
 		t.Fatal("expected error for empty URI")
 	}
@@ -43,7 +43,6 @@ func TestPlayerInvoker_ArgsPreserved(t *testing.T) {
 		Command: "mpv",
 		Args:    []string{"--resume-playback", "--fullscreen"},
 	}
-	info := PlaybackInfo{URI: "http://example.com/video.mp4"}
 
 	// We can't easily intercept exec.Command without restructuring,
 	// so we verify the invoker fields are set correctly.
@@ -59,7 +58,6 @@ func TestPlayerInvoker_ArgsPreserved(t *testing.T) {
 	if p.Args[1] != "--fullscreen" {
 		t.Errorf("expected --fullscreen, got %q", p.Args[1])
 	}
-	_ = info // used in real invocation
 }
 
 func TestPlayerInvoker_URIAppendedAsFinalArg(t *testing.T) {
@@ -67,7 +65,7 @@ func TestPlayerInvoker_URIAppendedAsFinalArg(t *testing.T) {
 		Command: "mpv",
 		Args:    []string{"--loop"},
 	}
-	info := PlaybackInfo{URI: "http://example.com/video.mp4"}
+	info := Info{URI: "http://example.com/video.mp4"}
 
 	// Verify the args slice would be constructed correctly.
 	args := make([]string, 0, len(p.Args)+1)
@@ -119,8 +117,8 @@ func TestPlayerInvoker_NoShellJoin(t *testing.T) {
 	}
 }
 
-func TestPlaybackInfo_Fields(t *testing.T) {
-	info := PlaybackInfo{
+func TestInfo_Fields(t *testing.T) {
+	info := Info{
 		URI:      "http://example.com/video.mp4",
 		Title:    "Test Video",
 		Duration: 3600,
@@ -137,7 +135,7 @@ func TestPlaybackInfo_Fields(t *testing.T) {
 }
 
 // Verify that setDetach doesn't panic on the current platform.
-func TestSetDetach_NoPanic(t *testing.T) {
+func TestSetDetach_NoPanic(_ *testing.T) {
 	cmd := exec.Command("echo", "test")
 	setDetach(cmd)
 	// We don't start the process, just verify setDetach doesn't panic.
@@ -147,7 +145,7 @@ func TestSetDetach_NoPanic(t *testing.T) {
 var _ testCmd = &fakeCmd{}
 
 // Ensure error types work correctly.
-func TestErrors(t *testing.T) {
+func TestErrors(_ *testing.T) {
 	startErr := errors.New("start failed")
 	releaseErr := errors.New("release failed")
 	_ = startErr
