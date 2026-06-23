@@ -1,12 +1,10 @@
-//go:build desktop && !server && !ios && !android
-
-// Package main contains the fyom desktop entry point.
 package main
 
 import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/fyom/fyom/internal/app"
 	"github.com/fyom/fyom/internal/desktop"
@@ -34,13 +32,40 @@ func runDesktopWithRuntime(_ context.Context, rt *app.DesktopRuntime) error {
 		},
 	})
 
-	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:   "main",
 		Title:  "fyom",
 		Width:  1280,
 		Height: 800,
 		URL:    "/",
 	})
+
+	// Set up system tray with Show and Quit menu items.
+	tray := wailsApp.SystemTray.New()
+	tray.SetLabel("fyom")
+	tray.AttachWindow(mainWindow)
+
+	// Load tray icon from embedded project asset.
+	if iconData, err := os.ReadFile("build/appicon.png"); err == nil {
+		tray.SetIcon(iconData)
+	}
+
+	// Build tray menu.
+	menu := application.NewMenu()
+	showItem := menu.Add("Show / Open fyom")
+	showItem.OnClick(func(_ *application.Context) {
+		mainWindow.Show().Focus()
+	})
+	menu.AddSeparator()
+	quitItem := menu.Add("Quit")
+	quitItem.OnClick(func(_ *application.Context) {
+		log.Print("quit requested from tray")
+		// Trigger Wails shutdown which calls OnShutdown hooks.
+		mainWindow.Close()
+	})
+
+	tray.SetMenu(menu)
+	tray.Run()
 
 	wailsApp.OnShutdown(func() {
 		log.Print("fyom desktop shutting down")
