@@ -3,17 +3,38 @@ package playback
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 )
 
-// Info holds the resolved URI and optional metadata needed to launch
-// an external player.
-type Info struct {
+// PlaybackInfo holds the resolved URI and optional metadata needed to launch
+// an external player. It is intentionally lean: no IPC socket paths, no
+// process IDs, no progress polling fields, no lifecycle callbacks.
+//
+//nolint:revive
+type PlaybackInfo struct {
 	URI      string
 	Title    string
-	Duration int // seconds, informational only
+	MimeType string
+	Headers  map[string]string
 }
+
+// PlaybackURIResolver resolves a media ID to a playable URI.
+// Implementations handle credential signing, path resolution, and
+// provider-specific URI construction.
+//
+//nolint:revive
+type PlaybackURIResolver interface {
+	ResolvePlaybackURI(ctx context.Context, mediaID string) (PlaybackInfo, error)
+}
+
+// Domain errors for playback operations.
+var (
+	ErrMediaNotFound      = errors.New("media not found")
+	ErrPlaybackNotAllowed = errors.New("playback not allowed")
+	ErrInvalidMediaPath   = errors.New("invalid media path")
+)
 
 // PlayerInvoker launches an external media player with a resolved playback
 // URI and immediately detaches. It does not monitor progress, open IPC
@@ -26,7 +47,7 @@ type PlayerInvoker struct {
 // Invoke starts the external player with the given playback info and
 // immediately releases the process. It is a fire-and-forget operation:
 // no goroutines are spawned, no progress is tracked, no IPC is opened.
-func (p PlayerInvoker) Invoke(_ context.Context, info Info) error {
+func (p PlayerInvoker) Invoke(_ context.Context, info PlaybackInfo) error {
 	if p.Command == "" {
 		return fmt.Errorf("player command is empty")
 	}

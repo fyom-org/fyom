@@ -24,7 +24,7 @@ func (f *fakeCmd) Release() error { return f.releaseErr }
 
 func TestPlayerInvoker_EmptyCommand(t *testing.T) {
 	p := PlayerInvoker{Command: ""}
-	err := p.Invoke(context.Background(), Info{URI: "http://example.com/video.mp4"})
+	err := p.Invoke(context.Background(), PlaybackInfo{URI: "http://example.com/video.mp4"})
 	if err == nil {
 		t.Fatal("expected error for empty command")
 	}
@@ -32,7 +32,7 @@ func TestPlayerInvoker_EmptyCommand(t *testing.T) {
 
 func TestPlayerInvoker_EmptyURI(t *testing.T) {
 	p := PlayerInvoker{Command: "mpv"}
-	err := p.Invoke(context.Background(), Info{URI: ""})
+	err := p.Invoke(context.Background(), PlaybackInfo{URI: ""})
 	if err == nil {
 		t.Fatal("expected error for empty URI")
 	}
@@ -44,8 +44,7 @@ func TestPlayerInvoker_ArgsPreserved(t *testing.T) {
 		Args:    []string{"--resume-playback", "--fullscreen"},
 	}
 
-	// We can't easily intercept exec.Command without restructuring,
-	// so we verify the invoker fields are set correctly.
+	// Verify the invoker fields are set correctly.
 	if p.Command != "mpv" {
 		t.Errorf("expected command mpv, got %q", p.Command)
 	}
@@ -65,9 +64,8 @@ func TestPlayerInvoker_URIAppendedAsFinalArg(t *testing.T) {
 		Command: "mpv",
 		Args:    []string{"--loop"},
 	}
-	info := Info{URI: "http://example.com/video.mp4"}
+	info := PlaybackInfo{URI: "http://example.com/video.mp4"}
 
-	// Verify the args slice would be constructed correctly.
 	args := make([]string, 0, len(p.Args)+1)
 	args = append(args, p.Args...)
 	args = append(args, info.URI)
@@ -84,8 +82,7 @@ func TestPlayerInvoker_URIAppendedAsFinalArg(t *testing.T) {
 }
 
 func TestPlayerInvoker_SpacesInURI(t *testing.T) {
-	// URI with spaces must be preserved as a single argument.
-	uri := "http://example.com/my video file.mp4"
+	uri := "http://example.com/my file.mp4"
 	p := PlayerInvoker{Command: "mpv"}
 	args := make([]string, 0, len(p.Args)+1)
 	args = append(args, p.Args...)
@@ -100,8 +97,6 @@ func TestPlayerInvoker_SpacesInURI(t *testing.T) {
 }
 
 func TestPlayerInvoker_NoShellJoin(t *testing.T) {
-	// Args must NOT be joined into a single shell string.
-	// Each arg should be a separate element.
 	p := PlayerInvoker{
 		Command: "mpv",
 		Args:    []string{"--opt=val"},
@@ -111,17 +106,17 @@ func TestPlayerInvoker_NoShellJoin(t *testing.T) {
 	args = append(args, p.Args...)
 	args = append(args, uri)
 
-	// Verify we have exactly 2 separate args, not 1 joined string.
 	if len(args) != 2 {
 		t.Fatalf("expected 2 args, got %d: %v", len(args), args)
 	}
 }
 
-func TestInfo_Fields(t *testing.T) {
-	info := Info{
+func TestPlaybackInfo_Fields(t *testing.T) {
+	info := PlaybackInfo{
 		URI:      "http://example.com/video.mp4",
 		Title:    "Test Video",
-		Duration: 3600,
+		MimeType: "video/mp4",
+		Headers:  map[string]string{"Authorization": "Bearer token123"},
 	}
 	if info.URI != "http://example.com/video.mp4" {
 		t.Errorf("URI mismatch")
@@ -129,8 +124,35 @@ func TestInfo_Fields(t *testing.T) {
 	if info.Title != "Test Video" {
 		t.Errorf("Title mismatch")
 	}
-	if info.Duration != 3600 {
-		t.Errorf("Duration mismatch")
+	if info.MimeType != "video/mp4" {
+		t.Errorf("MimeType mismatch")
+	}
+	if info.Headers["Authorization"] != "Bearer token123" {
+		t.Errorf("Headers mismatch")
+	}
+}
+
+func TestPlaybackInfo_EmptyHeaders(t *testing.T) {
+	// Headers may be empty for local file:// playback.
+	info := PlaybackInfo{
+		URI:      "file:///media/video.mp4",
+		Title:    "Local Video",
+		MimeType: "",
+	}
+	if info.Headers != nil {
+		t.Errorf("expected nil Headers, got %v", info.Headers)
+	}
+}
+
+func TestDomainErrors(t *testing.T) {
+	if ErrMediaNotFound == nil {
+		t.Error("ErrMediaNotFound should not be nil")
+	}
+	if ErrPlaybackNotAllowed == nil {
+		t.Error("ErrPlaybackNotAllowed should not be nil")
+	}
+	if ErrInvalidMediaPath == nil {
+		t.Error("ErrInvalidMediaPath should not be nil")
 	}
 }
 
@@ -138,16 +160,16 @@ func TestInfo_Fields(t *testing.T) {
 func TestSetDetach_NoPanic(_ *testing.T) {
 	cmd := exec.Command("echo", "test")
 	setDetach(cmd)
-	// We don't start the process, just verify setDetach doesn't panic.
 }
 
-// Verify the fakeCmd interface satisfaction.
 var _ testCmd = &fakeCmd{}
 
-// Ensure error types work correctly.
 func TestErrors(_ *testing.T) {
 	startErr := errors.New("start failed")
 	releaseErr := errors.New("release failed")
 	_ = startErr
 	_ = releaseErr
 }
+
+// Verify PlaybackURIResolver interface is satisfiable.
+var _ PlaybackURIResolver = (PlaybackURIResolver)(nil)
